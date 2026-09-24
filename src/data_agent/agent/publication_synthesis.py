@@ -635,10 +635,10 @@ def _select_sources(
     return sorted(selected), omitted, coverage
 
 
-def _project_offline_aligned_tables(
+def _project_offline_derived_snapshots(
     state: Any, allowed_receipts: set[str], packet: dict[str, Any], offline_workspace: Any,
-) -> list[dict[str, Any]]:
-    """Read an existing two-date derived frame only when all receipt identities match."""
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Bounded values from existing derived frames, with no claim authority."""
     import pandas as pd
     from data_agent.session.workspace import Workspace
 
@@ -646,14 +646,17 @@ def _project_offline_aligned_tables(
         str(source.get("receipt_id") or ""): source
         for source in packet.get("sources", []) if isinstance(source, dict)
     }
-    tables = []
+    snapshots = []
+    omissions = []
+    used_chars = 0
     for receipt in getattr(state, "tool_receipts", []) or []:
-        if (not isinstance(receipt, dict) or receipt.get("tool_name") != "synthesize_time_series"
+        if (not isinstance(receipt, dict)
+                or receipt.get("tool_name") not in {"synthesize_time_series", "transform_data"}
                 or receipt.get("id") not in allowed_receipts
                 or receipt.get("id") not in selected):
             continue
         source = selected[receipt["id"]]
-        if (source.get("tool_name") != "synthesize_time_series"
+        if (source.get("tool_name") != receipt.get("tool_name")
                 or not receipt.get("result_sha256")
                 or source.get("result_sha256") != receipt.get("result_sha256")):
             continue
@@ -664,61 +667,161 @@ def _project_offline_aligned_tables(
         if len(paths) != len(set(paths)):
             continue
         values = {str(fact.get("path") or ""): str(fact.get("value") or "") for fact in facts}
-        if (values.get("method_contract") != "multi_file_time_synthesis.v1"
-                or values.get("status") != "supported"
-                or values.get("claim_ceiling") != "descriptive"
-                or values.get("aligned_rows") != "2"):
-            continue
-        names = []
-        for index in range(12):
-            name = values.get(f"source_datasets[{index}]")
-            if not name:
-                break
-            names.append(name)
-        if (len(names) < 2 or len(names) != len(set(names))
-                or any(path.startswith("source_datasets[") and path not in {
-                    f"source_datasets[{index}]" for index in range(len(names))
-                } for path in paths)):
-            continue
-        derived_name = values.get("derived_dataset")
+        tool_name = receipt["tool_name"]
+        derived_name = values.get("derived_dataset" if tool_name == "synthesize_time_series" else "dataset")
         identities = receipt.get("data_identities")
-        if (not derived_name or derived_name in names or not isinstance(identities, dict)
-                or set(identities) != {*names, derived_name}):
+        if (not derived_name or not isinstance(identities, dict)
+                or derived_name not in identities or not 2 <= len(identities) <= 13):
+            continue
+        if tool_name == "synthesize_time_series":
+            parents = []
+            for index in range(12):
+                name = values.get(f"source_datasets[{index}]")
+                if not name:
+                    break
+                parents.append(name)
+            if (values.get("method_contract") != "multi_file_time_synthesis.v1"
+                    or values.get("status") != "supported"
+                    or values.get("claim_ceiling") != "descriptive"
+                    or len(parents) < 2
+                    or any(path.startswith("source_datasets[") and path not in {
+                        f"source_datasets[{index}]" for index in range(len(parents))
+                    } for path in paths)):
+                continue
+            expected_rows = values.get("aligned_rows")
+        else:
+            parents = [values.get("source_dataset")]
+            expected_rows = values.get("rows")
+            if (not values.get("operation") or not parents[0]
+                    or not values.get("columns[0]")):
+                continue
+        if (len(parents) != len(set(parents)) or derived_name in parents
+                or set(identities) != {*parents, derived_name}):
             continue
         try:
-            current = {name: offline_workspace.get_data_identity(name) for name in [*names, derived_name]}
+            current = {name: offline_workspace.get_data_identity(name) for name in [*parents, derived_name]}
             frame = offline_workspace.get(derived_name)
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
         if (not isinstance(frame, pd.DataFrame)
                 or any(not isinstance(current.get(name), dict) or not current[name]
                        or current[name] != identities[name] for name in current)
-                or list(frame.columns) != ["date", *names]
-                or len(frame) != 2):
+                or len(set(map(str, frame.columns))) != len(frame.columns)
+                or str(len(frame)) != expected_rows):
             continue
         derived = current[derived_name]
         try:
             frame_fingerprint = Workspace._frame_fingerprint(frame)
         except (TypeError, ValueError):
             continue
-        if (derived.get("version_id") != values.get("derived_identity.version_id")
-                or derived.get("fingerprint") != values.get("derived_identity.fingerprint")
-                or derived.get("parent_version_ids") != [current[name].get("version_id") for name in names]
+        if (not derived.get("version_id") or derived.get("role") != "analysis"
+                or derived.get("parent_version_ids") != [current[name].get("version_id") for name in parents]
                 or frame_fingerprint != derived.get("fingerprint")):
             continue
-        if any(
-            current[name].get("version_id") != values.get(f"source_identities.{name}.version_id")
-            or current[name].get("fingerprint") != values.get(f"source_identities.{name}.fingerprint")
-            or values.get(f"missing_aligned_dates.{name}") != "0"
-            for name in names
+        if tool_name == "synthesize_time_series" and (
+            derived.get("version_id") != values.get("derived_identity.version_id")
+            or derived.get("fingerprint") != values.get("derived_identity.fingerprint")
+            or any(
+                current[name].get("version_id") != values.get(f"source_identities.{name}.version_id")
+                or current[name].get("fingerprint") != values.get(f"source_identities.{name}.fingerprint")
+                for name in parents
+            )
         ):
             continue
-        try:
-            parsed_dates = pd.to_datetime(frame["date"], errors="raise")
-            dates = [item.date().isoformat() for item in parsed_dates]
-        except (TypeError, ValueError, AttributeError):
+        if tool_name == "transform_data" and (
+            [values.get(f"columns[{index}]") for index in range(len(frame.columns))]
+            != [str(column) for column in frame.columns]
+            or any(path.startswith("columns[") and path not in {
+                f"columns[{index}]" for index in range(len(frame.columns))
+            } for path in paths)
+        ):
             continue
-        if len(dates) != 2 or dates[0] >= dates[1]:
+        if not 1 <= len(frame) <= 16 or not 1 <= len(frame.columns) <= 16:
+            omissions.append({"receipt_id": receipt["id"], "reason": "shape_budget"})
+            continue
+
+        def plain(value: Decimal) -> str:
+            output = format(value, "f")
+            return output.rstrip("0").rstrip(".") if "." in output else output
+
+        rows = []
+        for _, row in frame.iterrows():
+            cells = {}
+            for column in frame.columns:
+                value = row[column]
+                if isinstance(value, (bool,)):
+                    cell = {"type": "boolean", "value": bool(value)}
+                elif isinstance(value, (int, float, Decimal)) or hasattr(value, "item"):
+                    number = _decimal_number(str(value))
+                    if number is None or not number.is_finite():
+                        break
+                    cell = {"type": "number", "value": plain(number)}
+                elif isinstance(value, (datetime, date, pd.Timestamp)):
+                    cell = {"type": "date", "value": value.isoformat()}
+                elif isinstance(value, str) and len(value) <= 128:
+                    cell = {"type": "text", "value": value}
+                else:
+                    break
+                cells[str(column)] = cell
+            if len(cells) != len(frame.columns):
+                break
+            rows.append(cells)
+        if len(rows) != len(frame):
+            continue
+        snapshot = {
+            "receipt_id": receipt["id"], "result_sha256": receipt["result_sha256"],
+            "derived_dataset": derived_name, "derived_version_id": derived["version_id"],
+            "parent_version_ids": list(derived["parent_version_ids"]),
+            "tool_name": tool_name, "operation": values.get("operation") or values.get("method_contract"),
+            "columns": [str(column) for column in frame.columns],
+            "rows": rows, "status": "context_only", "unit_status": "not_confirmed",
+        }
+        cost = len(json.dumps(snapshot, ensure_ascii=False, sort_keys=True))
+        if cost > 16_000 or used_chars + cost > 32_000:
+            omissions.append({"receipt_id": receipt["id"], "reason": "character_budget"})
+            continue
+        snapshots.append(snapshot)
+        used_chars += cost
+    return snapshots, omissions
+
+
+def _project_offline_aligned_tables(
+    state: Any, snapshots: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Specialized arithmetic reads the common snapshot, not workspace again."""
+    import pandas as pd
+
+    receipts = {
+        receipt.get("id"): receipt for receipt in getattr(state, "tool_receipts", []) or []
+        if isinstance(receipt, dict)
+    }
+    tables = []
+    for snapshot in snapshots:
+        if snapshot.get("tool_name") != "synthesize_time_series":
+            continue
+        receipt = receipts.get(snapshot.get("receipt_id"))
+        if not isinstance(receipt, dict):
+            continue
+        values = {str(fact.get("path") or ""): str(fact.get("value") or "")
+                  for fact in receipt.get("publication_facts") or [] if isinstance(fact, dict)}
+        names = []
+        for index in range(12):
+            name = values.get(f"source_datasets[{index}]")
+            if not name:
+                break
+            names.append(name)
+        if (len(names) < 2 or snapshot.get("columns") != ["date", *names]
+                or len(snapshot.get("rows") or []) != 2
+                or values.get("aligned_rows") != "2"):
+            continue
+        date_cells = [row.get("date") for row in snapshot["rows"]]
+        if any(not isinstance(cell, dict) or cell.get("type") != "date" for cell in date_cells):
+            continue
+        try:
+            dates = [pd.Timestamp(cell["value"]).date().isoformat() for cell in date_cells]
+        except (TypeError, ValueError, KeyError):
+            continue
+        if dates[0] >= dates[1]:
             continue
 
         def plain(value: Decimal) -> str:
@@ -729,7 +832,8 @@ def _project_offline_aligned_tables(
         for name in names:
             if (values.get(f"coverage.{name}.start") != dates[0]
                     or values.get(f"coverage.{name}.end") != dates[1]
-                    or not values.get(f"coverage.{name}.metric")):
+                    or not values.get(f"coverage.{name}.metric")
+                    or values.get(f"missing_aligned_dates.{name}") != "0"):
                 break
             try:
                 source_rows = int(values.get(f"coverage.{name}.rows", ""))
@@ -738,8 +842,12 @@ def _project_offline_aligned_tables(
                 break
             if not (source_rows >= effective_rows >= 2):
                 break
-            first = _decimal_number(str(frame.iloc[0][name]))
-            second = _decimal_number(str(frame.iloc[1][name]))
+            first_cell, second_cell = (row.get(name) for row in snapshot["rows"])
+            if (not isinstance(first_cell, dict) or not isinstance(second_cell, dict)
+                    or first_cell.get("type") != "number" or second_cell.get("type") != "number"):
+                break
+            first = _decimal_number(first_cell["value"])
+            second = _decimal_number(second_cell["value"])
             if first is None or second is None or not first.is_finite() or not second.is_finite():
                 break
             change = second - first
@@ -751,16 +859,16 @@ def _project_offline_aligned_tables(
             rows.append({
                 "dataset": name, "metric": values[f"coverage.{name}.metric"],
                 "period_a": plain(first), "period_b": plain(second),
-                "absolute_change": plain(change),
-                "relative_change_percent": relative_text,
+                "absolute_change": plain(change), "relative_change_percent": relative_text,
                 "source_rows": source_rows, "effective_rows": effective_rows,
                 "unit_status": "not_confirmed",
             })
         if len(rows) != len(names):
             continue
         tables.append({
-            "receipt_id": receipt["id"], "result_sha256": receipt["result_sha256"],
-            "derived_dataset": derived_name, "derived_version_id": derived["version_id"],
+            "receipt_id": snapshot["receipt_id"], "result_sha256": snapshot["result_sha256"],
+            "derived_dataset": snapshot["derived_dataset"],
+            "derived_version_id": snapshot["derived_version_id"],
             "dates": dates, "rows": rows, "status": "descriptive_preview_only",
         })
     return tables
@@ -778,10 +886,13 @@ def _build_offline_trust_projection(
     session_id = str(getattr(state, "session_id", "") or "")
     projected: dict[str, list[dict[str, Any]]] = {"charts": [], "hypotheses": []}
     if offline_workspace is not None:
-        projected["aligned_tables"] = (
-            _project_offline_aligned_tables(state, allowed_receipts, packet, offline_workspace)
-            if allowed_receipts else []
+        snapshots, omissions = (
+            _project_offline_derived_snapshots(state, allowed_receipts, packet, offline_workspace)
+            if allowed_receipts else ([], [])
         )
+        projected["derived_snapshots"] = snapshots
+        projected["snapshot_omissions"] = omissions
+        projected["aligned_tables"] = _project_offline_aligned_tables(state, snapshots)
     # Without an explicit current-turn receipt selection, historical session
     # artifacts cannot be distinguished from this answer's evidence snapshot.
     if not session_id or not allowed_receipts:
@@ -960,12 +1071,11 @@ def build_publication_packet(
     """Build the bounded evidence hand-off used by the finalization round."""
     substantive = set(substantive_tools)
     allowed_receipts = {str(receipt_id) for receipt_id in (receipt_ids or []) if str(receipt_id)}
-    # The aligned multi-source result is contextual evidence, not an answered
-    # claim or a new substantive-analysis gate.  Admit it only for the
-    # explicitly selected offline projection; the production packet remains
+    # Derived results are contextual evidence, not answered claims. Admit
+    # them only for explicitly selected offline projection; production stays
     # unchanged until the value/safety calibration is complete.
     if offline_trust_projection and allowed_receipts:
-        substantive.add("synthesize_time_series")
+        substantive.update({"synthesize_time_series", "transform_data"})
     receipts = list(getattr(state, "tool_receipts", []) or [])
     eligible = [
         receipt for receipt in receipts
@@ -3178,6 +3288,28 @@ def render_trusted_core_preview(
         sections.append("回执计算边界（不替代指标结论）：\n" + "\n".join(scope_lines))
     projection = packet.get("offline_trust_projection")
     if isinstance(projection, dict):
+        snapshot_lines = []
+        for snapshot in projection.get("derived_snapshots", []):
+            if (not isinstance(snapshot, dict) or snapshot.get("status") != "context_only"
+                    or snapshot.get("receipt_id") not in receipt_ids):
+                continue
+            snapshot_lines.append(
+                f"- 回执 `{snapshot.get('receipt_id')}`，已有派生数据 `{snapshot.get('derived_dataset')}`"
+                "（同版本原始字段；字段单位不作推断；不等于已回答）："
+            )
+            for row in snapshot.get("rows", []):
+                if not isinstance(row, dict):
+                    continue
+                fields = [
+                    f"`{str(column).replace('`', '').replace(chr(10), ' ').replace(chr(13), ' ')}`="
+                    f"{str(row[column]['value']).replace('`', '').replace(chr(10), ' ').replace(chr(13), ' ')}"
+                    for column in snapshot.get("columns", [])
+                    if column in row and isinstance(row[column], dict) and "value" in row[column]
+                ]
+                if fields:
+                    snapshot_lines.append("  - " + "；".join(fields))
+        if snapshot_lines:
+            sections.append("同版本派生结果摘录（未赋予指标结论身份）：\n" + "\n".join(snapshot_lines))
         aligned_lines = []
         for table in projection.get("aligned_tables", []):
             if (not isinstance(table, dict) or table.get("status") != "descriptive_preview_only"
@@ -3218,6 +3350,14 @@ def render_trusted_core_preview(
         if hypothesis_lines:
             sections.append("竞争假设关系审计（不等于业务结论）：\n" + "\n".join(hypothesis_lines))
     gap_lines: list[str] = []
+    if isinstance(projection, dict):
+        for omission in projection.get("snapshot_omissions", []):
+            if (isinstance(omission, dict) and omission.get("receipt_id") in receipt_ids
+                    and omission.get("reason") in {"shape_budget", "character_budget"}):
+                gap_lines.append(
+                    f"- 回执 `{omission['receipt_id']}` 的派生结果超出当前离线快照"
+                    "行列或字符预算，未纳入预览，也未据此宣称已回答。"
+                )
     for group in packet.get("omitted_groups", []):
         if (isinstance(group, dict) and group.get("reason") == "budget"
                 and group.get("receipt_id") in receipt_ids and group.get("group_id")):

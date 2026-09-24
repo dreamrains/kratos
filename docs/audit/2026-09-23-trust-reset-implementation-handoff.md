@@ -117,3 +117,11 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 ## 17. 跨历史反查后避免“专用表格循环”
 
 R16 完整批次 M05 已通过，但其 `transform_data(group_aggregate)` 回执只有派生数据集名/列名/行数等元数据，旧终局 packet 只有两条 facts=0 的 `preview_data`。这与 R4 M03“已生成结果在 workspace、发布包没有数值”的根型相似；继续为每个工具写一张特殊离线表会使重置退化为另一类逐例补丁。具体只读证据与下一通用派生快照契约建议见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §8。这个建议还没有代码或正式发布授权；下一实施切片先和用户校准通用边界、跨历史正反 RED 与旧门退役，再决定是否扩展 A+B。现有六源预览维持默认关闭，不能被误读为 R16 方法语义或 CR03/CR04 一般完成。
+
+## 18. A+B 第五离线切片：共用派生快照（2026-09-24）
+
+用户已认可 §17 的方向并授权实施，旧句“建议还没有代码”是上一检查点。精确 RED、结构替代与旧门状态见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §9。当前默认关闭的离线 packet 内增加 `derived_snapshots`：显式选中的成功 `synthesize_time_series`/`transform_data` 回执、packet result SHA、原始/派生版本、父版本、实际帧指纹闭合后，才截取受行列/字符预算约束的 typed 单元格；身份闭合后若超预算，`snapshot_omissions` 在同 packet 明示原因。原六源两日表改为消费同一快照、再按综合回执专属覆盖事实复算；R16 型 12/120 可作为原始字段预览，但 `status=context_only`、`unit_status=not_confirmed`、`accepted_claim_ids=[]`，不能假装已经确认指标身份、方法解释或用户问题覆盖。普通 packet 与 AgentLoop/正式发布未接入；离线 packet 仍禁止进模型 prompt。没有新 planner、journal、浏览器框架、审核模型或 Provider 调用。
+
+这不是 A/B 或原始 VP/IC/CP 的完成证明。R11 正确 D7/无 D30、R4 M03 图表/M04 非闭合假设、R16 完整 M05 方法表、R7—R21 错误单位/版本/算术及独立无据 99% 误放仍必须双向对照；尤其不能为补价值而从模型旧正文回填事实或让 Shadow 总审批。C 的真实 Shadow 调度、D 的默认发布切换、E3/E4 各需独立门。下一次续接先复核 HEAD/dirty、§9 和主计划 §0.1/Phase 6 四门，再检查定向与最新 full-offline 收据，不以本段取代历史矩阵。
+
+本切片最终 E2 收据：定向七文件 **192 passed**；fresh `tmp/tprb25` full-offline **2921 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `06D71A3A7B812D80B5C98FE9E36D1C9D31296FF12D9731CF136801629E8A8900`，`provider_calls=forbidden`、实际 Provider initiated 0。`tmp/tprb24` 也全绿，但在预算遗漏说明补入前运行，不能替代最终收据。未经新精确冻结/显式授权，不启动真实 Provider；未运行浏览器 E3、push 或部署。

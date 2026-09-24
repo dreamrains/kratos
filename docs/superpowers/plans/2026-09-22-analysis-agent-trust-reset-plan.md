@@ -11,7 +11,7 @@
 
 ### 0.1 当前执行检查点（2026-09-24；每次续接须重新核实）
 
-- `main@b7e1f981b395a3a5007998013422886b8958487e`；本次复核工作树无 tracked/untracked 改动，`main` 比 `origin/main` ahead 60；没有 push。`git status` 对本机全局 ignore 与 `.pytest_cache` 报权限警告，不应将其解释为用户改动或测试成功。
+- 本节是有序实施检查点，不是可替代 `git rev-parse HEAD` / `git status` 的实时状态。早期基线 `main@b7e1f981b395a3a5007998013422886b8958487e` 曾为 clean/ahead 60；第五离线切片从 `main@7d348ad4b85c663de1b81acaa6041036fd613a32`、clean/ahead 64 进入，且未 push。`git status` 对本机全局 ignore 与 `.pytest_cache` 的权限警告不等于用户改动或测试成功。
 - Phase 0—4 已有各自 E1/E2 收据；Phase 5 **只有离线 `publication_audit.v1` 校验器，没有真实 Shadow 调度**。Phase 6 经用户批准仅启动 A（可信核心重建）＋B（纯宿主 claim 级动作）的默认关闭、纯离线准备；C（Shadow 调度与校准）和 D（正式处置/默认发布切换）各有独立进入门。不能把 A+B 的 E2 记作 Phase 5/6 完成。
 - A+B 已提交 `39246fc`、`b7e1f98`：同一 packet 的可信核心预览、当前回执范围、artifact-only 图表、受同指标 `compare_periods` 宿主复算约束的描述性假设关系，以及 `publication_effect=none` 的动作模拟。正式 AgentLoop/发布默认未接入离线投影，离线 packet 禁止进模型 prompt。最终 fresh `tmp/tprb20`：2913 passed、1 skipped、16 warnings、0 failures，JUnit SHA256 `1506832913636E32A2569E7C54D46149C60B806D7865F70100704DFE3025AA18`；Provider transport forbidden，实际 Provider initiated 0。无当前 HEAD 的完整浏览器 E3、真实 Provider E4、staging/production 证据。
 - 当前两侧未闭合：现行完整候选可放行有效 binding 旁独立无据 `99%`；直接改用现有可信核心，又会清空 R11 正确 D7/无 D30 句、R4 M03 六来源业务说明/M04 部分关系、R16 完整批次已通过的 M05 方法上下文。R4 是中断批次，不能独占 oracle；R7—R21、R16 完整批次及本地旧会话须共同校准。AC17 模型自述“缺少分母”没有宿主证明，不计作正确缺口损失。
@@ -20,6 +20,8 @@
 - 在 `ac84dd8` 后的 A+B 小切片，当前构包器也证实 `synthesize_time_series` 被允许工具集合排除；仅在显式选中回执的默认关闭离线 packet 中纳入综合事实组，普通构包/AgentLoop 不变。RED、17 项定向与最终 fresh `tmp/tprb22` 2914 passed/1 skipped/16 warnings 见上述跨历史记录 §6。该结果只是 E2，原始字段不授权 `answered`，也不证明 R4 旧终局选择机制已全修。
 - 后续 A+B 离线数值切片发现综合回执本身只有覆盖/版本元数据、没有两日金额；只在显式 `offline_workspace` 的默认关闭离线 packet 中核对六源及派生帧当前身份和实际指纹，再读取既有 copy-on-write 派生结果复算逐源变化，不解析旧 `preview_data` 文本、不跨来源合计、不授权 `answered`。RED/GREEN 与 fresh `tmp/tprb23` 2918 passed/1 skipped 见跨历史记录 §7；AgentLoop/正式发布/Shadow 均未改变。A 的价值保留和正式误放双门仍未完成。
 - 跨历史反查 R16 **已通过** M05：`transform_data(group_aggregate)` 也只把派生数据集名、列名、行数写入旧回执，旧终局 packet 的两条 `preview_data` 均 facts=0；六源专用离线表不能据此视为一般价值保留。继续前先审查现有 packet 内的通用、身份闭合的派生结果快照契约及正反 RED，防止按工具/失败逐张补表；建议与未授权边界见跨历史记录 §8。
+- 用户随后认可通用方案；A+B 第五离线切片已把 `synthesize_time_series` 与 `transform_data` 的同版本派生值放入**同一个**默认关闭 packet 的受预算 `derived_snapshots`，旧六来源表改为消费该快照再做工具专属复算。RED、结构边界和跨历史未闭合项见跨历史记录 §9。R16 型 12/120 目前仅是 `context_only` 原始字段，不能据此宣称 M05 方法/指标身份、R11 正确边界或 A 门已保留；正式 99% 误放仍在。普通发布、AgentLoop、Shadow C、处置 D 不变。
+- 上述第五切片对身份已闭合但超预算的快照在同 packet 记录 `snapshot_omissions` 并在预览说明；最终 fresh `tmp/tprb25` full-offline **2921 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `06D71A3A7B812D80B5C98FE9E36D1C9D31296FF12D9731CF136801629E8A8900`，`provider_calls=forbidden`、实际 Provider initiated 0。`tmp/tprb24` 是遗漏说明前的历史全绿，不得冒充最终时点。E3/E4、正式发布切换、push/部署均未发生。
 
 ## 0. 本次重置要解决什么
 
