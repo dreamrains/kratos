@@ -131,3 +131,11 @@ R16 完整批次 M05 已通过，但其 `transform_data(group_aggregate)` 回执
 从 `main@f2ea7e3` clean 状态只读核对 R11 完整 M02、R16 已通过 M05、R4 中断 M03/M04 和当前独立 99% 正反夹具；事实、未闭合身份与拟议 RED/替代物/旧门见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §10。关键区别：R11 的 D7=0.1 有 `curve_fitting` 回执参数 `day/retention` 和成对点值，但无确认百分比单位，旧会话也没有终局 packet；R16 的聚合数值在派生帧、执行方法细节未进出版 facts；R4 M04 的新版本趋势事实有工具回执，却不能凭旧 evidence 的 `h_trend`/`h_level_shift` 别名授权真实假设 ID 的反驳。当前共用派生快照只对其中一类结果形状提供上下文，因此**不能因为 E2 全绿就切默认核心**。
 
 下一步建议先裁决是否扩展同一 packet 的默认关闭“已执行结果身份”离线契约，并限定文本/行粒度的敏感字段披露、单位未证实只显示原始尺度、错误假设 ID 保持 `unassessed`。这不是新 planner/账本或模型审核；但它超出上一切片的派生帧快照类型，故先说明权衡再写代码。正式门的独立 99% 误放、C/D、E3/E4 仍原样未授权。
+
+## 20. A+B 第六离线切片：回执执行身份与敏感文本遮蔽
+
+用户已确认 §19 的通用离线方向。精确 RED、结构化替代/旧门及跨历史限界见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §11。当前 `offline_trust_projection.executed_results` 只在显式选中成功回执、source/result SHA、执行参数数据集/列、当前 workspace identity 与实际指纹闭合时，保留 `curve_fitting` 点对或 `analyze_time_series` 描述性数值；原始尺度、单位未确认、`context_only`、无 `answered`。R16 型聚合方法参数还须与派生 identity 的执行表达式严格一致，错误参数不冒充方法记录。所有任意文本单元格在派生快照中默认遮蔽，预算遗漏仍显式。无新 planner、账本、词表发布门或模型审核调用；普通 packet/AgentLoop/正式正文保持不变。**列名/数据集名仍可能含敏感信息**，尚不能把此离线预览当成生产披露审查通过。
+
+R11 的历史正确 10% 仍只可在新离线结构展示为原始 0.1（单位未确认）；R4 M04 旧 evidence 的假设 ID 错配仍 `unassessed`；R16 旧会话没有在新 HEAD 重放。三份原始需求的价值保留与无据内容剔除双门尚未过，不能把本切片的 E2 当作 A+B 结束或默认发布授权。最终测试收据见跨历史记录 §11 的后续补记。
+
+最终 E2：八文件定向 **197 passed**；fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`，`provider_calls=forbidden`、真实 Provider initiated 0。E3/E4、正式发布策略切换、push 和部署均未进行；下次续接先核实精确 HEAD/dirty 及跨历史记录 §11，不得凭旧 §17/§19 的“待裁决”反向撤销用户现已批准的离线工作。

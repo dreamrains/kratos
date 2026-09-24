@@ -20,8 +20,10 @@ def _fixture():
     totals = pd.DataFrame({"channel": ["A"], "order_id_count": [12], "order_id_size": [12],
                            "amount_sum": [120], "amount_mean": [10], "amount_min": [10],
                            "amount_max": [10]})
-    assert not workspace.derive("sales", "sales_totals", totals,
-                                expression="group_aggregate").startswith("Error:")
+    assert not workspace.derive(
+        "sales", "sales_totals", totals,
+        expression='group_aggregate: {"group_by": ["channel"], "agg": {"order_id": ["count", "size"], "amount": ["sum", "mean", "min", "max"]}}',
+    ).startswith("Error:")
 
     state = AnalysisSessionState("derived_snapshot_calibration")
     state.tool_receipts = [{
@@ -52,6 +54,13 @@ def _fixture():
     }, {
         "id": "tr_totals", "tool_name": "transform_data",
         "result_sha256": "sha256:totals-result", "result_preview": "group aggregate saved",
+        "arguments": {
+            "name": "sales", "save_as": "sales_totals", "operation": "group_aggregate",
+            "group_by": ["channel"], "aggregations": [
+                {"column": "order_id", "functions": ["count", "size"]},
+                {"column": "amount", "functions": ["sum", "mean", "min", "max"]},
+            ],
+        },
         "data_identities": {name: workspace.get_data_identity(name) for name in ("sales", "sales_totals")},
         "publication_facts": [
             {"path": "operation", "value": "group_aggregate"},
@@ -84,9 +93,15 @@ def test_generic_snapshot_covers_two_derived_tool_families_without_answer_author
     assert totals["derived_dataset"] == "sales_totals" and len(totals["rows"]) == 1
     assert totals["rows"][0]["amount_sum"] == {"type": "number", "value": "120"}
     assert totals["rows"][0]["order_id_count"] == {"type": "number", "value": "12"}
+    assert totals["rows"][0]["channel"] == {"type": "redacted"}
+    assert totals["method_parameters"] == {
+        "group_by": ["channel"], "agg": {"order_id": ["count", "size"],
+                                      "amount": ["sum", "mean", "min", "max"]},
+    }
     assert all(item["status"] == "context_only" for item in snapshots)
     preview = render_trusted_core_preview(packet, None)
     assert "amount_sum" in preview["text"] and "120" in preview["text"]
+    assert "group_by" in preview["text"] and "channel" in preview["text"]
     assert preview["accepted_claim_ids"] == []
     normal = build_publication_packet(
         state, user_input="订单数量和金额", substantive_tools=set(),
@@ -135,3 +150,11 @@ def test_over_budget_derived_frame_is_not_silently_promoted():
         {"receipt_id": "tr_totals", "reason": "shape_budget"}
     ]
     assert "超出当前离线快照" in render_trusted_core_preview(packet, None)["text"]
+
+
+def test_mismatched_executed_method_parameters_do_not_gain_method_context():
+    state, workspace = _fixture()
+    state.tool_receipts[1]["arguments"]["group_by"] = ["order_id"]
+    snapshots = _packet(state, workspace, ["tr_totals"])["offline_trust_projection"]["derived_snapshots"]
+    assert len(snapshots) == 1
+    assert "method_parameters" not in snapshots[0]

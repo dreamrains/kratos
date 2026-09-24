@@ -758,8 +758,10 @@ def _project_offline_derived_snapshots(
                     cell = {"type": "number", "value": plain(number)}
                 elif isinstance(value, (datetime, date, pd.Timestamp)):
                     cell = {"type": "date", "value": value.isoformat()}
-                elif isinstance(value, str) and len(value) <= 128:
-                    cell = {"type": "text", "value": value}
+                elif isinstance(value, str):
+                    # Row-level text can contain identifiers.  The offline
+                    # packet has no verified disclosure policy for it.
+                    cell = {"type": "redacted"}
                 else:
                     break
                 cells[str(column)] = cell
@@ -776,6 +778,34 @@ def _project_offline_derived_snapshots(
             "columns": [str(column) for column in frame.columns],
             "rows": rows, "status": "context_only", "unit_status": "not_confirmed",
         }
+        if tool_name == "transform_data" and values.get("operation") == "group_aggregate":
+            args = receipt.get("arguments")
+            if isinstance(args, dict) and (
+                args.get("name") == parents[0] and args.get("save_as") == derived_name
+                and args.get("operation") == "group_aggregate"
+            ):
+                group_by = args.get("group_by")
+                aggregations = args.get("aggregations")
+                if (isinstance(group_by, list) and 1 <= len(group_by) <= 8
+                        and all(isinstance(name, str) and name for name in group_by)
+                        and isinstance(aggregations, list) and 1 <= len(aggregations) <= 8):
+                    agg: dict[str, list[str]] = {}
+                    for item in aggregations:
+                        if (not isinstance(item, dict) or not isinstance(item.get("column"), str)
+                                or not isinstance(item.get("functions"), list)
+                                or not 1 <= len(item["functions"]) <= 8
+                                or any(not isinstance(fn, str) or not fn for fn in item["functions"])):
+                            break
+                        agg[item["column"]] = item["functions"]
+                    expression = derived.get("expression")
+                    if (len(agg) == len(aggregations) and isinstance(expression, str)
+                            and expression.startswith("group_aggregate: ")):
+                        try:
+                            recorded = json.loads(expression.removeprefix("group_aggregate: "))
+                        except (ValueError, TypeError):
+                            recorded = None
+                        if recorded == {"group_by": group_by, "agg": agg}:
+                            snapshot["method_parameters"] = {"group_by": group_by, "agg": agg}
         cost = len(json.dumps(snapshot, ensure_ascii=False, sort_keys=True))
         if cost > 16_000 or used_chars + cost > 32_000:
             omissions.append({"receipt_id": receipt["id"], "reason": "character_budget"})
@@ -783,6 +813,125 @@ def _project_offline_derived_snapshots(
         snapshots.append(snapshot)
         used_chars += cost
     return snapshots, omissions
+
+
+def _project_offline_executed_results(
+    state: Any, allowed_receipts: set[str], packet: dict[str, Any], offline_workspace: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Current tool arguments + numeric facts, never a claim or unit grant."""
+    import pandas as pd
+    from data_agent.session.workspace import Workspace
+
+    selected = {
+        str(source.get("receipt_id") or ""): source
+        for source in packet.get("sources", []) if isinstance(source, dict)
+    }
+    projected = []
+    omissions = []
+    used_chars = 0
+    for receipt in getattr(state, "tool_receipts", []) or []:
+        if (not isinstance(receipt, dict)
+                or receipt.get("tool_name") not in {"curve_fitting", "analyze_time_series"}
+                or receipt.get("id") not in allowed_receipts
+                or receipt.get("id") not in selected):
+            continue
+        source = selected[receipt["id"]]
+        if (source.get("tool_name") != receipt["tool_name"]
+                or not receipt.get("result_sha256")
+                or source.get("result_sha256") != receipt["result_sha256"]):
+            continue
+        args = receipt.get("arguments")
+        identities = receipt.get("data_identities")
+        if not isinstance(args, dict) or not isinstance(identities, dict):
+            continue
+        dataset = args.get("name")
+        columns = (
+            {"x": args.get("x_col"), "y": args.get("y_col")}
+            if receipt["tool_name"] == "curve_fitting" else
+            {"x": args.get("date_col"), "y": args.get("value_col")}
+        )
+        if (not isinstance(dataset, str) or set(identities) != {dataset}
+                or len(dataset) > 128 or not dataset.isprintable()
+                or not all(isinstance(value, str) and 0 < len(value) <= 128
+                           and value.isprintable() for value in columns.values())):
+            continue
+        try:
+            current = offline_workspace.get_data_identity(dataset)
+            frame = offline_workspace.get(dataset)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        if (not isinstance(frame, pd.DataFrame) or not isinstance(current, dict)
+                or not current or current != identities[dataset]
+                or not current.get("version_id")
+                or any(value not in frame.columns for value in columns.values())):
+            continue
+        try:
+            if Workspace._frame_fingerprint(frame) != current.get("fingerprint"):
+                continue
+        except (TypeError, ValueError):
+            continue
+        facts = receipt.get("publication_facts")
+        if not isinstance(facts, list) or any(not isinstance(fact, dict) for fact in facts):
+            continue
+        paths = [str(fact.get("path") or "") for fact in facts]
+        if len(paths) != len(set(paths)):
+            continue
+        values = {str(fact.get("path") or ""): str(fact.get("value") or "") for fact in facts}
+
+        def bounded_number(raw: str) -> str | None:
+            if len(raw) > 64:
+                return None
+            number = _decimal_number(raw)
+            if number is None or not number.is_finite():
+                return None
+            rendered = format(number, "f")
+            return rendered if len(rendered) <= 64 else None
+
+        observations: Any
+        if receipt["tool_name"] == "curve_fitting":
+            if values.get("status") != "supported" or values.get("claim_ceiling") != "descriptive":
+                continue
+            if any(path.startswith("points[16]") or path.startswith("points[17]")
+                   for path in paths) or len([path for path in paths if path.startswith("points[") and path.endswith(".x")]) > 16:
+                omissions.append({"receipt_id": receipt["id"], "reason": "point_budget"})
+                continue
+            observations = []
+            for index in range(16):
+                x = bounded_number(values.get(f"points[{index}].x", ""))
+                y = bounded_number(values.get(f"points[{index}].y", ""))
+                if x is None or y is None:
+                    break
+                observations.append({"x": x, "y": y})
+            if (not observations or any(
+                path.startswith("points[") and path.endswith((".x", ".y"))
+                and path not in {f"points[{i}].{axis}" for i in range(len(observations)) for axis in ("x", "y")}
+                for path in paths
+            )):
+                continue
+        else:
+            observations = {}
+            for label, path in (("mean", "statistics.mean"), ("std", "statistics.std"),
+                                ("slope", "trend.slope")):
+                number = bounded_number(values.get(path, ""))
+                if number is None:
+                    break
+                observations[label] = number
+            if len(observations) != 3 or values.get("trend.direction") not in {"up", "down", "flat"}:
+                continue
+            observations["direction"] = values["trend.direction"]
+        item = {
+            "receipt_id": receipt["id"], "result_sha256": receipt["result_sha256"],
+            "tool_name": receipt["tool_name"], "dataset": dataset,
+            "dataset_version_id": current["version_id"], "input_columns": columns,
+            "observations": observations, "unit_status": "not_confirmed", "status": "context_only",
+        }
+        cost = len(json.dumps(item, ensure_ascii=False, sort_keys=True))
+        if cost > 16_000 or used_chars + cost > 32_000:
+            omissions.append({"receipt_id": receipt["id"], "reason": "character_budget"})
+            continue
+        projected.append(item)
+        used_chars += cost
+    return projected, omissions
 
 
 def _project_offline_aligned_tables(
@@ -893,6 +1042,12 @@ def _build_offline_trust_projection(
         projected["derived_snapshots"] = snapshots
         projected["snapshot_omissions"] = omissions
         projected["aligned_tables"] = _project_offline_aligned_tables(state, snapshots)
+        executed_results, result_omissions = (
+            _project_offline_executed_results(state, allowed_receipts, packet, offline_workspace)
+            if allowed_receipts else ([], [])
+        )
+        projected["executed_results"] = executed_results
+        projected["result_omissions"] = result_omissions
     # Without an explicit current-turn receipt selection, historical session
     # artifacts cannot be distinguished from this answer's evidence snapshot.
     if not session_id or not allowed_receipts:
@@ -1075,7 +1230,7 @@ def build_publication_packet(
     # them only for explicitly selected offline projection; production stays
     # unchanged until the value/safety calibration is complete.
     if offline_trust_projection and allowed_receipts:
-        substantive.update({"synthesize_time_series", "transform_data"})
+        substantive.update({"synthesize_time_series", "transform_data", "curve_fitting", "analyze_time_series"})
     receipts = list(getattr(state, "tool_receipts", []) or [])
     eligible = [
         receipt for receipt in receipts
@@ -3288,6 +3443,34 @@ def render_trusted_core_preview(
         sections.append("回执计算边界（不替代指标结论）：\n" + "\n".join(scope_lines))
     projection = packet.get("offline_trust_projection")
     if isinstance(projection, dict):
+        execution_lines = []
+        for result in projection.get("executed_results", []):
+            if (not isinstance(result, dict) or result.get("status") != "context_only"
+                    or result.get("receipt_id") not in receipt_ids):
+                continue
+            columns = result.get("input_columns") or {}
+            if not isinstance(columns, dict):
+                continue
+            x_col = str(columns.get("x") or "").replace("`", "").replace("\n", " ")
+            y_col = str(columns.get("y") or "").replace("`", "").replace("\n", " ")
+            execution_lines.append(
+                f"- 回执 `{result.get('receipt_id')}` 已执行 `{result.get('tool_name')}`；"
+                f"数据 `{result.get('dataset')}`，横轴 `{x_col}`，值列 `{y_col}`"
+                "（原始尺度，单位未确认，不等于已回答）："
+            )
+            observations = result.get("observations")
+            if isinstance(observations, list):
+                for point in observations:
+                    if isinstance(point, dict) and "x" in point and "y" in point:
+                        execution_lines.append(f"  - x={point['x']}；y={point['y']}")
+            elif isinstance(observations, dict):
+                execution_lines.append(
+                    f"  - mean={observations.get('mean')}；std={observations.get('std')}；"
+                    f"slope={observations.get('slope')}；direction={observations.get('direction')}"
+                    "（描述性工具字段，不授权假设关系）。"
+                )
+        if execution_lines:
+            sections.append("已执行结果身份与原始数值（不授权 claim）：\n" + "\n".join(execution_lines))
         snapshot_lines = []
         for snapshot in projection.get("derived_snapshots", []):
             if (not isinstance(snapshot, dict) or snapshot.get("status") != "context_only"
@@ -3308,6 +3491,20 @@ def render_trusted_core_preview(
                 ]
                 if fields:
                     snapshot_lines.append("  - " + "；".join(fields))
+            method = snapshot.get("method_parameters")
+            if isinstance(method, dict):
+                def safe_method_label(value: Any) -> str:
+                    return str(value).replace("`", "").replace("\n", " ").replace("\r", " ")
+
+                groups = ", ".join(safe_method_label(item) for item in method.get("group_by", []))
+                aggregates = "; ".join(
+                    f"{safe_method_label(column)}: {', '.join(safe_method_label(fn) for fn in functions)}"
+                    for column, functions in (method.get("agg") or {}).items()
+                )
+                snapshot_lines.append(
+                    f"  - 已执行参数 group_by={groups}；agg={aggregates}"
+                    "（只说明执行方式，不证明方法适当）。"
+                )
         if snapshot_lines:
             sections.append("同版本派生结果摘录（未赋予指标结论身份）：\n" + "\n".join(snapshot_lines))
         aligned_lines = []
@@ -3357,6 +3554,13 @@ def render_trusted_core_preview(
                 gap_lines.append(
                     f"- 回执 `{omission['receipt_id']}` 的派生结果超出当前离线快照"
                     "行列或字符预算，未纳入预览，也未据此宣称已回答。"
+                )
+        for omission in projection.get("result_omissions", []):
+            if (isinstance(omission, dict) and omission.get("receipt_id") in receipt_ids
+                    and omission.get("reason") in {"point_budget", "character_budget"}):
+                gap_lines.append(
+                    f"- 回执 `{omission['receipt_id']}` 的已执行结果超出当前离线"
+                    "点数或字符预算，未纳入预览，也未据此宣称已回答。"
                 )
     for group in packet.get("omitted_groups", []):
         if (isinstance(group, dict) and group.get("reason") == "budget"

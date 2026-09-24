@@ -88,3 +88,13 @@ RED：新增 `test_phase6_offline_multisource_table.py` 三项初始失败，均
 **下一 RED（尚未执行）**应同组验证三类结果形状：`curve_fitting` 的执行参数＋点对、`transform_data` 的同版本派生帧、`analyze_time_series` 的趋势字段与假设 ID。正例分别是原始尺度点值、聚合字段、无趋势事实可见；负例是错列/错版本/错回执、未确认单位换算、假设别名错配、无据 99% 仍不进核心。对照旧通过项要分别记“原始值保留、方法边界保留、用户子问题 answered、正确缺口”，不能用正文长度或测试总数代替。
 
 推荐的**结构化替代方向，待裁决后实现**：仍在现有 publication packet 和 `answer_bindings.v1` 内，抽象“已执行结果身份”（回执参数、输出 facts 或同版本派生帧、目标列/指标、单位状态、范围），把不同工具的结果映射为受预算的宿主拥有上下文；只有工具同名身份及可复核运算能进一步授权 `answered`，否则 `unassessed`。这比按 R11/R16/M04 各加一个专用 renderer 更接近 VP/CP 原目标。旧门退役目标仍是自由散文整体获权威，确定性回执/数值/版本门不退。该方向会扩展离线投影的结果类型，并触及任意 `transform_data` 小帧可能含敏感原始文本的披露策略；在隐私/粒度预算与单位授权未定前，**不把上一切片默认开启或接入 AgentLoop**。若要求同时恢复历史“10%”、R16 完整方法表及 M04 关系，但这些身份在旧回执中不足，必须请用户就继续 `unassessed` 与新增宿主契约作明确取舍，不能偷偷从旧正文回填。
+
+## 11. 第六离线切片：已执行结果身份与文本默认遮蔽
+
+用户已明确同意 §10 的建议，从 `main@c61ece7522b18a6fadd2354d7f05d79ba2ee094a`、clean 工作树进入实施；§10 的“待裁决”是上一检查点。RED：新增 `test_phase6_offline_executed_result_identity.py` 三项分别因 `executed_results` 不存在（两项 `KeyError`）和 `transform_data` 派生帧仍把 `secret@example.com` 文本单元格原样投影而失败；R16 型聚合方法参数测试也因 `method_parameters` 不存在失败。这些 RED 是同一结果身份/披露缺口，不是新增措辞词表。
+
+结构化替代仍在**同一默认关闭 packet**：显式选中的成功 `curve_fitting`/`analyze_time_series` 回执，须同时匹配 packet source/result SHA、已执行参数中的数据集与列、当前 workspace identity 和帧实际 fingerprint，才投影受限数值。R11 型同回执 `points[i].x/y` 成对按**原始尺度**显示（例如 x=7、y=0.1），R4 M04 型 time-series 只显示均值/std/斜率/方向等描述字段；均为 `context_only`、`unit_status=not_confirmed`，不把 0.1 写成 10%，不从 flat 自动反驳旧假设别名。点数和字符预算超限在同 packet 明示遗漏。R16 型 `transform_data(group_aggregate)` 仅在已执行参数的 `group_by/agg` 与同版本派生 identity 的表达式严格一致时展示分组和聚合函数；只说明执行方式，不证明方法适当或用户子问题 answered。派生帧所有任意字符串单元格默认变为 `{type:redacted}`，保留有界数值/日期单元格；来源名和列名等既有元数据仍可能出现，**这不是完整 PII 识别或生产披露政策**。
+
+退役旧门的目标未变：一条有效 binding 不应授权整篇自由散文。**正式旧门本切片尚未退役**；普通 packet、AgentLoop、真实 Shadow、审计处置和 Provider 不变。当前离线结构仍不能从历史旧会话直接生成新 typed binding；R11 百分比单位、R16 方法适当性、R4 M04 错别名关系和独立无据 99% 的正式误放保持未闭合。下一步须对跨历史正反候选分别记录原始值/单位/方法/关系/具体缺口的保留与误放；只有宿主验证过的指标身份才能给 `answered`。未做真实会话回写或旧 pickle 载入重放。
+
+定向八文件最终 **197 passed**，包括曲线/趋势错版本和错列、任意文本遮蔽、超点数明确遗漏、聚合参数与执行表达式不一致不展示，以及既有六源/Shadow/正式发布边界。最终 fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2927/failures=0/errors=0/skipped=1`，SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`；runner `provider_calls=forbidden`，实际 Provider initiated calls=0。仍仅 E2，不是当前 HEAD 的完整浏览器 E3、真实 Provider E4、staging/production 或旧会话重放。下一门不可再靠一个离线 fixture 的 100% 扩大适用范围；须把历史正确价值与错误结论分开校准，再讨论默认策略。

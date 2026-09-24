@@ -23,6 +23,8 @@
 - 用户随后认可通用方案；A+B 第五离线切片已把 `synthesize_time_series` 与 `transform_data` 的同版本派生值放入**同一个**默认关闭 packet 的受预算 `derived_snapshots`，旧六来源表改为消费该快照再做工具专属复算。RED、结构边界和跨历史未闭合项见跨历史记录 §9。R16 型 12/120 目前仅是 `context_only` 原始字段，不能据此宣称 M05 方法/指标身份、R11 正确边界或 A 门已保留；正式 99% 误放仍在。普通发布、AgentLoop、Shadow C、处置 D 不变。
 - 上述第五切片对身份已闭合但超预算的快照在同 packet 记录 `snapshot_omissions` 并在预览说明；最终 fresh `tmp/tprb25` full-offline **2921 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `06D71A3A7B812D80B5C98FE9E36D1C9D31296FF12D9731CF136801629E8A8900`，`provider_calls=forbidden`、实际 Provider initiated 0。`tmp/tprb24` 是遗漏说明前的历史全绿，不得冒充最终时点。E3/E4、正式发布切换、push/部署均未发生。
 - 第五切片后在 `main@f2ea7e3` 只读对照 R11、R16、R4 M03/M04 与独立 99%：R11 `curve_fitting` 已执行点对给出原始 D7=0.1 但无百分比单位授权；R16 聚合值在派生帧、方法明细未入出版 facts；R4 M04 v2 趋势事实存在但旧 evidence 假设别名与真实 ID 不一致。详见跨历史记录 §10。下一步应先裁决“同一 packet 内的通用已执行结果身份及敏感字段/单位披露边界”，而非加第三张工具专用表；这尚未进入代码或正式门。
+- 用户已批准上述方向；第六 A+B 离线切片把 `curve_fitting` 点对及 `analyze_time_series` 描述字段的执行身份按回执/参数/数据版本/实际指纹投影进同一默认关闭 packet，R16 聚合方法参数还需与派生 identity 的表达式闭合。任意文本单元格默认遮蔽；单位未证实只显示原始尺度。RED 和仍未闭合的价值/发布门见跨历史记录 §11。它不授权 `answered`、假设关系、真实 Shadow、正式策略或 Provider。
+- 第六切片最终 fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`，Provider transport forbidden、实际 initiated 0。该 E2 不证明 R11 的 10% 单位、R16 旧方法表等价保留或 M04 关系已授权，也不替代 E3/E4；正式独立 99% 误放仍待默认策略门。
 
 ## 0. 本次重置要解决什么
 
