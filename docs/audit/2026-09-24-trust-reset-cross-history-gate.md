@@ -140,3 +140,15 @@ R11 的旧 `dataset_contract_detail.json` 还显示 `field_roles.metrics=[day,re
 本切片定向三文件 **173 passed**；`tmp/tprb29` full-offline **2934 passed/1 skipped/16 warnings/0 failures**，但在 revision 和 R16 负例补入前启动，**不是最终代码收据**；`tmp/tprb30` 因测试文件增加真实多轮负例而主动停止，不计最终结果。源码与测试随后冻结，最终 fresh `tmp/tprb31` full-offline **2935 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2936/failures=0/errors=0/skipped=1`、SHA256 `12F55B0200DF5AA216CF1EC5FF67C44B0A2C138B5B2AFE00356F522A46D4B049`，runner `provider_calls=forbidden`、真实 Provider initiated 0。E3/E4、正式默认切换均未运行。
 
 最终 fresh `tmp/tprb28` full-offline **2931 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2932/failures=0/errors=0/skipped=1`、SHA256 `72B8C65B0ACED19F647B5AE7C346CA47472E0AAE3F7D0C3A5FC35DE64FE8F289`，runner `provider_calls=forbidden`、真实 Provider initiated 0。本切片没有 E3/E4、旧会话回写或正式处置。
+
+## 15. 第九 A+B 离线切片：版本＋列＋单位/尺度的上游契约（默认关闭）
+
+用户明确同意默认关闭的上游契约切片，限定来源明确声明或用户已确认的映射，不能新增自动暂停、正式发布接线，也不能用为测试制造的正例声称真实会话可用。本切片从 `main@5f0480bc5f9d590ea80e0d74af2a29bbbbcc290e` clean/ahead 71 开始，继续以 VP/IC/CP 和 R7—R21、R11、R16、R4 M03/M04、独立 99% 为共同背景。直接历史负例：R11 M02 的真实 `data_understanding.v1` 只有 `day/retention` 类型和 7 行，`workspace_meta` 的原始及分析版本均无单位元数据；确认快照 `records={}`。R16 已通过 M05 的数据理解也只有列/类型，其确认快照同样 `records={}`。R4 中断批次和旧散文不能补出缺失的结构化用户决定。此阶段没有找到可核验的真实“列单位已由用户确认”正例，**单位升级的实际生产链仍未验证**。
+
+RED：现有 `load_data.context` 和普通 `Workspace.set_metadata` 可写，列名、0.1 数值范围、`field_roles`、模型指标标签都不是单位/尺度权威；旧 bundle 缺 `dataset_version_id`，单做 schema 校验还可能接受手写的 `confirmed` 字段。定向测试初跑进一步暴露：旧 bundle 行数/列名相同而数据变更时无法识别过期；仅有形状校验不能认证确认事件。不能用这一表面 GREEN 宣称 R11 的 0.1 已是 10%。
+
+结构化替代：在**既有** `data_understanding.v1` 的 dataset 项上，增加仅由显式 `offline_measurement_scope=True` 才生成的 `dataset_version_id/source_fingerprint` 锚点；默认 `_record_data_understanding_bundle` 调用保持原样。新的纯离线投影先核对当前帧实际 fingerprint、行列与原 bundle 身份，再从既有 `ConfirmationRecord` 中重建 `measurement_mappings`：只接受同 session、同版本、同列、已解决、有 response ID、可见选项的类型化 `host_measurement_mapping.v1` 决定；旧 bundle 无生成时版本锚点、泛化/未解决/过期/标签不匹配记录、冲突决定都不给单位。输入 bundle 自写映射即使形状合法也被重建清空。`scale` 只记录 `raw/fraction/percentage_points`，不做百分比换算，不授予 `answered`。本切片没有创建自动确认提问者；历史没有该 host 类型化决定，协议单测的正例只是形状校准，**不是**真实正例。
+
+源文件路径目前支持 CSV/TSV/XLSX/JSON/JSONL，但现有 `load_data` 不读取可信的列单位声明；本切片不新造 sidecar/上传协议，也不把 Excel/列名启发式当作来源明确声明。因此“来源声明”分支尚未实现，应先找到真实输入规格或与用户讨论。确认记录来源标识本身也不是生产级认证；未来若要接正式路径，须由宿主生产者创建并从确认 store 完整事件链重验，而非接受任意外部构造的 `ConfirmationRecord`。没有这一步，投影只能用于离线协议校准。
+
+旧门未退役：正式候选中有效 binding 旁独立无据 99% 仍可能误放；本切片没有修改 AgentLoop、发布默认、自动暂停、Shadow 调度或 claim 级处置。仍需分别验证 R11 正确原始尺度与具体缺口、R16 12/120 和方法上下文、R4 六源/假设关系，以及 R7—R21 的错单位/算术/版本。此次不能算 A 门完成，更不能进入 Phase 7。定向数据理解/确认/发布七文件 **302 passed**。`tmp/tprb32` 为生产者边界和畸形确认负例补入前的历史全绿，不是最终收据；`tmp/tprb33` 在约 9% 时因发现非字符串确认参数可能抛异常而主动停止，不计结果。**最终 fresh `tmp/tprb34`** full-offline **2949 passed、1 skipped、16 warnings、0 failures**（307.70s），JUnit `tests=2950/failures=0/errors=0/skipped=1`、SHA256 `5D3F003C4B54F46221B0227746CBFD24D6038643C22D34DB6E162CFFA01051E7`，runner `provider_calls=forbidden`、实际真实 Provider initiated 0。该收据仍仅 E2，不包含浏览器 E3、真实 Provider E4 或旧会话真实重放。

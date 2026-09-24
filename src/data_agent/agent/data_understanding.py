@@ -316,6 +316,40 @@ def _normalize_dataset(dataset: Any, index: int) -> BundleValidationResult:
     normalized["grain"] = grain
     normalized["rows"] = rows
     normalized[columns_field] = columns
+    # This optional, offline-only extension is not a unit authority by itself.
+    # Consumers must recheck the referenced confirmation record before using it.
+    if "measurement_mappings" in dataset:
+        version_id = _normalize_identifier(dataset.get("dataset_version_id"))
+        source_fingerprint = _normalize_identifier(dataset.get("source_fingerprint"))
+        mappings = dataset.get("measurement_mappings")
+        column_names = {
+            item if isinstance(item, str) else item.get("name")
+            for item in columns
+        }
+        if not version_id or not source_fingerprint or not isinstance(mappings, list):
+            return _error(
+                "invalid_measurement_mapping",
+                "Measurement mappings require a dataset version, source fingerprint, and list.",
+                index=index,
+            )
+        seen_columns: set[str] = set()
+        for mapping in mappings:
+            if not isinstance(mapping, dict) or set(mapping) != {
+                "column", "unit", "scale", "unit_status", "confirmation_id", "response_id"
+            }:
+                return _error("invalid_measurement_mapping", "Invalid measurement mapping shape.", index=index)
+            column = _normalize_identifier(mapping.get("column"))
+            if (
+                not column or column not in column_names or column in seen_columns
+                or mapping.get("unit_status") != "confirmed"
+                or not _normalize_identifier(mapping.get("unit"))
+                or not isinstance(mapping.get("scale"), str)
+                or mapping["scale"] not in {"raw", "fraction", "percentage_points"}
+                or not _normalize_identifier(mapping.get("confirmation_id"))
+                or not _normalize_identifier(mapping.get("response_id"))
+            ):
+                return _error("invalid_measurement_mapping", "Measurement mapping is not scoped to one existing column and resolved decision.", index=index)
+            seen_columns.add(column)
     return BundleValidationResult(True, bundle=normalized)
 
 
@@ -444,6 +478,148 @@ def build_data_understanding_bundle(
         "analysis_constraints": [] if analysis_constraints is None else analysis_constraints,
     }
     result = validate_data_understanding_bundle(payload)
+    if not result.ok:
+        raise ValueError(f"{result.error_type}: {result.message}")
+    return result.thaw_bundle()
+
+
+def anchor_offline_measurement_dataset(dataset: Mapping[str, Any], *, workspace: Any) -> dict[str, Any]:
+    """Attach a current host-owned data identity before building an offline bundle."""
+    name = str(dataset.get("dataset") or "")
+    frame = workspace.get(name)
+    identity = workspace.get_data_identity(name)
+    if (
+        frame is None
+        or not identity.get("version_id")
+        or not identity.get("source_fingerprint")
+        or identity.get("fingerprint") != workspace._frame_fingerprint(frame)
+        or dataset.get("rows") != len(frame)
+        or not isinstance(dataset.get("columns"), list)
+        or [str(column) for column in frame.columns] != [
+            column.get("name") if isinstance(column, dict) else column
+            for column in dataset.get("columns", [])
+        ]
+    ):
+        raise ValueError(f"unverified_dataset_identity: {name}")
+    return {
+        **dataset,
+        "dataset_version_id": str(identity["version_id"]),
+        "source_fingerprint": str(identity["source_fingerprint"]),
+    }
+
+
+def project_offline_measurement_contract(
+    bundle: Mapping[str, Any],
+    *,
+    workspace: Any,
+    session_id: str,
+    confirmation_records: list[Any] | tuple[Any, ...] = (),
+) -> dict[str, Any]:
+    """Default-off projection of versioned, user-confirmed column units.
+
+    This does not read free-form load context, column names, model metric labels,
+    or mutable workspace metadata as unit evidence. It is not wired into the
+    runtime or publication. A later consumer must recheck confirmation provenance.
+    """
+    from data_agent.agent.confirmation.models import (
+        AnswerMode,
+        ConfirmationRecord,
+        ConfirmationStatus,
+    )
+
+    validated = validate_data_understanding_bundle(dict(bundle))
+    if not validated.ok:
+        raise ValueError(f"{validated.error_type}: {validated.message}")
+    projected = validated.thaw_bundle()
+    for dataset in projected["datasets"]:
+        name = dataset["dataset"]
+        frame = workspace.get(name)
+        identity = workspace.get_data_identity(name)
+        if (
+            frame is None
+            or not identity.get("version_id")
+            or not identity.get("source_fingerprint")
+            or identity.get("fingerprint") != workspace._frame_fingerprint(frame)
+            or len(frame) != dataset["rows"]
+            or [str(column) for column in frame.columns] != [
+                column if isinstance(column, str) else column["name"]
+                for column in dataset["columns"]
+            ]
+        ):
+            raise ValueError(f"stale_dataset_understanding: {name}")
+
+        version_id = str(identity["version_id"])
+        anchored = (
+            dataset.get("dataset_version_id") == version_id
+            and dataset.get("source_fingerprint") == identity["source_fingerprint"]
+        )
+        if (dataset.get("dataset_version_id") or dataset.get("source_fingerprint")) and not anchored:
+            raise ValueError(f"stale_dataset_understanding: {name}")
+        dataset["dataset_version_id"] = version_id
+        dataset["source_fingerprint"] = str(identity["source_fingerprint"])
+        candidates: dict[str, list[dict[str, str]]] = {}
+        for record in confirmation_records:
+            if not anchored or not isinstance(record, ConfirmationRecord) or (
+                record.session_id != session_id
+                or record.source != "host_measurement_mapping.v1"
+                or record.status != ConfirmationStatus.RESOLVED
+                or record.answer_mode != AnswerMode.SINGLE_SELECT
+                or record.resolution_action != "record_confirmation_answer"
+                or not record.response_id
+                or record.data_version != version_id
+            ):
+                continue
+            target = record.resolution_params.get("measurement_mapping")
+            if not isinstance(target, dict) or set(target) != {"dataset", "column", "choices"}:
+                continue
+            column = target["column"]
+            if (
+                target["dataset"] != name
+                or not isinstance(column, str)
+                or column not in frame.columns
+                or record.decision_key != f"measurement:{version_id}:{name}:{column}"
+                or record.question != f"请确认数据集 {name}（版本 {version_id}）中 {column} 列的单位与数值尺度。"
+                or not isinstance(target["choices"], list)
+            ):
+                continue
+            choices = [
+                item for item in target["choices"]
+                if isinstance(item, dict)
+                and set(item) == {"value", "unit", "scale"}
+                and all(isinstance(item[key], str) for key in ("value", "unit", "scale"))
+            ]
+            if len(choices) != len(target["choices"]):
+                continue
+            selected = [item for item in choices if item["value"] == record.response]
+            visible = [option for option in record.options if option.value == record.response]
+            if len(selected) != 1 or len(visible) != 1:
+                continue
+            choice = selected[0]
+            if (
+                not isinstance(choice["unit"], str)
+                or not choice["unit"].strip()
+                or choice["scale"] not in {"raw", "fraction", "percentage_points"}
+                or visible[0].label != f"{choice['unit']} / {choice['scale']}"
+                or {option.value for option in record.options} != {item["value"] for item in choices}
+            ):
+                continue
+            candidates.setdefault(str(column), []).append({
+                "column": str(column),
+                "unit": choice["unit"],
+                "scale": choice["scale"],
+                "unit_status": "confirmed",
+                "confirmation_id": record.confirmation_id,
+                "response_id": record.response_id,
+            })
+        # Conflicting resolved decisions are not silently ranked by recency.
+        dataset["measurement_mappings"] = [
+            entries[0]
+            for column, entries in sorted(candidates.items())
+            if len(entries) == 1
+        ]
+    projected.pop("id", None)
+    projected.pop("data_fingerprint", None)
+    result = validate_data_understanding_bundle(projected)
     if not result.ok:
         raise ValueError(f"{result.error_type}: {result.message}")
     return result.thaw_bundle()

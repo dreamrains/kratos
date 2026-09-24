@@ -269,8 +269,12 @@ def _record_data_understanding_bundle(
     df: pd.DataFrame,
     contract: dict[str, Any],
     quality: dict[str, Any],
+    offline_measurement_scope: bool = False,
 ) -> None:
-    from data_agent.agent.data_understanding import build_data_understanding_bundle
+    from data_agent.agent.data_understanding import (
+        anchor_offline_measurement_dataset,
+        build_data_understanding_bundle,
+    )
 
     roles = contract.get("field_roles") if isinstance(contract.get("field_roles"), dict) else {}
     quality_summary = contract.get("quality") if isinstance(contract.get("quality"), dict) else {}
@@ -304,8 +308,7 @@ def _record_data_understanding_bundle(
     if not contract.get("id"):
         analysis_constraints.append("Dataset contract was unavailable; bundle was built from dataframe shape and columns.")
 
-    bundle = build_data_understanding_bundle(
-        datasets=[{
+    dataset_entry = {
             "dataset": dataset,
             "dataset_contract_id": str(contract.get("id") or f"duc_{dataset}_minimal"),
             "grain": str(contract.get("grain") or "unknown"),
@@ -314,7 +317,12 @@ def _record_data_understanding_bundle(
                 {"name": str(column), "type": str(df[column].dtype)}
                 for column in df.columns
             ],
-        }],
+        }
+    if offline_measurement_scope:
+        dataset_entry = anchor_offline_measurement_dataset(dataset_entry, workspace=workspace)
+
+    bundle = build_data_understanding_bundle(
+        datasets=[dataset_entry],
         entities=list(roles.get("ids") or []),
         metrics=list(roles.get("metrics") or []),
         dimensions=list(roles.get("dimensions") or []),

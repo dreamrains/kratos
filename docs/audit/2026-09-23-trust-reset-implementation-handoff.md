@@ -161,3 +161,11 @@ R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数
 用户已批准默认关闭的上游指标/单位身份契约原型，并要求以真实分析流程约束测试设计。进入基线 `main@93b652e176ddb3ebc2752f17be8281a7b226ea3c`、clean/ahead 70。RED、真实 R11/R16 限界、结构化替代及退役目标详见跨历史记录 §14。仅扩展现有离线 `validate_offline_target_selectors` 的可选 canonical history 校验：已有宿主持久化要求的来源消息哈希、稳定 ID/active 状态与同名工具列/点值闭合时，返回消息/列锚点和历史 SHA/revision；始终 `answer_coverage=unassessed`、单位未确认、`publication_effect=none`。普通 packet/AgentLoop/正式发布、确认政策、Shadow 和 Provider 均不接入。定向三文件 **173 passed**；`tmp/tprb29` 在最终 revision 检查前启动，不作最终收据，`tmp/tprb30` 因补真实 R16 多轮负例而主动停止；最终 fresh `tmp/tprb31` full-offline **2935 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `12F55B0200DF5AA216CF1EC5FF67C44B0A2C138B5B2AFE00356F522A46D4B049`，Provider transport forbidden、initiated 0。
 
 不要把这个协议正例解释为 R11/R16 真实旧会话修复：两者旧 `answer_requirements=[]`；R11 的来源契约无百分比尺度，R16 的多轮风格任务没有可复核的要求继承关系。Workspace metadata 可由工具写入，不能作为单位确认。下一步若要赋予 `answered` 或单位转换，须先找到/建设真实生产链：来源元数据或已确认业务决定的版本化身份、用户子问题与指标/聚合/范围的关系、跨轮撤销条件；没有该链只能继续 `unassessed`。此项可能改变三份原始计划的价值/确认权衡，应先给用户看实际正反场景和设计取舍，不为某个测试夹具开新词表或隐藏模型审核。
+
+## 24. 第九 A+B 离线切片：上游单位/尺度契约续接点
+
+用户再次明确批准默认关闭的数据理解/确认记录契约切片，并提醒测试流程不得倒逼真实功能。精确 RED、历史 R11/R16 负例、结构替代、旧门与未验证来源路径，详见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §15。实现只扩展既有 `data_understanding.v1`：`_record_data_understanding_bundle` 的 `offline_measurement_scope=False` 默认不变；显式打开才由当前 Workspace 帧指纹、列和行数添加数据版本/源指纹；纯离线 `project_offline_measurement_contract` 再依据同 session/版本/列且已解决的类型化用户决定重建 `measurement_mappings`。普通工作区 `unit/context`、列名、数值范围、旧 bundle 自填映射、模型 EvidenceRecord 均无授权。冲突决定不按最新时间猜测，整列保持未确认。
+
+这个协议尚缺**真实生产者**：当前上传格式不提供已解析的列单位声明；现有确认运行时也不自动产生 `host_measurement_mapping.v1` 问题。单测构造的 resolved record 只验证字段和失效规则，真实 R11/R16 确认快照均 `records={}`，不得宣称 0.1→10%、R16 12/120 的单位或正式 `answered` 已恢复。投影也不做百分比换算、自动暂停、Shadow 或发布接线。正式完整候选的独立无据 99% 风险、R4 M03/M04 价值、R16 方法上下文、R11 多轮/复合子问题关联仍属 A/D 双门未完成；C 真实 Shadow 调度与 Phase 7 旧门逐族退役均未获本切片授权。
+
+后续先查真实上传是否存在明确机器可读的单位/尺度声明或实际用户已确认决策；若找不到，不为测试造 sidecar 或推断中文/英文单位。若要新增宿主确认生产者，应明确触发条件、用户可见数据集版本＋列、冲突/重载撤销和与 IC 原始需求的暂停边界，并在接正式发布前另行讨论。定向 **302 passed**；最终 fresh `tmp/tprb34` full-offline **2949 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `5D3F003C4B54F46221B0227746CBFD24D6038643C22D34DB6E162CFFA01051E7`，Provider transport forbidden、真实 initiated 0；仍仅 E2，详见跨历史记录 §15。`tprb32` 是补充生产者边界前的旧收据，`tprb33` 主动中止，不能冒充最终通过。续接时仍先核实 HEAD/dirty，别把本段写时状态当实时状态。
