@@ -51,3 +51,11 @@
 离线假回复只能验证故障/身份/限额机械门，不能证明模型语义能力；真实 Shadow 质量与成本仍需另一次精确 Provider 冻结和用户授权，并在不改变用户答案的前提下完整比较正确 claim 的误删意见与已知风险的漏检。若可行动样本仍为零、审计只会产出引用合法但无可裁决语义，停止 C 的运行时接线并回到 A 的真实身份生产者评审；不能为了走阶段而开一个空耗调用的新门。
 
 证据等级：本机只读历史检查、现有纯函数离线调用；真实 Provider initiated 0，无 E3/E4/staging/production 结论。本轮未改源码、测试或正式发布。
+
+## 6. 用户批准后的最小只读 `audit_view` 切片
+
+从 `main@603dc115cc74664c1f062ca81547b8fbefb0a3ac`、根工作树无列出改动进入。范围仍为纯离线、默认关闭；没有把视图接入 `AgentLoop`、模型 prompt、Provider、发布或第二账本。实施前 RED：新增测试第一次收集时 `ImportError: cannot import name 'build_offline_audit_view'`。结构替代：`publication_audit.build_offline_audit_view` 只接受现有 `state.publication_packets` 中唯一的已提交 `pub_` 包，复核其 `ps_`/`pub_`/正文 SHA、当前规范历史的消息数与 SHA、同一助手消息的 packet/正文身份，以及包内全部来源与既有工具回执的 ID/工具/结果 SHA。然后沿用现有 typed binding 校验器及宿主 renderer，在**已接受正文**中寻找唯一的同文重建片段，返回 answer span、同 claim 的 evidence refs 和版本化 view digest；用户需求只在其已存 source ref 与规范历史中唯一逐字匹配时标 `verbatim_only`，不推断后续改写继承或 `answered`。无绑定、损坏身份、回执漂移、片段重复均无可行动 claim；返回始终 `publication_effect=none`。
+
+这是一种**唯一内容重建定位**，不是新持久化的 renderer 插入位置收据；字段显式命名 `location_status=unique_host_reconstruction_match`。它依赖已提交包和助手消息的宿主契约，不能独立证明任意旧自然文本哪几个字节最初由占位符插入。独立自由散文（包括有效 claim 旁的无据 99%）不被赋予 claim 权威，视图标 `unbound_prose_status=not_audited`；这并未修复正式发布误放，未来 D 仍须确定性可信核心/发布策略裁决，不能把未进 view 的散文交给 Shadow `overall` 洗白。跨历史只读调用归档 R16 M05 的当前旧终局包，得到 `status=unavailable, claim_count=0, publication_effect=none`，与上文八会话 0 typed 的盘点一致；它不是 R16 价值保留通过。
+
+将来要退役的旧门仍是“一个有效 binding 让整篇散文可信”和开放语义词表硬拦截；本切片未退役。下一门若要让真实 Shadow 使用 view，须先解决真实候选 typed 覆盖及上述定位的插入来源证明/等价边界，再单独冻结版本化提示、账本与预算；未经新精确冻结和用户显式授权，绝不发真实 Provider 调用。定向 audit-view/原 Shadow 协议/Phase 6 模拟测试 **26 passed**。源码与测试冻结后，fresh `tmp/tprb36` full-offline **2959 passed、1 skipped、16 warnings、0 failures**（435.29s），JUnit `tests=2960/failures=0/errors=0/skipped=1`、SHA256 `107BFC5CF046543704D01376CB4BD421AC6B746467B61FB54A1C5710AA91A073`；runner `provider_calls=forbidden`、真实 Provider initiated 0。仅 E2，不是新 HEAD 的完整浏览器 E3 或真实 Provider E4。

@@ -181,3 +181,7 @@ R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数
 用户认可暂停增加 `unassessed` 选择器，先做 Phase 5/C 设计和跨历史离线校准；范围明确**没有真实 Shadow 调度、Provider 调用或正式发布影响**。完整 RED→结构替代→未来旧门及八会话实际 packet 盘点见 `docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md`。R4 M02/M03/M04、R11 M02、R14 M05、R16 M05、R21 M02/M04 归档合计 16 份 packet、0 个当前可行动 typed block，不能将其报成当前审计模型质量通过率。现有离线协议对合法 M02 claim/receipt 但虚假回测理由仍标 `claim_evidence_bound`，模拟可建议移除正确 claim，实际 `publication_effect=none`；真实 R16 旧 packet 的虚构 claim 则降 `advisory_only`。这两个结果只证明作用域校验和当前 Shadow 不影响发布，**不证明**语义 finding 正确。
 
 后续先完成真实候选的同快照 claim/答案/用户子问题/回执定位和宿主只读 `audit_view` 设计评审；语义判断不可反向授予数值、单位、`answered` 或覆盖确定性失败。跨历史校准须分别计算误删正确 claim、漏检风险、独立可信内容保留与不可评估率；旧自然文本仅作为内容等价对照，不是当前 typed 回放。C 真实调度与预算/账本另设精确冻结和显式 Provider 授权，D 默认切换及 Phase 7 逐族退役仍独立。此设计记录没有修改运行时代码，不能据此声称 Phase 5/6 完成。
+
+## 27. 已接受答案的默认关闭审计视图，不是 Shadow 调度
+
+用户批准最小 `audit_view` 后实施了 `publication_audit.build_offline_audit_view`。它核验已有 `pub_` 包/正文 SHA、规范历史中同一已接受助手消息、同一包的工具结果 SHA，再用现有 typed parser/renderer 对每个 claim 重建唯一正文片段；只返回 claim/evidence/answer span 与逐字用户来源锚点，`answer_coverage=unassessed`、`publication_effect=none`。没有真实模型调用、AgentLoop 接线或正式发布变更。原 R16 M05 旧终局包离线实测仍是 unavailable/0 claim，不能把结构迁移的测试正例算成历史自然模型成功。该定位证明当前宿主重建文本与接受正文唯一同文，**未新增原位插入 span 持久化**，不能把它夸大为旧自然文本的完整来源证明；独立无据 99% 也尚未被正式门关闭。RED、限界、定向 **26 passed**、最终 fresh `tmp/tprb36` full-offline **2959 passed/1 skipped/16 warnings/0 failures**、JUnit SHA256 `107BFC5CF046543704D01376CB4BD421AC6B746467B61FB54A1C5710AA91A073` 详见 Phase 5/C 校准记录 §6。Provider transport forbidden、真实 initiated 0，仍仅 E2。C 真调度和 D 处置仍须独立门，Provider 仍须新冻结和显式授权。

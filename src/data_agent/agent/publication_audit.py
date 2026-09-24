@@ -7,6 +7,9 @@ remains with the existing receipt/binding/renderer path.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from copy import deepcopy
 from typing import Any, Mapping
 
 
@@ -82,6 +85,182 @@ def _typed_claim_evidence(packet: Mapping[str, Any]) -> dict[str, set[str]]:
         refs.discard("")
         claims[claim_id] = refs
     return claims
+
+
+def build_offline_audit_view(
+    packet: Mapping[str, Any], accepted_answer: str, *, state: Any,
+    canonical_history: Any,
+) -> dict[str, Any]:
+    """Locate host-rendered claims in an already persisted accepted answer.
+
+    Pure, default-off input preparation. This never requests an audit, grants
+    requirement coverage, or changes the accepted answer. A matching receipt
+    reference is a scope anchor, not proof that a semantic finding is true.
+    """
+    from data_agent.agent.publication_synthesis import render_bound_claims
+    from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+
+    unavailable: dict[str, Any] = {
+        "schema_version": "publication_audit_view.v1", "status": "unavailable",
+        "claims": [], "publication_effect": "none",
+    }
+    if (
+        not isinstance(packet, Mapping) or not isinstance(accepted_answer, str)
+        or len(accepted_answer) > 200_000
+    ):
+        return unavailable
+    snapshot_digest = packet.get("snapshot_digest")
+    answer_sha256 = "sha256:" + hashlib.sha256(accepted_answer.encode("utf-8")).hexdigest()
+    packet_id = packet.get("id")
+    if (
+        packet.get("status") != "ready" or packet.get("phase") != "final"
+        or not isinstance(snapshot_digest, str) or not snapshot_digest.startswith("sha256:")
+        or packet.get("answer_sha256") != answer_sha256
+        or not all(isinstance(packet.get(key), list)
+                   for key in ("sources", "evidence", "requirements", "publication_scope"))
+        or packet.get("snapshot_packet_id") != "ps_" + snapshot_digest[7:19]
+        or packet_id != "pub_" + hashlib.sha256(
+            f"{snapshot_digest}|{answer_sha256}".encode("utf-8")
+        ).hexdigest()[:12]
+        or packet.get("session_id") != getattr(state, "session_id", None)
+        or not isinstance(canonical_history, CanonicalHistorySnapshot)
+        or not isinstance(canonical_history.messages, list)
+        or not isinstance(canonical_history.revision, int)
+        or canonical_history.revision < 0
+        or canonical_history.message_count != len(canonical_history.messages)
+        or canonical_history.sha256 != _history_sha256(canonical_history.messages)
+    ):
+        return unavailable
+    persisted = [item for item in (getattr(state, "publication_packets", None) or [])
+                 if isinstance(item, dict) and item.get("id") == packet_id]
+    if len(persisted) != 1 or persisted[0] != packet:
+        return unavailable
+    receipts = getattr(state, "tool_receipts", None)
+    if not isinstance(receipts, list):
+        return unavailable
+    for source in packet["sources"]:
+        if not isinstance(source, dict):
+            return unavailable
+        matching_receipts = [
+            item for item in receipts if isinstance(item, dict)
+            and item.get("id") == source.get("receipt_id")
+            and item.get("tool_name") == source.get("tool_name")
+            and item.get("result_sha256") == source.get("result_sha256")
+        ]
+        if len(matching_receipts) != 1:
+            return unavailable
+    accepted_messages = [
+        index for index, message in enumerate(canonical_history.messages)
+        if isinstance(message, dict) and message.get("role") == "assistant"
+        and message.get("publication_packet_id") == packet_id
+        and message.get("publication_snapshot_digest") == snapshot_digest
+        and message.get("answer_sha256") == answer_sha256
+        and message.get("content") == accepted_answer
+    ]
+    if len(accepted_messages) != 1:
+        return unavailable
+    answer_message_index = accepted_messages[0]
+    bindings = packet.get("answer_bindings")
+    if (
+        not isinstance(bindings, dict)
+        or bindings.get("schema_version") != "answer_bindings.v1"
+        or bindings.get("packet_digest") != snapshot_digest
+        or not isinstance(bindings.get("blocks"), list)
+        or len(bindings["blocks"]) > 32
+    ):
+        return unavailable
+
+    def request_anchor(block: dict[str, Any]) -> dict[str, Any]:
+        refs = block.get("requirement_refs")
+        if not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], str):
+            return {"status": "unassessed"}
+        requirements = [item for item in packet.get("requirements", [])
+                        if isinstance(item, dict) and item.get("id") == refs[0]
+                        and item.get("lifecycle_status", "active") == "active"]
+        if len(requirements) != 1:
+            return {"status": "unassessed"}
+        requirement = requirements[0]
+        span = requirement.get("original_text")
+        source_ref = requirement.get("source_message_ref")
+        if not isinstance(span, str) or not 0 < len(span) <= 256 or not isinstance(source_ref, str):
+            return {"status": "unassessed"}
+        matches = []
+        for index, message in enumerate(canonical_history.messages[:answer_message_index]):
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if not isinstance(content, str) or content.count(span) != 1:
+                continue
+            if source_ref != "msg_" + hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]:
+                continue
+            start = content.index(span)
+            matches.append((index, start))
+        if len(matches) != 1:
+            return {"status": "unassessed"}
+        index, start = matches[0]
+        return {
+            "status": "verbatim_only", "source_message_ref": source_ref,
+            "source_message_index": index, "source_span": [start, start + len(span)],
+            "exact_span": span,
+        }
+
+    try:
+        allowed_refs = _typed_claim_evidence(packet)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return unavailable
+    claims: list[dict[str, Any]] = []
+    unlocatable: list[str] = []
+    seen_ids: set[str] = set()
+    for block in bindings["blocks"]:
+        if not isinstance(block, dict) or not isinstance(block.get("claim_id"), str):
+            continue
+        claim_id = block["claim_id"]
+        if claim_id not in allowed_refs:
+            continue
+        if claim_id in seen_ids:
+            unlocatable.append(claim_id)
+            continue
+        seen_ids.add(claim_id)
+        placeholder = block.get("exact_text")
+        if not isinstance(placeholder, str) or not placeholder:
+            unlocatable.append(claim_id)
+            continue
+        try:
+            host_text = render_bound_claims(placeholder, deepcopy(dict(packet)), {"blocks": [block]})
+        except (ArithmeticError, AttributeError, IndexError, KeyError, TypeError, ValueError, StopIteration):
+            unlocatable.append(claim_id)
+            continue
+        refs = allowed_refs[claim_id]
+        if (not host_text or host_text == placeholder or len(host_text) > 4096
+                or accepted_answer.count(host_text) != 1
+                or len(refs) > 20 or any(len(ref) > 128 for ref in refs)):
+            unlocatable.append(claim_id)
+            continue
+        start = accepted_answer.index(host_text)
+        claims.append({
+            "claim_id": claim_id, "claim_type": block["claim_type"],
+            "answer_span": [start, start + len(host_text)],
+            "location_status": "unique_host_reconstruction_match",
+            "host_rendered_text": host_text, "evidence_refs": sorted(refs),
+            "request_anchor": request_anchor(block),
+            "answer_coverage": "unassessed",
+            "unit_status": block.get("unit_status", "not_confirmed"),
+        })
+    view = {
+        "schema_version": "publication_audit_view.v1",
+        "status": "ready" if claims else "no_locatable_claims",
+        "packet_id": packet_id, "packet_digest": snapshot_digest,
+        "answer_sha256": answer_sha256,
+        "history_sha256": canonical_history.sha256,
+        "history_revision": canonical_history.revision,
+        "answer_message_index": answer_message_index,
+        "claims": claims, "unlocatable_claim_ids": unlocatable,
+        "unbound_prose_status": "not_audited",
+        "publication_effect": "none",
+    }
+    seed = json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    view["view_digest"] = "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return view
 
 
 def validate_shadow_audit(raw: Any, packet: Mapping[str, Any]) -> dict[str, Any]:
