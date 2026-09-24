@@ -69,3 +69,24 @@
 将来要退役的旧门依然是“一个有效 binding 授权整篇自由散文”及开放语义词表硬门，**本切片没有退役**；数值/版本/单位/回执硬门继续保留。尤其该 trace 只证明 typed 部分的插入来源，不审核旁边的 99%，不证明历史内容等价、真实 Shadow 质量或 Phase 6 A/D 可以切换。下一门应先用真实场景而非只用合成夹具校准 typed 覆盖、旧正确价值与独立误放，再冻结 Shadow 提示/输入 digest/统一预算账本和无调用故障门；如需真实 Provider，另向用户索取新精确冻结后的显式授权。
 
 本切片定向 audit-view/Shadow 协议/Phase 6 模拟 **28 passed**；fresh `tmp/tprb37` full-offline **2961 passed、1 skipped、16 warnings、0 failures**（478.64s），JUnit `tests=2962/failures=0/errors=0/skipped=1`、SHA256 `CDBFEC1E100026895F0A3F43DE8FF44C40591331AC73E1568EC5DBBC64597B1E`。入口声明 `provider_calls=forbidden`，真实 Provider initiated 0；未运行本 HEAD 的 E3/E4、未切正式发布策略。
+
+## 8. E4 后的跨历史可用性复核与下一实施裁决（2026-09-24）
+
+本节在 `main@5b3c75c57c355d2d207acbc549163134e8870c9b`、工作树无列出改动时只读复核，不作新的 Provider 调用或发布策略变更。对照 §2 的 R4/R11/R14/R16/R21 历史分层，以及已完整执行但验收失败的 `tmp/trust-reset-p08-real-20260924-r1`，不能用最新中断 R4 或最新失败 M02 单独定义产品。
+
+| 当前 E4 会话 | 已提交 publication packet / 现行 typed block / answer requirement | 可保留价值与不能升级的边界 |
+| --- | ---: | --- |
+| M01 `126c9f6a9d17` | 1 / 0 / 0 | `preview_data`、`describe_dataset`、`detect_data_quality` 有结果；无 typed claim/需求身份，不能由工具存在断言已回答全部问题。 |
+| M02 `ffb95bc5a766` | 0 / 0 / 0 | 候选答复试写 `answer_bindings.v1`，但使用 `bindings` 而非 `blocks`、`C1/C2` 而非现行 claim ID，且 `fact_refs`/`derived_refs` 均空；单位未确认却呈现百分比。只放宽 JSON fence/parser 不会补出证据和单位授权。 |
+| M03 `06a81b4d660c` | 1 / 0 / 0 | 同 packet 包含六次 `compare_periods` 和 EvidenceRecord，可供离线宿主重建两日比较；现行自然正文仍有错误“七天跨度”，成功发布不代表 typed 保护。R4 M03 曾在普通 JSON fence 中自发写出 `blocks + exact_text + fact_refs + derived_refs` 种子，但旧终局 packet 只选择 EvidenceRecord，现行 typed 计数仍为零。 |
+| M04 `d4776ba7b746` | 0 / 0 / 0 | 有三条 EvidenceRecord，但真实假设关系未闭合；新 Phase 4 关系门尚未经过本会话重新运行，不能倒填通过。 |
+| M05 `e7a6e6b17ee8` | 6 / 0 / 0 | 多轮 `run_python`/EvidenceRecord 结果和方法上下文仍须与 R16 已通过 M05 的 12/120、未知单位、窗口一起检验价值保留；不能由 packet 数量推断需求覆盖。 |
+| M06 `4656c27b3f5a` | 1 / 0 / 0 | 数据概览回执可用，但单一路径旁出现额外路径；无 typed 对象可供当前 claim 级审计定位。 |
+
+上述四个成功发布场景共有 9 份 packet、0 个现行 typed block，六个 E4 场景均为 0 条宿主持久化 `answer_requirements`。这是**刻意抽取的本批次**，不是全体模型输出率；加上 §2 的八个历史分层会话也不能合算为自然模型能力的总体统计。R4 M03 的旧种子说明可复用现有通道，不说明当前 schema/回执引用已通过。R11/R16 的旧正确边界、R4 六来源/假设关系与独立无据 99% 仍须分别核对正反损失。
+
+另外，Phase 4 新门已能拒绝错误假设 ID、指标不在目标内、提议方向与 EvidenceRecord 测量方向不一致等关系；但 `hypotheses._validate_relation` 的方向来自记录内 `measurements`。`record_evidence_record` 对同轮回执、版本和结果摘要做绑定，`bind_computed_statistics` 投影工具结果，却**不逐值证明模型填写的每项 measurement 等于原工具数值**。因此“关系结构有效”与“测量值经回执复算”是两个不同断言；M04 的正式支持/反驳状态不能被当作后者已闭合。当前离线 A 投影仅对受约束的同指标 `compare_periods` 描述关系做过宿主复算，不可反向概括到所有正式 EvidenceRecord。
+
+本轮的三联门：**RED** 是自然 E4 真实候选有成功 packet 却无可行动 typed claim/需求身份，M02 的失败又同时缺 refs/单位授权；R4 旧种子并未改变这个结论。**结构化替代物**应继续使用同一 `answer_bindings.v1` 与既有回执，在离线双轨中先证明一个跨历史可复核的宿主事实/具体缺口/方法或产物单元能保留正确价值且排除无据旁述；显式需求覆盖没有可核验身份时保持 `unassessed`，假设测量仅在原回执同身份复算后才能称“数值证实”。**拟退役旧门**仍是“一条 binding 授权整篇自由散文”以及相应散文词表硬判；本节没有退役任何门。
+
+后续实施前需与用户裁决的是优先级与语义所有权，而不是添加 `blocks` 同义字段、更多 `unassessed` 选择器或新模型总审批：建议暂停新默认关闭协议字段，先在 A 范围内选取跨历史有真实工具身份的最小可信核心价值切片，保留未知覆盖；同时把 Phase 4 的关系状态明确分成结构有效与原始数值已证实。若原始 VP/CP 要求自然中文多子问题都能被证明 `answered`，当前 `answer_requirements=0` 的真实路径不能完成此目标，必须先确定可核验的上游语义身份生产者及其授权边界。C 的真实 Shadow 调度若仍没有可行动 claim，只会空耗调用；D 默认切换和 Phase 7 退役均不因此获准。修改正式关系状态、引入上游语义生产者或改变发布默认策略，须先讨论具体正反候选及原始需求取舍。
