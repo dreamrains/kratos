@@ -28,3 +28,11 @@ VP G5/P5 要求假设身份、证据关系、范围与状态可追踪；模型�
 定向 `test_analysis_quality_guard_scope.py`、`test_hypotheses.py`、`test_stage3c0b_evidence_replenishment.py`、`test_publication_task_closure.py` 最终为 **45 passed**，含有效同 plan 关系、R4 别名、方向冲突、旧 plan 不展示、guard 后刷新以及未完成 task 非阻断。第一次过长隔离目录 `tmp/trust-reset-fo-20260924-hypothesis-audit-r1` 的 full-offline 为 **2966 passed/1 failed/1 skipped**，失败是 `test_golden_funnel_conversion_analysis` 报告落盘 `FileNotFoundError`，路径已超过 Windows 可用长度；同样长的隔离目录单文件复核又有两个同类报告落盘失败。因此没有为它改产品或 oracle。`tmp/tp4a1` 在发现 guard 后可能保留旧 ID 与缺少新 set 刷新时主动停止，**不计最终收据**。最终源码在短且全新的 `tmp/tp4a2` 完成 full-offline：**2969 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `FB56F3DDF2409BC8B2C301622747ED62E0DAAC472A3BB51C4D7F2A37926C42A0`；runner `provider_calls=forbidden`，实际真实 Provider initiated 0。这是 E2，不是 E3/E4。此前 `b70fbc3` 的 2964 通过不能充当本源码收据。
 
 本切片只在现有宿主关系规则内验证提议，不证明模型填写的每一项 EvidenceRecord 测量本身都经工具原始回执复算；工具结果身份、版本和 claim 覆盖仍须 Phase 6 A 核对。尚无修改后完整 E3 或真实 E4，不能宣称自然模型 M04 已成功。Phase 5 真 Shadow、Phase 6 A/C/D、Phase 7 状态均不升级；新真实 Provider 批次须另精确冻结并获用户新授权。
+
+## 本 HEAD 的 E3 尝试：浏览器桥接阻断，矩阵未开始
+
+产品提交 `main@54678971b7db6ee559d465361df229e8a5132cb2` 后，按根 `AGENTS.md` 重新检查 worktree、`.venv/Scripts/python.exe`、既有 `run_p7_browser_rehearsal.py`、新目录和空闲端口；使用唯一 Provider-disabled 入口启动 `tmp/tp4e3r1`、端口 5229。保留 exec session `59389`、监听 PID `18572`，`/__p7__/health` 返回 `{"ok":true,"provider_enabled":false}`。
+
+尚未导航或上传时，`cua_repl` 官方 `iab` tab 查找没有该新 URL 的 tab；浏览器清单连续两次返回 `Unable to load browser request-header policy`。检查本机插件 cache 只见旧 Browser 插件备份，当前官方 `cua_repl` 绑定重置后仍返回同一 policy 错误。未使用 Edge/Chrome、Playwright CLI、文件选择器或其他自动化栈，也未执行任何 B/IC/CONTENT 场景。按同一 exec session 停止服务后，端口 5229 无 listener。`runtime.jsonl` 只有 `server_start`，SHA256 `B6914DAEDE648406F22214738034BD7C94C1982F8FAB8B2DEED4165AF384B757`，`forbidden_provider_transport=0`，实际 Provider initiated calls **0**。
+
+因此 E3 状态是 **blocked_before_matrix / not_executed**，绝非 failed scenario、passed 或 E4。恢复官方内置浏览器桥接后须用**新的** run-dir、按完整 B01—B06/IC-B01—B06/CONTENT-B03/B07 顺序重跑；不把本次空运行目录重用，也不以单场景或 E2 代替全矩阵。真实 Provider 仍需新的精确冻结和用户授权。
