@@ -8,7 +8,7 @@
     "service_port": null,
     "scenario_order": ["M01", "M02", "M03", "M04", "M05", "M06"],
     "session_policy": "fresh isolated session per scenario",
-    "upload_policy": "click the visible upload label, await the Browser filechooser, and upload every scenario fixture in one setFiles call using absolute paths",
+    "upload_policy": "click the visible upload label, await the Browser filechooser, and upload each scenario's fixtures in one setFiles call using absolute paths; M04 alone uses two ordered upload stages in the same session, one setFiles call per stage",
     "failure_policy": "record ordinary scenario failures and continue; stop only for global service unavailability, session/data isolation failure, event integrity failure, evidence escalation, or accounting failure",
     "mutation_policy": "no code, prompt, fixture, oracle, model, endpoint, budget, or ledger changes during the batch; no partial reruns",
     "confirmation_action": "M06: when the frozen cost-scope question appears, select B. 代金券成本 + 渠道成本 and resume exactly once"
@@ -68,6 +68,10 @@
     },
     "M04": {
       "fixtures": ["M04-hyp-v1.csv", "M04-hyp-v2.csv"],
+      "upload_stages": [
+        {"before_prompt": 1, "fixtures": ["M04-hyp-v1.csv"]},
+        {"before_prompt": 2, "fixtures": ["M04-hyp-v2.csv"], "same_session": true, "after_first_turn_terminal": true}
+      ],
       "prompts": [
         "请基于当前 v1 数据提出并检验至少两种竞争性假设，使用真实工具记录支持证据、反证、冲突和仍未解决之处；只做描述性判断，不写成因果结论。\n分析文件: M04-hyp-v1.csv",
         "现在把 M04-hyp-v2.csv 作为同一业务对象的新数据版本载入。请保留 v1 的假设与证据审计，重新判断哪些关系已失效、哪些仍未决，不得把 v1 证据升级为 v2 结论。\n分析文件: M04-hyp-v2.csv"

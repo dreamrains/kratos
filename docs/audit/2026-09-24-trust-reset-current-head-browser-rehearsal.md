@@ -37,3 +37,7 @@
 修订时发现既有 `p08_scenario_audit.py` 的 M02 机械数字门仅搜索 `55`/`10`，对 `0.10` 与 `10%` 不具尺度识别能力。它已改为明示 `unassessed`、非阻断，真实 M02 必须检查同一源/回执/包/正文；未用新的关键词把旧误判搬到另一种写法。修改后须重新跑完整离线并以新 HEAD 冻结；修改前一次 full-offline 的 2962 passed/1 skipped 是中间时点，不作最终源码证明。
 
 修订后定向矩阵/审计器测试 **25 passed**；fresh `tmp/trust-reset-fo-20260924-contract-r2` 全量离线 **2963 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2964/failures=0/errors=0/skipped=1`、SHA256 `4AD327F5EC398580B74B2178495FC51E50869087033C9CD25B2F4C6855E942FD`，runner `provider_calls=forbidden`。这仍只是 E2，不证明自然模型会按原始尺度作答；M02 机械项为 `unassessed` 正是为了避免把它误报为通过。
+
+后续 M04 协议裁决：用户确认唯一两阶段上传例外。冻结契约现显式记录首轮前只上传 v1、首轮终态后同会话再上传 v2，且每一阶段仍用可见标签和一次 `filechooser`；其余场景不变。原 `1f4327e` 提交和 `r2` 离线收据是这一裁决之前的时点，不能作为最终冻结提交与测试收据。
+
+M04 协议修订后定向 **26 passed**；fresh `tmp/trust-reset-fo-20260924-contract-r3` full-offline **2964 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2965/failures=0/errors=0/skipped=1`、SHA256 `ACF02767CD5613CC8AAD6B021CB94DB6D362CCB6BB2DBFB687948311876C4E7F`，runner `provider_calls=forbidden`。此时尚未执行零调用 preflight 或真实 Provider。项目运行时代码未改，先前 `e05d957` 的完整 Provider-disabled 浏览器批次是运行时代码等价证据；不能将它自动写成新 HEAD 的自然模型通过。

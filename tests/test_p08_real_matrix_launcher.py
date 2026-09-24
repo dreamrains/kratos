@@ -76,6 +76,18 @@ def test_m04_contract_does_not_claim_unfrozen_failed_upload_rollback():
     assert not any("failed v2 upload" in oracle for oracle in scenario["hard_oracles"])
 
 
+def test_m04_contract_freezes_two_ordered_upload_stages_in_one_session():
+    launcher = _launcher_module()
+    contract = launcher._frozen_matrix_contract(Path(__file__).parents[1], 5215)
+
+    assert contract["scenario_inputs"]["M04"]["upload_stages"] == [
+        {"before_prompt": 1, "fixtures": ["M04-hyp-v1.csv"]},
+        {"before_prompt": 2, "fixtures": ["M04-hyp-v2.csv"],
+         "same_session": True, "after_first_turn_terminal": True},
+    ]
+    assert "M04 alone uses two ordered upload stages" in contract["operator_protocol"]["upload_policy"]
+
+
 def test_preflight_stdout_is_ascii_safe_without_losing_unicode_content():
     launcher = _launcher_module()
 
