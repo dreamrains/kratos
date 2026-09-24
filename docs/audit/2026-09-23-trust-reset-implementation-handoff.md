@@ -193,3 +193,9 @@ R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数
 状态不升级：Phase 5 有协议、校验和默认无人调用的视图，但无版本化真 Shadow 调度/质量/成本证据。Phase 6 的 A 仍缺 R11/R16 正确价值、R4 M03/M04 分项的内容等价保留和独立无据 99% 正式剔除；B 仅纯离线一次修订预算模拟；C 真 Shadow 和 D 正式处置均未通过独立门。进入 Phase 7 前，先对 R7—R21/完整 R16/中断 R4 及本地真实会话做双向可评估率与正误损失校准，确定 A 的可信且有用边界；再完成 C 的版本化提示、同一 Provider 账本/预算、显式开关/超时/零调用保护和真正 Shadow 质量校准；D 需另获正式发布策略裁决、确定性复核和完整 Provider-disabled 内置浏览器 E3。只有每族旧散文门已有结构所有者和双向回放才可逐族开始 Phase 7，真实 Provider E4 另做新冻结并获显式授权。不能把本次 trace 的测试全绿解释为这些门已过。
 
 本切片定向 **28 passed**；最终 fresh `tmp/tprb37` full-offline **2961 passed/1 skipped/16 warnings/0 failures**，JUnit `tests=2962/failures=0/errors=0/skipped=1`、SHA256 `CDBFEC1E100026895F0A3F43DE8FF44C40591331AC73E1568EC5DBBC64597B1E`。入口 `provider_calls=forbidden`、真实 Provider initiated 0；仅 E2，未做 E3/E4、push 或部署。
+
+## 29. 当前 HEAD 的完整 Provider-disabled 浏览器批次与真实冻结前停止门
+
+在 `main@e05d957b85b2f42e6643c20e578c1156dfb933b9`、无列出的工作树改动下，按根 `AGENTS.md` 的唯一 rehearsal 入口和 `iab` 单 tab 执行 B01—B06、IC-B01—B06、CONTENT-B03/B07 全批。目录 `tmp/trust-reset-e3-20260924-e05d957-r1`，PID 12452、端口 5227、保留 exec session 86678；服务已按原会话停止，证据未删除。16 个会话最终 run_state 为 14 completed、预期 B06-BUDGET failed、预期 B06-SAVE unknown；六源与富内容的压缩/刷新/导出、741 像素无整页溢出、控制台 0 warn/error 均有记录。`runtime.jsonl` SHA256 `3C40959DD22A97C01BE1CAF1EF4C822461460665F08A358CCF5BC57ED5EB2ABF`、`forbidden_provider_transport=0`、真实 Provider initiated 0。逐轮 SSE terminal 没有独立持久化轨迹，不能把 UI/run_state 收口夸写成终态事件唯一证明；这也不是自然模型或 Phase 6 D 的验收。完整会话映射、证据和限制见 `docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md`。
+
+E4 **尚未**执行预检冻结或真实调用。现有 P08 contract 把 M02 D7 硬写成 `10%`，与用户已经裁决的“原始 0.1 尺度、单位未确认；仅有明确单位证据时转换”冲突；M04 failed-v2-upload 硬断言却无对应 frozen action。先与用户确认这两项契约修订，再在修订后的新 HEAD 上通过既有零调用 preflight 精确冻结 model/endpoint/prompts/fixtures/oracles/budget/ledger/run-dir，另获显式真实 Provider 授权。不得沿用 R4/R16 的模型、端点、额度或授权；更不得为赶阶段把 Shadow 当总审批门。Phase 5 真调度/质量、Phase 6 A 的双向价值保留与正式无据 99%、C/D 独立门、Phase 7 逐族退役仍未闭合。
