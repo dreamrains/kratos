@@ -514,6 +514,7 @@ def project_offline_measurement_contract(
     workspace: Any,
     session_id: str,
     confirmation_records: list[Any] | tuple[Any, ...] = (),
+    canonical_history: Any = None,
 ) -> dict[str, Any]:
     """Default-off projection of versioned, user-confirmed column units.
 
@@ -570,7 +571,34 @@ def project_offline_measurement_contract(
             ):
                 continue
             target = record.resolution_params.get("measurement_mapping")
-            if not isinstance(target, dict) or set(target) != {"dataset", "column", "choices"}:
+            if not isinstance(target, dict):
+                continue
+            if set(target) == {"dataset", "column", "source_message_ref", "exact_span"}:
+                from data_agent.agent.confirmation.runtime import build_measurement_mapping_candidate
+
+                candidate = build_measurement_mapping_candidate(
+                    session_id=session_id, turn_id=record.turn_id,
+                    workspace=workspace, canonical_history=canonical_history,
+                    source_message_ref=target["source_message_ref"],
+                    exact_span=target["exact_span"], dataset=name,
+                    column=target["column"],
+                )
+                if (candidate is None or record.confirmation_id != candidate.confirmation_id
+                        or record.decision_key != candidate.decision_key
+                        or record.question != candidate.question
+                        or record.options != candidate.options
+                        or dict(record.resolution_params) != dict(candidate.resolution_params)
+                        or record.response not in {"fraction", "percentage_points"}):
+                    continue
+                unit = {"fraction": "比例", "percentage_points": "百分数"}[record.response]
+                candidates.setdefault(str(target["column"]), []).append({
+                    "column": str(target["column"]), "unit": unit,
+                    "scale": record.response, "unit_status": "confirmed",
+                    "confirmation_id": record.confirmation_id,
+                    "response_id": record.response_id,
+                })
+                continue
+            if set(target) != {"dataset", "column", "choices"}:
                 continue
             column = target["column"]
             if (
@@ -623,6 +651,31 @@ def project_offline_measurement_contract(
     if not result.ok:
         raise ValueError(f"{result.error_type}: {result.message}")
     return result.thaw_bundle()
+
+
+def project_persisted_measurement_contract(
+    bundle: Mapping[str, Any], *, workspace: Any, session_id: str,
+    sessions_root: Any, canonical_history: Any,
+) -> dict[str, Any]:
+    """Project only decisions read through the existing confirmation event store.
+
+    This remains an explicit, non-publishing input. The event store proves the
+    user response lifecycle; the projection rechecks its current source span,
+    column and data identity before assigning a unit.
+    """
+    from data_agent.agent.confirmation.store import ConfirmationStore
+
+    records = tuple(
+        record for record in ConfirmationStore(sessions_root, session_id).load_records().values()
+        if record.source == "host_measurement_mapping.v1"
+        and isinstance(record.resolution_params.get("measurement_mapping"), dict)
+        and set(record.resolution_params["measurement_mapping"])
+        == {"dataset", "column", "source_message_ref", "exact_span"}
+    )
+    return project_offline_measurement_contract(
+        bundle, workspace=workspace, session_id=session_id,
+        confirmation_records=records, canonical_history=canonical_history,
+    )
 
 
 def _brief_text_list(value: Any, limit: int = 8) -> list[str]:

@@ -365,6 +365,16 @@ def _ask_multiple(questions: list[dict]) -> dict:
                 "type": "string",
                 "description": "关联的 AnalysisSpec id，可选。",
             },
+            "measurement_mapping": {
+                "type": "string",
+                "description": (
+                    "仅当用户所说的业务指标与数据列或数值尺度的对应关系确有歧义，"
+                    "且该歧义会改变回答时使用。JSON 对象："
+                    '{"exact_span":"用户原文中的逐字片段","dataset":"当前数据集名",'
+                    '"column":"当前数值列名"}。宿主核对原文、列、版本并生成业务选项；'
+                    "不得填写技术哈希、代替用户回答或为方法许可使用。"
+                ),
+            },
         },
         "required": [],
     },
@@ -380,6 +390,7 @@ def ask_user_question(
     state_updates: str = "",
     related_task_id: int = 0,
     related_spec_id: str = "",
+    measurement_mapping: str = "",
 ) -> str:
     """向用户展示问题并获取回答。支持单问题和多问题模式。"""
 
@@ -407,6 +418,7 @@ def ask_user_question(
                 state_updates=state_updates,
                 related_task_id=related_task_id,
                 related_spec_id=related_spec_id,
+                measurement_mapping=measurement_mapping,
             )
 
     # ── 解析单问题选项 ──
@@ -434,4 +446,5 @@ def ask_user_question(
         state_updates=state_updates,
         related_task_id=related_task_id,
         related_spec_id=related_spec_id,
+        measurement_mapping=measurement_mapping,
     )

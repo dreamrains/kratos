@@ -271,6 +271,7 @@ class UserConfirmationRequired(Exception):
         related_task_id: int = 0,
         related_spec_id: str = "",
         decision_context: dict | None = None,
+        measurement_mapping: str = "",
     ):
         self.question = question
         self.options = options
@@ -284,6 +285,7 @@ class UserConfirmationRequired(Exception):
         # IC1：直接询问携带结构化决策上下文（decision_kind/missing_value/
         # affected_operations/scope_data_version），模型自报字段仍经宿主校验。
         self.decision_context = dict(decision_context or {})
+        self.measurement_mapping = str(measurement_mapping or "")
         super().__init__(question)
 
 
@@ -2494,16 +2496,53 @@ class AgentLoop:
         from data_agent.agent.confirmation.policy import RequestDisposition
         from data_agent.agent.confirmation.runtime import (
             build_direct_question_candidate,
+            build_measurement_mapping_candidate,
             confirmation_record_to_loop_result,
         )
 
         service = self._confirmation_runtime()
-        candidate = build_direct_question_candidate(
-            session_id=self.session_id,
-            turn_id=turn_id,
-            message_version=len(self.messages),
-            request=request,
-        )
+        if request.measurement_mapping:
+            from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+
+            if request.context:
+                return "指标映射需单独确认；当前多问题请求保持单位和子问题覆盖未评估。"
+            try:
+                target = json.loads(request.measurement_mapping)
+            except (TypeError, ValueError):
+                target = None
+            if not isinstance(target, dict) or set(target) != {"exact_span", "dataset", "column"}:
+                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
+            span = target["exact_span"]
+            if not isinstance(span, str):
+                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
+            source_messages = [
+                message["content"] for message in self.messages
+                if isinstance(message, dict) and message.get("role") == "user"
+                and isinstance(message.get("content"), str)
+                and message["content"].count(span) == 1
+            ]
+            if len(source_messages) != 1:
+                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
+            messages = [dict(message) for message in self.messages if isinstance(message, dict)]
+            history = CanonicalHistorySnapshot(
+                messages, len(messages), _history_sha256(messages), len(messages),
+            )
+            source_ref = "msg_" + hashlib.sha256(source_messages[0].encode("utf-8")).hexdigest()[:12]
+            candidate = build_measurement_mapping_candidate(
+                session_id=self.session_id, turn_id=turn_id,
+                workspace=self.context.workspace, canonical_history=history,
+                source_message_ref=source_ref, exact_span=span,
+                dataset=target["dataset"], column=target["column"],
+            )
+            if candidate is None:
+                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
+        else:
+            candidate = build_direct_question_candidate(
+                session_id=self.session_id,
+                turn_id=turn_id,
+                message_version=len(self.messages),
+                request=request,
+            )
         request_result = service.request(candidate)
         # IC2/设计§5：REUSED 恢复既有答案，不对旧 resolved record 再悬挂；
         # advisory/rejected 同样以一次正常工具响应继续本轮。

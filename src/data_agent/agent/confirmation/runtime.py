@@ -72,6 +72,95 @@ def build_required_question_candidate(
     )
 
 
+def build_measurement_mapping_candidate(
+    *, session_id: str, turn_id: str, workspace: Any,
+    canonical_history: Any, source_message_ref: str,
+    exact_span: str, dataset: str, column: str,
+) -> QuestionCandidate | None:
+    """Offer one version-scoped business mapping decision from a real user span.
+
+    The caller proposes the source span and column. This host check proves
+    their identity, not their semantic equivalence; only the user's selected
+    answer can confirm the mapping. No question is automatically scheduled.
+    """
+    from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+    from data_agent.session.workspace import Workspace, WorkspaceProxy
+    from pandas.api.types import is_numeric_dtype
+
+    if (not isinstance(canonical_history, CanonicalHistorySnapshot)
+            or not isinstance(canonical_history.messages, list)
+            or canonical_history.message_count != len(canonical_history.messages)
+            or canonical_history.sha256 != _history_sha256(canonical_history.messages)
+            or not isinstance(canonical_history.revision, int)
+            or canonical_history.revision < 0
+            or not all(isinstance(value, str) and value and len(value) <= 120
+                       and not any(ord(char) < 32 for char in value)
+                       for value in (session_id, turn_id, source_message_ref,
+                                     exact_span, dataset, column))
+            or not source_message_ref.startswith("msg_")
+            or not isinstance(workspace, (Workspace, WorkspaceProxy))):
+        return None
+    source_messages = [
+        message["content"] for message in canonical_history.messages
+        if isinstance(message, dict) and message.get("role") == "user"
+        and isinstance(message.get("content"), str)
+        and "msg_" + hashlib.sha256(message["content"].encode("utf-8")).hexdigest()[:12]
+        == source_message_ref and message["content"].count(exact_span) == 1
+    ]
+    if len(source_messages) != 1:
+        return None
+    try:
+        frame = workspace.get(dataset)
+        identity = workspace.get_data_identity(dataset)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if (frame is None or not isinstance(identity, dict)
+            or list(frame.columns).count(column) != 1
+            or not is_numeric_dtype(frame[column])
+            or not isinstance(identity.get("version_id"), str)
+            or not identity["version_id"]
+            or not identity.get("source_fingerprint")
+            or identity.get("fingerprint") != Workspace._frame_fingerprint(frame)):
+        return None
+    version_id = identity["version_id"]
+    seed = json.dumps([session_id, source_message_ref, exact_span, dataset,
+                       column, version_id], ensure_ascii=False, separators=(",", ":"))
+    decision_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
+    occurrence_id = hashlib.sha256(f"{decision_id}|{turn_id}".encode("utf-8")).hexdigest()[:24]
+    options = (
+        ConfirmationOption("对应，小数比例（例如 0.10 表示 10%）", "fraction"),
+        ConfirmationOption("对应，百分数原值（例如 0.10 表示 0.10%）", "percentage_points"),
+        ConfirmationOption("对应，但单位或尺度尚未确认", "raw"),
+        ConfirmationOption("不对应或无法确认", "unconfirmed"),
+    )
+    candidate = QuestionCandidate(
+        confirmation_id=f"measurement_{occurrence_id}",
+        session_id=session_id, turn_id=turn_id,
+        decision_key=f"measurement:{decision_id}",
+        source="host_measurement_mapping.v1", operation="confirm_measurement",
+        question=(f"你提到的「{exact_span}」是否对应数据「{dataset}」中的"
+                  f"「{column}」列？如果对应，请选择该列的数值尺度。"),
+        decision_impact="该映射会改变回答的指标身份和数值呈现。",
+        answer_mode=AnswerMode.SINGLE_SELECT, options=options,
+        blocking_surfaces=("measurement_mapping",), skippable=True,
+        resolution_action="record_confirmation_answer",
+        resolution_params={
+            "confirmation_type": "metric_definition",
+            "decision_kind": "metric_definition",
+            "missing_value": exact_span,
+            "affected_operations": ["answer_claim"],
+            "business_scope": f"{source_message_ref}|{exact_span}|{dataset}|{column}",
+            "measurement_mapping": {
+                "dataset": dataset, "column": column,
+                "source_message_ref": source_message_ref,
+                "exact_span": exact_span,
+            },
+        },
+        data_version=version_id,
+    )
+    return _apply_stable_decision_key(candidate)
+
+
 def _build_question_candidate(
     *,
     session_id: str,

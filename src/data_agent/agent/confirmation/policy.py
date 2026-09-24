@@ -51,12 +51,25 @@ class QuestionPolicy:
         existing: Iterable[ConfirmationRecord] = (),
         allow_advisory: bool = True,
     ) -> PolicyResult:
+        existing = tuple(existing)
         reused = self._matching_resolution(candidate, existing)
         if reused is not None:
             return PolicyResult(
                 disposition=RequestDisposition.REUSED,
                 reason="A still-valid resolution already covers this decision.",
                 reused_confirmation_id=reused.confirmation_id,
+            )
+
+        if candidate.source == "host_measurement_mapping.v1" and any(
+            record.status == ConfirmationStatus.SKIPPED
+            and record.decision_key == candidate.decision_key
+            and record.data_version == candidate.data_version
+            and record.spec_version == candidate.spec_version
+            for record in existing
+        ):
+            return self._nonblocking(
+                "用户已跳过同版本的指标映射确认；保持该映射未评估。",
+                allow_advisory,
             )
 
         if is_method_approval_shaped(candidate):
