@@ -6,7 +6,7 @@ from copy import deepcopy
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.loop import AgentLoop
-from data_agent.agent.publication_audit import build_offline_audit_view
+from data_agent.agent.publication_audit import build_offline_audit_view, build_shadow_audit_request
 from data_agent.agent.publication_synthesis import (
     build_publication_packet,
     extract_publication_facts,
@@ -104,6 +104,32 @@ def test_current_accepted_claim_has_unique_host_text_and_verbatim_user_anchor():
     assert claim["request_anchor"]["exact_span"] == "收入"
     assert claim["answer_coverage"] == "unassessed"
     assert packet == before
+
+
+def test_shadow_request_is_bounded_to_current_located_claim_and_reproducible():
+    state, packet, history, answer = _accepted_observation(extra_prose="\n另一结论为99%。")
+    request = build_shadow_audit_request(packet, answer, state=state, canonical_history=history)
+    assert request["status"] == "ready"
+    assert request["publication_effect"] == "none"
+    assert request["prompt_version"] == "publication_audit_shadow.v1"
+    assert request["packet_digest"] == packet["snapshot_digest"]
+    assert request["answer_sha256"] == packet["answer_sha256"]
+    assert len(request["claims"]) == 1
+    assert request["claims"][0]["claim_id"] == "claim_revenue"
+    assert "99%" not in json.dumps(request, ensure_ascii=False)
+    assert request == build_shadow_audit_request(packet, answer, state=state,
+                                                  canonical_history=history)
+
+
+def test_shadow_request_fails_closed_for_stale_or_unlocatable_claims():
+    state, packet, history, answer = _accepted_observation()
+    assert build_shadow_audit_request(packet, answer + "!", state=state,
+                                      canonical_history=history)["status"] == "unavailable"
+    old = deepcopy(packet)
+    old.pop("answer_render_trace")
+    state.publication_packets[:] = [old]
+    assert build_shadow_audit_request(old, answer, state=state,
+                                      canonical_history=history)["status"] == "unavailable"
 
 
 def test_independent_unbound_prose_is_not_granted_audit_claim_authority():
