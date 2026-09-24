@@ -108,3 +108,15 @@ RED：新增 `test_phase6_offline_multisource_table.py` 三项初始失败，均
 本切片将来要退役的旧门仍是“一条有效 binding 为整篇自由散文背书”，而不是当前已退役任何词表门或削弱回执/版本/数值硬门。它**没有**让 R11 0.1 自动变成 10%，也没有修复正式 99% 误放、R16 方法解释或 M04 非闭合假设。后续 A 门需用历史正反候选审查可信结果、具体宿主缺口、产物与解释保留；如果身份不足，保留 `unassessed` 并讨论工具契约，而非从旧正文回填。B 的动作仍只纯离线；C 真 Shadow 调度与校准、D 正式策略及完整 E3/E4 各自独立。
 
 本切片定向七文件 **188 passed**；fresh `tmp/tprb27` full-offline **2930 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2931/failures=0/errors=0/skipped=1`、SHA256 `0790E1759F31306768DBA9456465834080DD7DD592C9F2E7F10A4D9ABCBED1B0`，runner `provider_calls=forbidden`，真实 Provider initiated 0。没有 E3/E4、旧会话实际重放或正式发布策略切换；该试验不是 Phase 6 完成或 Phase 7 启动证据。
+
+## 13. B 门一次修订预算与 A 门复合请求证据缺口
+
+从 `main@3d5f6eaf0bec63826555a2d23ba38d2177cbc9eb` clean/ahead 68 进入。跨历史目标仍同时包括 R11 正确 D7/不预测 D30、R16 已通过 M05、R4 M03/M04 分项，以及 R7—R21 错单位/版本/算术和正式独立 99% 误放；不能把一个模拟器边界修复记作整套价值校准。B 门 RED 是两个不同、均 `claim_evidence_bound` 的 finding 各请求定向修订时，原纯函数返回两个 `targeted_revision_claim_ids`，违反 Phase 6 最多一次定向修订的预算。结构化替代仍是现有 `publication_audit.v1` 归一化结果和纯宿主 `simulate_shadow_actions`：只接纳 finding 顺序中的首个有效请求，不做未来任务规划，`publication_effect=none`，无真实模型调用。将来退役的旧门仍是整篇散文因单条 binding 获权威；本切片**没有**退役任何正式检查器或改变回执/数值硬门。单测 RED 为该断言失败并展示返回两个 ID；修复后审计/处置两文件 20 passed。
+
+并行只读核对 A 门：R11 完整批次 M02 `tmp/p08-real-provider-20260913-fe83160-r1/sessions/72b58ee16e69/analysis_state.json` 的 `goal` 明确要求 D1—D7 留存、判断 D30、区分已算结果与缺口；旧 `answer_requirements=[]`、`publication_packets=[]`。其 `curve_fitting` 回执 `tr_1536f8a2e4a5` 有 `x_col=day,y_col=retention` 及 `points[6].x=7,y=0.1`；当前 `extract_explicit_requirements` 对该复合句返回 `[]`，而对单一直接请求可产生候选。故上一切片的选择器只能核验结果身份，不足以把“用户问的 D7 留存”与该点闭合为 `answered`，也没有百分比单位证据。不能为 R11 新增拆句/同义词硬门、把 `analysis_spec` 模型指标标签升权或要求 Shadow 作总审批；依已裁决的无匹配保持 `unassessed`、原始尺度展示。若要让原始 VP/CP 的完整正确价值可由结构化核心保留，后续须先核对现有上游是否已有宿主可验证的子问题/单位契约；若没有，再向用户呈报范围和取舍，未经确认不改正式默认策略。
+
+R16 完整批次 M05 的会话 `58da9082dc02` 还证明这不是 R11 单句特例：同会话先由用户要求订单记录数与 amount 总额，随后连续五次要求改写受众/风格并明确“不改变数字、范围、限制和证据等级”，末轮要求恢复技术表达。旧 `answer_requirements=[]`，末轮没有重新写指标名；若只看末轮词句或模型当前意图，正确的 12/120 和方法边界会在可信核心中失去关联。该路径应借既有 canonical history 与宿主可核验的继承关系评估，而不是新造多轮关键词门。三份原始计划分别要求正确可复算结果不因措辞丢失、不能靠关键词缩窄原请求、子问题与方法上下文有可信覆盖；当前只读证据表明这三者在 A 门尚未同时达成。
+
+当前源码已核对所有者边界：`session.history.load_canonical_history` 提供消息字节、revision 和 SHA 身份，不解释子问题语义；`loop` 的 `update_requirement_lifecycle` 只保存 `extract_explicit_requirements` 的确定性结果，R11 复合句及 R16 首轮自然请求均未留下要求记录。旧归档早于当前 lifecycle 实现，不能据它单独断言当前多轮行为必败；但当前提取器对 R11 真实文本返回空已复现。`analysis_spec.metrics` 等模型字段仍只是线索。下一步若要补“事实结果 ↔ 用户子问题”的权威关系，应先定义由谁确认语义、如何在多轮继承和版本变化时撤销，再做当前 HEAD 的最小 RED；不可把 canonical history 的字节正确性误当语义覆盖已解决。
+
+最终 fresh `tmp/tprb28` full-offline **2931 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2932/failures=0/errors=0/skipped=1`、SHA256 `72B8C65B0ACED19F647B5AE7C346CA47472E0AAE3F7D0C3A5FC35DE64FE8F289`，runner `provider_calls=forbidden`、真实 Provider initiated 0。本切片没有 E3/E4、旧会话回写或正式处置。

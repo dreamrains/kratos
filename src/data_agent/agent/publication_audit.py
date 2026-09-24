@@ -192,7 +192,7 @@ def simulate_shadow_actions(packet: Mapping[str, Any], audit: Mapping[str, Any])
                 claim_id not in actions or order[action] > order[actions[claim_id]]
             ):
                 actions[claim_id] = action
-            elif action == "request_targeted_revision" and claim_id not in revisions:
+            elif action == "request_targeted_revision" and not revisions:
                 revisions.append(claim_id)
     excluded = frozenset(
         claim_id for claim_id, action in actions.items()

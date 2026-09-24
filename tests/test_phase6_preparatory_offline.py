@@ -196,6 +196,23 @@ def test_offline_revision_is_only_a_claim_id_and_stale_normalization_is_ignored(
     assert simulated_stale["targeted_revision_claim_ids"] == []
 
 
+def test_offline_revision_budget_is_one_even_for_two_bound_claims():
+    packet = _typed_packet()
+    second = dict(packet["answer_bindings"]["blocks"][0])
+    second.update({"claim_id": "claim_m02_d30_second",
+                   "exact_text": "[[claim:claim_m02_d30_second]]"})
+    packet["answer_bindings"]["blocks"].append(second)
+    raw = _audit(packet, action="request_targeted_revision")
+    raw["findings"].append({**raw["findings"][0],
+                            "finding_id": "finding_2", "claim_id": "claim_m02_d30_second"})
+    normalized = validate_shadow_audit(raw, packet)
+    assert all(item["binding_status"] == "claim_evidence_bound"
+               for item in normalized["findings"])
+    simulated = simulate_shadow_actions(packet, normalized)
+    assert simulated["targeted_revision_claim_ids"] == ["claim_m02_d30"]
+    assert simulated["publication_effect"] == "none"
+
+
 def test_r11_scope_preview_keeps_observation_boundary_without_future_value():
     packet = _typed_packet()
     packet["answer_bindings"]["blocks"] = []

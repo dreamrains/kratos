@@ -147,3 +147,11 @@ R11 的历史正确 10% 仍只可在新离线结构展示为原始 0.1（单位�
 继续顺序：先对 R11 正确边界、R16 已通过 M05、R4 M03/M04 分项与 R7—R21 正反候选做同 packet 离线双轨，逐项标出可信值/方法/具体宿主缺口/关系的来源和无法恢复原因；随后才能评估 A 的价值保留与独立 99% 剔除是否同时满足。B 仍须验证 claim 级动作、故障回退、一次修订预算但保持 `publication_effect=none`。C 需独立 Shadow 调度、版本化提示/digest、统一 Provider 账本/预算、超时降级及误删/漏检校准；任何真实 Provider 执行前另做精确冻结并取得新的显式授权。D 的默认切换、受限处置、确定性复核和完整 Provider-disabled E3 还需用户单独裁决；E4 再另冻另授。Phase 7 只在旧检查族已有结构化所有者和回放证据后逐族启动，绝不能一次性删光散文门。**此时不能称 Phase 6 已完成或 Phase 7 已进入。**
 
 给后续规划的粗估：在 A 的信息缺口不需要新增上游工具契约、C 的 Provider 冻结/授权及时取得、E3 未发现新系统级故障的前提下，A/B 跨历史校准及补齐约 1–2 周，C 的调度/离线校准及受控真实验证约 1–2 周，D 的裁决后接入/完整本地验收约 1–2 周，合计 **约 3–6 个工程周才可能进入 Phase 7**。这是工作量级估计，不是已获授权的日历日期；外部授权等待、原始需求价值无法从现有宿主证据重建、或 E3/E4 失败会延长。若 A 出现“可信且有用”不可同时实现的结构缺口，先向用户呈报取舍，不靠新词表或 Shadow 总审批抢工期。
+
+## 22. B 门一次修订预算及 A 门待决证据（2026-09-24）
+
+从 `main@3d5f6eaf0bec63826555a2d23ba38d2177cbc9eb`、clean/ahead 68 进入。现有纯离线审计动作可因两个均证据绑定的 finding 返回两个待修订 claim；RED/修复及跨历史 R11 复核见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §13。最小修复将 `targeted_revision_claim_ids` 限为首个有效 claim，仍只模拟、`publication_effect=none`；不调模型、不进入 AgentLoop、不接入正式处置。相关两文件 **20 passed**；fresh `tmp/tprb28` full-offline **2931 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `72B8C65B0ACED19F647B5AE7C346CA47472E0AAE3F7D0C3A5FC35DE64FE8F289`，Provider transport forbidden、initiated 0。
+
+更重要的 A 门发现：R11 完整批次 M02 的旧 `answer_requirements` 与终局 `publication_packets` 都为空；当前提取器对真实复合请求也返回空，尽管同回执提供 day=7/retention=0.1。上一切片只能核验工具结果身份，不能把模型意图/旧自然句升为用户子问题权威，更不能将 0.1 无据换算为 10%。继续默认关闭的跨历史离线校准；先寻找已有宿主可验证的用户子问题及单位契约，若确实不存在，应与用户讨论新增上游契约或接受 `unassessed` 的价值损失，不能靠句式词表与 Shadow 总门填空。Phase 6 A/C/D 和 Phase 7 状态不因 B 的预算收紧而改变。
+
+R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数与 amount 总额，后续五轮是要求改变表达而不改变数字/范围/证据，末轮不再重复指标；其 `answer_requirements=[]`。下一 A 门复核必须检查既有 canonical history 是否已有可宿主验证的子问题继承及单位身份，不能仅从末轮文本或模型当前意图重建。详见跨历史记录 §13；若需新增此权威契约，先与用户对照三份原始需求裁决。

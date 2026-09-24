@@ -26,6 +26,7 @@
 - 用户已批准上述方向；第六 A+B 离线切片把 `curve_fitting` 点对及 `analyze_time_series` 描述字段的执行身份按回执/参数/数据版本/实际指纹投影进同一默认关闭 packet，R16 聚合方法参数还需与派生 identity 的表达式闭合。任意文本单元格默认遮蔽；单位未证实只显示原始尺度。RED 和仍未闭合的价值/发布门见跨历史记录 §11。它不授权 `answered`、假设关系、真实 Shadow、正式策略或 Provider。
 - 第六切片最终 fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`，Provider transport forbidden、实际 initiated 0。该 E2 不证明 R11 的 10% 单位、R16 旧方法表等价保留或 M04 关系已授权，也不替代 E3/E4；正式独立 99% 误放仍待默认策略门。
 - 用户批准在现有 `answer_bindings.v1` 上做**默认关闭、纯离线目标选择器试验**。第七 A+B 切片从 `main@83dac2fb3d97c8d45c7a704517b4de31f4763577` clean 状态进入：模型提议回执/数据版本/横纵列/点/期望原始值，宿主与同 packet 的已执行结果及原回执事实逐项核对；通过只记 `verified_result_identity`，`answer_coverage=unassessed`、`publication_effect=none`。无可信用户子问题绑定时不标 `answered`；正式 parser 仍拒绝该试验字段。RED、跨历史边界和最终 fresh `tmp/tprb27` **2930 passed/1 skipped/16 warnings/0 failures** 收据见跨历史记录 §12。R11 10% 单位、R16 方法价值、M04 假设 ID、正式独立 99% 仍未闭合；不可把试验等同 A 门通过或 Phase 7 开始。
+- 后续 B 预算切片从 `main@3d5f6ea` clean 状态进入：两个证据绑定的 finding 可使现有纯离线模拟返回两个待修订 claim，违背 Phase 6 “最多一次”。RED、宿主限额、未退役旧门及 R11/R16 真实复合/多轮请求的 A 门证据缺口见跨历史记录 §13；fresh `tmp/tprb28` full-offline **2931 passed/1 skipped/16 warnings/0 failures**。该修复仅限制离线修订 ID 数量，不调模型、不改变正式发布。R11 旧 `answer_requirements=[]` 且当前提取器对其复合句也返回空，不得补拆句词表或把模型 `analysis_spec` 当用户意图权威；仍保持 `unassessed` 并检查上游契约是否已有可验证身份。
 
 ## 0. 本次重置要解决什么
 
