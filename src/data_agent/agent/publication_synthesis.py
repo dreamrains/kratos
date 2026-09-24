@@ -3501,6 +3501,211 @@ def validate_offline_target_selectors(
     return outcome
 
 
+def validate_offline_multiturn_metric_links(
+    current_packet: dict[str, Any], bindings: dict[str, Any], *, state: Any,
+    offline_workspace: Any, prior_history: Any, current_history: Any,
+) -> dict[str, Any]:
+    """Link an earlier verbatim request span to a same-named tool column.
+
+    This is an offline identity trace, not a decision that a later turn carries
+    the old request or that any metric has been answered. It reads only an
+    explicitly selected packet already in the session's publication history.
+    """
+    from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+    from data_agent.session.workspace import Workspace
+
+    outcome: dict[str, Any] = {"publication_effect": "none", "results": [], "issues": []}
+
+    def valid_packet(packet: Any) -> bool:
+        if not isinstance(packet, dict) or not isinstance(packet.get("snapshot_digest"), str):
+            return False
+        body = {key: value for key, value in packet.items() if key not in {"id", "snapshot_digest"}}
+        seed = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        digest = "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        return packet["snapshot_digest"] == digest and packet.get("id") == "ps_" + digest[7:19]
+
+    def valid_history(snapshot: Any) -> bool:
+        return (
+            isinstance(snapshot, CanonicalHistorySnapshot)
+            and isinstance(snapshot.messages, list)
+            and isinstance(snapshot.revision, int)
+            and snapshot.revision >= 0
+            and snapshot.message_count == len(snapshot.messages)
+            and snapshot.sha256 == _history_sha256(snapshot.messages)
+        )
+
+    def last_user(snapshot: Any) -> str | None:
+        return next((item.get("content") for item in reversed(snapshot.messages)
+                     if isinstance(item, dict) and item.get("role") == "user"
+                     and isinstance(item.get("content"), str)), None)
+
+    if (
+        not valid_packet(current_packet)
+        or current_packet.get("session_id") != getattr(state, "session_id", None)
+        or not isinstance(current_packet.get("offline_trust_projection"), dict)
+        or not isinstance(bindings, dict)
+        or bindings.get("schema_version") != "answer_bindings.v1"
+        or bindings.get("packet_digest") != current_packet.get("binding_digest")
+        or not isinstance(bindings.get("blocks"), list)
+        or len(bindings["blocks"]) > 32
+        or not valid_history(prior_history)
+        or not valid_history(current_history)
+        or prior_history.revision > current_history.revision
+        or current_history.messages[:len(prior_history.messages)] != prior_history.messages
+        or len(current_history.messages) <= len(prior_history.messages)
+    ):
+        outcome["issues"].append({"code": "invalid_multiturn_identity_snapshot"})
+        return outcome
+    current_user = last_user(current_history)
+    if (
+        not current_user or len(" ".join(current_user.split())) > 1000
+        or " ".join(current_user.split()) != current_packet.get("question")
+    ):
+        outcome["issues"].append({"code": "unmatched_current_user_turn"})
+        return outcome
+
+    seen: set[str] = set()
+    block_fields = {
+        "claim_id", "exact_text", "claim_type", "status", "requirement_refs",
+        "fact_refs", "derived_refs", "source_span_selector",
+    }
+    selector_fields = {
+        "source_message_ref", "exact_span", "prior_packet_id", "receipt_ref",
+        "result_version_id", "metric_column",
+    }
+    for index, block in enumerate(bindings["blocks"]):
+        issue = {"code": "unverified_multiturn_metric_link", "block_index": index}
+        if not isinstance(block, dict) or set(block) != block_fields:
+            outcome["issues"].append(issue)
+            continue
+        claim_id = block.get("claim_id")
+        selector = block.get("source_span_selector")
+        if (
+            not isinstance(claim_id, str) or not _SCENARIO_CLAIM_ID.fullmatch(claim_id)
+            or claim_id in seen or block.get("exact_text") != f"[[claim:{claim_id}]]"
+            or block.get("claim_type") != "observed_fact"
+            or block.get("status") != "unassessed"
+            or block.get("requirement_refs") != []
+            or block.get("fact_refs") != [] or block.get("derived_refs") != []
+            or not isinstance(selector, dict) or set(selector) != selector_fields
+            or any(not isinstance(value, str) or not value or len(value) > 256
+                   for value in selector.values())
+        ):
+            outcome["issues"].append(issue)
+            continue
+        seen.add(claim_id)
+        prior_packets = [item for item in getattr(state, "publication_packets", []) or []
+                         if isinstance(item, dict) and item.get("id") == selector["prior_packet_id"]]
+        if len(prior_packets) != 1 or not valid_packet(prior_packets[0]):
+            outcome["issues"].append(issue)
+            continue
+        prior_packet = prior_packets[0]
+        source_user = last_user(prior_history)
+        metric_column = selector["metric_column"]
+        span = selector["exact_span"]
+        metric_pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(metric_column)}(?![A-Za-z0-9_])")
+        source_ref = "msg_" + hashlib.sha256((source_user or "").encode("utf-8")).hexdigest()[:12]
+        if (
+            not source_user or len(" ".join(source_user.split())) > 1000
+            or " ".join(source_user.split()) != prior_packet.get("question")
+            or prior_packet.get("session_id") != current_packet["session_id"]
+            or not isinstance(prior_packet.get("offline_trust_projection"), dict)
+            or selector["source_message_ref"] != source_ref
+            or source_user.count(span) != 1 or not metric_pattern.search(span)
+            or sum(1 for message in current_history.messages
+                   if isinstance(message, dict) and message.get("role") == "user"
+                   and message.get("content") == source_user) != 1
+            or not isinstance(current_packet.get("sources"), list)
+            or any(source.get("receipt_id") == selector["receipt_ref"]
+                   for source in current_packet["sources"] if isinstance(source, dict))
+        ):
+            outcome["issues"].append(issue)
+            continue
+        projection = prior_packet["offline_trust_projection"]
+        if (not isinstance(projection.get("executed_results", []), list)
+                or not isinstance(projection.get("derived_snapshots", []), list)
+                or not isinstance(prior_packet.get("sources"), list)):
+            outcome["issues"].append(issue)
+            continue
+        candidates = []
+        for result in projection.get("executed_results", []):
+            if (isinstance(result, dict) and result.get("status") == "context_only"
+                    and result.get("unit_status") == "not_confirmed"
+                    and result.get("receipt_id") == selector["receipt_ref"]
+                    and result.get("dataset_version_id") == selector["result_version_id"]
+                    and isinstance(result.get("input_columns"), dict)
+                    and result["input_columns"].get("y") == metric_column):
+                candidates.append((result, result.get("dataset"), []))
+        for snapshot in projection.get("derived_snapshots", []):
+            method = snapshot.get("method_parameters") if isinstance(snapshot, dict) else None
+            agg = method.get("agg") if isinstance(method, dict) else None
+            if (isinstance(snapshot, dict) and snapshot.get("status") == "context_only"
+                    and snapshot.get("unit_status") == "not_confirmed"
+                    and snapshot.get("receipt_id") == selector["receipt_ref"]
+                    and snapshot.get("derived_version_id") == selector["result_version_id"]
+                    and isinstance(agg, dict) and isinstance(agg.get(metric_column), list)
+                    and all(isinstance(fn, str) for fn in agg[metric_column])):
+                candidates.append((snapshot, snapshot.get("derived_dataset"), agg[metric_column]))
+        if len(candidates) != 1:
+            outcome["issues"].append(issue)
+            continue
+        result, dataset_name, functions = candidates[0]
+        sources = [source for source in prior_packet["sources"]
+                   if isinstance(source, dict)
+                   and source.get("receipt_id") == selector["receipt_ref"]
+                   and source.get("tool_name") == result.get("tool_name")
+                   and source.get("result_sha256") == result.get("result_sha256")]
+        receipts = [receipt for receipt in getattr(state, "tool_receipts", []) or []
+                    if isinstance(receipt, dict)
+                    and receipt.get("id") == selector["receipt_ref"]
+                    and receipt.get("tool_name") == result.get("tool_name")
+                    and receipt.get("result_sha256") == result.get("result_sha256")]
+        if len(sources) != 1 or len(receipts) != 1:
+            outcome["issues"].append(issue)
+            continue
+        identities = receipts[0].get("data_identities")
+        if not isinstance(identities, dict) or not identities or dataset_name not in identities:
+            outcome["issues"].append(issue)
+            continue
+        try:
+            current = {name: offline_workspace.get_data_identity(name) for name in identities}
+            frames = {name: offline_workspace.get(name) for name in identities}
+            identity_ok = all(
+                current[name] == identity
+                and frame is not None
+                and Workspace._frame_fingerprint(frame) == identity.get("fingerprint")
+                for name, identity in identities.items() for frame in [frames[name]]
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            identity_ok = False
+        if not identity_ok or current[dataset_name].get("version_id") != selector["result_version_id"]:
+            outcome["issues"].append(issue)
+            continue
+        intervening = sum(1 for item in current_history.messages[len(prior_history.messages):]
+                          if isinstance(item, dict) and item.get("role") == "user")
+        if intervening < 1:
+            outcome["issues"].append(issue)
+            continue
+        outcome["results"].append({
+            "claim_id": claim_id,
+            "link_status": "verified_history_and_tool_column",
+            "source_message_ref": source_ref,
+            "source_span_sha256": "sha256:" + hashlib.sha256(span.encode("utf-8")).hexdigest(),
+            "prior_packet_id": prior_packet["id"],
+            "receipt_ref": selector["receipt_ref"],
+            "result_version_id": selector["result_version_id"],
+            "metric_column": metric_column,
+            "available_functions": list(functions),
+            "intervening_user_turns": intervening,
+            "history_sha256": current_history.sha256,
+            "history_revision": current_history.revision,
+            "continuation_intent_status": "unassessed",
+            "answer_coverage": "unassessed",
+            "unit_status": "not_confirmed",
+        })
+    return outcome
+
+
 def render_trusted_core_preview(
     packet: dict[str, Any], bindings: dict[str, Any] | None,
     *, excluded_claim_ids: frozenset[str] = frozenset(),

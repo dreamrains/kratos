@@ -6,7 +6,7 @@ import pandas as pd
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.publication_synthesis import (
     build_publication_packet, render_trusted_core_preview, update_requirement_lifecycle,
-    validate_offline_target_selectors,
+    validate_offline_target_selectors, validate_offline_multiturn_metric_links,
 )
 from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
 from data_agent.session.workspace import Workspace
@@ -290,3 +290,49 @@ def test_historical_multi_turn_style_chain_does_not_invent_missing_requirement()
     history = _canonical([{"role": "user", "content": first},
                           {"role": "user", "content": later}])
     assert validate_offline_target_selectors(packet, binding, canonical_history=history)["results"] == []
+
+
+def test_multiturn_executed_result_links_only_literal_tool_column():
+    state, workspace = _state_and_workspace()
+    first = "请回答 retention"
+    later = "请换一种表达，保持原结果"
+    prior = build_publication_packet(
+        state, user_input=first, substantive_tools=set(), receipt_ids=["tr_curve"],
+        offline_trust_projection=True, offline_workspace=workspace,
+    )
+    state.add_publication_packet(prior)
+    current = build_publication_packet(
+        state, user_input=later, substantive_tools=set(), receipt_ids=[],
+        offline_trust_projection=True, offline_workspace=workspace,
+    )
+    first_history = _canonical([{"role": "user", "content": first}])
+    current_history = _canonical([{"role": "user", "content": first},
+                                  {"role": "user", "content": later}])
+    selector = {
+        "source_message_ref": "msg_" + hashlib.sha256(first.encode("utf-8")).hexdigest()[:12],
+        "exact_span": "retention", "prior_packet_id": prior["id"],
+        "receipt_ref": "tr_curve",
+        "result_version_id": workspace.get_data_identity("retention")["version_id"],
+        "metric_column": "retention",
+    }
+    binding = {
+        "schema_version": "answer_bindings.v1", "packet_digest": current["binding_digest"],
+        "blocks": [{
+            "claim_id": "claim_retention", "exact_text": "[[claim:claim_retention]]",
+            "claim_type": "observed_fact", "status": "unassessed",
+            "requirement_refs": [], "fact_refs": [], "derived_refs": [],
+            "source_span_selector": selector,
+        }],
+    }
+    checked = validate_offline_multiturn_metric_links(
+        current, binding, state=state, offline_workspace=workspace,
+        prior_history=first_history, current_history=current_history,
+    )
+    assert checked["results"][0]["link_status"] == "verified_history_and_tool_column"
+    assert checked["results"][0]["available_functions"] == []
+    assert checked["results"][0]["answer_coverage"] == "unassessed"
+    selector["exact_span"] = "留存"
+    assert validate_offline_multiturn_metric_links(
+        current, binding, state=state, offline_workspace=workspace,
+        prior_history=first_history, current_history=current_history,
+    )["results"] == []

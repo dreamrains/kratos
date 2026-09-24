@@ -169,3 +169,9 @@ R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数
 这个协议尚缺**真实生产者**：当前上传格式不提供已解析的列单位声明；现有确认运行时也不自动产生 `host_measurement_mapping.v1` 问题。单测构造的 resolved record 只验证字段和失效规则，真实 R11/R16 确认快照均 `records={}`，不得宣称 0.1→10%、R16 12/120 的单位或正式 `answered` 已恢复。投影也不做百分比换算、自动暂停、Shadow 或发布接线。正式完整候选的独立无据 99% 风险、R4 M03/M04 价值、R16 方法上下文、R11 多轮/复合子问题关联仍属 A/D 双门未完成；C 真实 Shadow 调度与 Phase 7 旧门逐族退役均未获本切片授权。
 
 后续先查真实上传是否存在明确机器可读的单位/尺度声明或实际用户已确认决策；若找不到，不为测试造 sidecar 或推断中文/英文单位。若要新增宿主确认生产者，应明确触发条件、用户可见数据集版本＋列、冲突/重载撤销和与 IC 原始需求的暂停边界，并在接正式发布前另行讨论。定向 **302 passed**；最终 fresh `tmp/tprb34` full-offline **2949 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `5D3F003C4B54F46221B0227746CBFD24D6038643C22D34DB6E162CFFA01051E7`，Provider transport forbidden、真实 initiated 0；仍仅 E2，详见跨历史记录 §15。`tprb32` 是补充生产者边界前的旧收据，`tprb33` 主动中止，不能冒充最终通过。续接时仍先核实 HEAD/dirty，别把本段写时状态当实时状态。
+
+## 25. 第十 A+B 离线切片：多轮原文片段—工具列身份，非语义继承
+
+用户选择先做多轮身份离线契约而不升级单位。精确历史 RED、结构替代、将来退役旧门及跨历史限界见跨历史记录 §16。既有 `intent.py` 可路由轮次，但不能证明用户在后续改写轮继续要求哪个旧指标；R16 首轮/末轮的真实文本在当前 requirement 提取器均为空。新纯离线 `validate_offline_multiturn_metric_links` 只验证旧请求逐字 span、源消息 hash、当前 canonical history 严格包含旧历史、已有旧 packet 与已执行回执/同名列、当前全部涉及数据版本/帧指纹。只从已有 `executed_results` 或 `derived_snapshots` 读取执行身份；不会把模型标签、中文近义词或用户“不要改变数字”推理成指标覆盖。可识别 R16 型 `amount` 字面列及工具函数列表，但始终 `answer_coverage=unassessed`、延续意图未评估、单位未确认、`publication_effect=none`；正式 parser 拒绝新增的离线提议字段。
+
+重要续接事实：生产运行尚不持久化默认关闭的离线 packet，R16 旧终局包也没有该投影；测试用真实六轮文字和同形宿主结果验证协议，**不是**旧 R16 当前 HEAD 的真实通过。若下一步仍只是增加更多只返回 `unassessed` 的选择器，而没有真实用户子问题语义/继承的权威生产者，必须先停下与用户讨论，不要让 Phase 6 变成无限协议原型循环。正式独立无据 99% 误放、R11/R16 完整价值、R4 M03/M04、Shadow C、处置 D、Phase 7 均保持未闭合。定向 **168 passed**；最终 fresh `tmp/tprb35` full-offline **2953 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `6700C53EE3CD3FE89B335E1DD2C358935D939C3C31750BC6FC39A0ED0ADFBA90`，Provider transport forbidden、真实 initiated 0，仍仅 E2。详见跨历史记录 §16。
