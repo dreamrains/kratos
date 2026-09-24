@@ -48,6 +48,7 @@
 - 后续从 `main@9932118` 进入，Phase 5/C 增加默认无人调用的纯离线 `build_shadow_audit_request`：只以同会话已接受 packet、canonical history、回执及宿主原位 trace 中可定位的 typed claim 构造版本化且有 prompt/input/view digest 的受限输入；旧/篡改/无定位包 fail closed，输入受 24 KB 上限。初始导入 RED、定向 30 passed，fresh `tmp/tp5c-request-r1` full-offline **2981 passed/1 skipped/16 warnings/0 failures**、Provider 0，见交接记录 §34。它不调度 Shadow、不改变正式发布；历史旧会话仍无现行 typed 分母，引用合法却语义误删的 RED 仍在。A 的正确价值保留和正式 99% 误放、C 的真实调用/成本/正反校准、D 的用户策略裁决和 E3 都未由此完成。
 - 用户随后明确选择先补可验证语义身份、保持正式默认不变；对于会改变结果且现有请求/来源不能确定的业务映射，仅使用既有确认流程问一次、同版本复用，skip 保持未评估。新宿主生产者经 `ask_user_question` 的显式三指针提议核对用户原文、当前列与实际数据身份，并覆盖模型自写问题/选项；已解决的确认须从原事件存储读取并与现行历史/版本重建，才可给离线 data-understanding 列尺度映射。见交接记录 §35。此路径尚未让 R11/R16 旧会话或当前回答自动取得 `answered`，也未启用 Shadow、正式处置或真实 Provider。
 - 后续第十一条 Phase 2/A 默认关闭切片将上述确认扩为同一次问题中的数值横轴与连续整数范围；只有真实 resolved 决定、原曲线回执输入列、同版本实际帧、全段 x/y 事实和拟合范围闭合时，既有 `descriptive_fit` 宿主 claim 才对逐字观测 span 标 `answered`。skip/旧会话/错列/过期/缺点继续未评估，D30 情景不继承观测覆盖。RED、结构化替代、旧门与阶段边界见交接记录 §36；正式默认、Shadow C、处置 D 和真实 Provider 均未开启。
+- 同一已确认观测 claim 的 Phase 5 离线 audit view 修正了旧单位/覆盖投影矛盾：仅在既有宿主绑定再次有效时带入确认 ID、`confirmed` 与逐字观测 span 的 `answered`。RED、同包边界和未完成的真实 C/D 门见交接记录 §37。该请求构造仍未调 Provider 或改变可见发布。
 
 ## 0. 本次重置要解决什么
 

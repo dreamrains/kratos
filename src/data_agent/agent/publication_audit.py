@@ -59,7 +59,7 @@ def _typed_claim_evidence(packet: Mapping[str, Any]) -> dict[str, set[str]]:
         return {}
     from data_agent.agent.publication_synthesis import (
         _comparison_binding_issue, _derived_binding_issue,
-        _descriptive_fit_binding_issue, _observed_binding_issue,
+        _curve_confirmed_series, _descriptive_fit_binding_issue, _observed_binding_issue,
         _scenario_binding_issue,
     )
 
@@ -85,6 +85,10 @@ def _typed_claim_evidence(packet: Mapping[str, Any]) -> dict[str, set[str]]:
         }
         if block.get("receipt_ref"):
             refs.add(block["receipt_ref"])
+        if block.get("claim_type") == "descriptive_fit":
+            confirmed = _curve_confirmed_series(block, packet)
+            if confirmed is not None:
+                refs.add(confirmed[0]["confirmation_id"])
         for source in sources:
             if any(fact.get("fact_id") in refs for fact in source.get("facts", []) if isinstance(fact, dict)):
                 refs.add(source.get("receipt_id"))
@@ -249,6 +253,7 @@ def build_offline_audit_view(
     claims: list[dict[str, Any]] = []
     unlocatable: list[str] = []
     seen_ids: set[str] = set()
+    from data_agent.agent.publication_synthesis import _curve_confirmed_series
     for block in bindings["blocks"]:
         if not isinstance(block, dict) or not isinstance(block.get("claim_id"), str):
             continue
@@ -280,14 +285,30 @@ def build_offline_audit_view(
                 or len(refs) > 20 or any(len(ref) > 128 for ref in refs)):
             unlocatable.append(claim_id)
             continue
+        confirmed = (_curve_confirmed_series(block, packet)
+                     if block.get("claim_type") == "descriptive_fit" else None)
+        confirmed_requirement = (
+            next((item for item in packet["requirements"]
+                  if isinstance(item, dict)
+                  and item.get("id") == confirmed[0]["requirement_id"]), None)
+            if confirmed is not None else None
+        )
         claims.append({
             "claim_id": claim_id, "claim_type": block["claim_type"],
             "answer_span": [start, end],
             "location_status": "host_rendered_at_publication",
             "host_rendered_text": host_text, "evidence_refs": sorted(refs),
             "request_anchor": request_anchor(block),
-            "answer_coverage": "unassessed",
-            "unit_status": block.get("unit_status", "not_confirmed"),
+            "answer_coverage": (
+                "answered" if isinstance(confirmed_requirement, dict)
+                and confirmed_requirement.get("answer_coverage") == "answered"
+                and confirmed_requirement.get("coverage_check") == "checked"
+                else "unassessed"
+            ),
+            "unit_status": (
+                "confirmed" if confirmed is not None
+                else block.get("unit_status", "not_confirmed")
+            ),
         })
     view = {
         "schema_version": "publication_audit_view.v1",

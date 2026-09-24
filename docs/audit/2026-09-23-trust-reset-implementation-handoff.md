@@ -263,3 +263,12 @@ Phase 4 现在将模型 EvidenceRecord 的 measurement 视为候选：只有同�
 - **结构化替代**：既有 `ask_user_question.measurement_mapping` 可额外提议数值横轴、起终点；宿主先核对当前帧该范围每个整数点恰好一个，再在同一业务问题中展示逐字 span、横轴范围、数值列和尺度选项。只有持久确认事件为 resolved fraction/percentage_points，且原文/history、决定 key、问句/选项、数据版本、原 `curve_fitting` 输入列、同数据集帧实际指纹、完整点对事实与观测范围/有效样本数全部闭合，显式默认关闭的同一 packet 才生成 `confirmed_observation` 与该 span 的宿主 requirement。`descriptive_fit` 沿用现有字段与 renderer，宿主输出全段观测值和拟合验证边界；情景 claim 不继承该观测子问题引用，D30 仍只是不经验证的情景。普通 AgentLoop 不传该离线开关，正式默认不变。
 - **退役与停止门**：当前未退役“一条有效 binding 授权整篇散文”的旧门，也未授权 Phase 6 D 的正式策略切换。正例仅证明该逐字观测 span 的 `answered`，不证明“解释”语义、D30 可预测、R11 旧会话或 R16 M05 的完整价值；也不证明自然模型会主动提出正确确认指针。R4/E4 M03/M04、R7—R21 和独立无据 99% 仍为双向价值校准分母。真实 Shadow C、完整 E3/E4、正式发布 D、push 与部署均未由此启动。
 - **收据**：针对确认生产、M02 typed、出版与覆盖的定向 **185 passed**；随后增加一次确认的横轴宿主入口和百分数原值/缺中间点反例，fresh `tmp/tp2-confirmed-series-r1` full-offline **2994 passed、1 skipped、16 warnings、0 failures**（347.83 秒），JUnit SHA256 `7A99AAD748A913F057E14698418A202ED3D1056913FF33D6CCCF3AFA176C851E`，runner `provider_calls=forbidden`、实际 Provider initiated 0。仅为 E2；不能平移为真实历史或正式发布完成。
+
+## 37. 已确认观测 claim 到 Phase 5 离线审计输入的同一身份
+
+从 `main@20665b9`、工作树清洁进入。§36 的同包 M02 claim 在 accepted answer 中已有宿主原位 trace，但旧 `build_offline_audit_view` 固定把它报告成单位未确认、覆盖未评估；若以此构造 Shadow 输入，会让审计模型看到与渲染的百分比表矛盾的状态。
+
+- **RED**：新增正例按已持久化 packet、用户原文与 assistant answer 的 canonical history 构造现有 audit view，首轮失败为 `unit_status=not_confirmed`，而宿主已确认并渲染百分比。测试要求现有确认 ID 成为同 claim 的 evidence ref，且已核对 `answered`/`checked` 的逐字观测 requirement 才报告 `answered`；旧无确认 claim 仍保持未评估。
+- **结构化替代**：复用 `_curve_confirmed_series` 对 packet 中同一 typed claim、七组事实、版本和 requirement 的校验，仅在通过时将确认 ID 加入该 claim 的受限 evidence refs，并向现有 `publication_audit_input.v1` 投影 `unit_status=confirmed` 与已核验覆盖。请求仍有原 prompt/input/view digest、24 KB 限额及 `publication_effect=none`；未引入新审计器、账本、模型调用或整篇散文授权。
+- **退役与停止门**：不改变正式发布或旧散文门，也不把已确认的观测尺度解释为拟合验证、D30 可预测或自然历史 R11 已通过。真实 Phase 5/C Shadow 调度、正反质量与成本校准仍需单独冻结和授权；Phase 6 A 的 R16/M03/M04 双向价值、D 正式策略和 E3/E4 也未由此完成。
+- **收据**：首轮单测 RED 为 `unit_status=not_confirmed`，修复后相关定向 **23 passed**。最终 fresh `tmp/tp5c-confirmed-view-r1` full-offline **2995 passed、1 skipped、16 warnings、0 failures**（317.65 秒），JUnit SHA256 `601C8420AA8A6B1DCFBBD15B4F298F8DF94C95CC890AB93049155C1C2F1F5C14`，runner `provider_calls=forbidden`、实际 Provider initiated 0。未进行浏览器 E3、真实 Shadow 或 E4。

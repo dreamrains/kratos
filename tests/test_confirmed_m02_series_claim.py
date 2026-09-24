@@ -11,6 +11,7 @@ from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.confirmation.runtime import build_action_registry, build_measurement_mapping_candidate
 from data_agent.agent.confirmation.service import ConfirmationService
 from data_agent.agent.loop import AgentLoop
+from data_agent.agent.publication_audit import build_offline_audit_view, build_shadow_audit_request
 from data_agent.agent import publication_synthesis as ps
 from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
 from data_agent.session.workspace import Workspace
@@ -159,3 +160,40 @@ def test_missing_middle_observation_fails_closed(tmp_path):
     rendered, error = _finalize(packet, candidate)
     assert error is None and rendered
     assert all(item["answer_coverage"] != "answered" for item in packet["requirements"])
+
+
+def test_shadow_input_carries_the_same_confirmed_claim_identity(tmp_path):
+    state, workspace, history = _setup(tmp_path)
+    packet = _packet(state, workspace, history, tmp_path)
+    candidate = ps.produce_m02_receipt_claim_candidate(packet, _RECEIPT)
+    answer, error = _finalize(packet, candidate)
+    assert error is None and answer
+    committed = deepcopy(packet)
+    committed["phase"] = "final"
+    committed["answer_sha256"] = "sha256:" + hashlib.sha256(answer.encode()).hexdigest()
+    committed["snapshot_packet_id"] = packet["id"]
+    committed["id"] = "pub_" + hashlib.sha256(
+        f"{packet['snapshot_digest']}|{committed['answer_sha256']}".encode()
+    ).hexdigest()[:12]
+    state.add_publication_packet(committed)
+    messages = [*history.messages, {
+        "role": "assistant", "content": answer,
+        "publication_packet_id": committed["id"],
+        "publication_snapshot_digest": committed["snapshot_digest"],
+        "answer_sha256": committed["answer_sha256"],
+    }]
+    final_history = CanonicalHistorySnapshot(messages, 2, _history_sha256(messages), 2)
+    view = build_offline_audit_view(committed, answer, state=state,
+                                    canonical_history=final_history)
+    assert view["status"] == "ready"
+    claim = view["claims"][0]
+    assert claim["unit_status"] == "confirmed"
+    assert claim["answer_coverage"] == "answered"
+    assert packet["confirmed_observation"]["confirmation_id"] in claim["evidence_refs"]
+    request = build_shadow_audit_request(committed, answer, state=state,
+                                         canonical_history=final_history)
+    assert request["status"] == "ready"
+    assert request["claims"][0]["unit_status"] == "confirmed"
+    assert request["publication_effect"] == "none"
+    assert request == build_shadow_audit_request(committed, answer, state=state,
+                                                  canonical_history=final_history)
