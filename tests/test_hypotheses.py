@@ -252,6 +252,135 @@ def _relation_evidence(
     }
 
 
+def test_matching_model_measurement_without_tool_value_does_not_decide_hypothesis():
+    hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), _state())
+    primary = hypothesis_set["hypotheses"][0]
+    record = _relation_evidence(
+        "ev_unverified", primary["id"], "supports", "revenue", "increased", delta=112,
+        claim="Revenue increased between compared periods.",
+    )
+
+    updated = update_hypotheses_from_evidence(hypothesis_set, [record])
+
+    assert updated["hypotheses"][0]["status"] == "inconclusive"
+    assert updated["hypotheses"][0]["supporting_evidence_ids"] == []
+    assert updated["hypotheses"][0]["relation_candidates"][0]["reason"] == "measurement_not_receipt_verified"
+
+
+def test_receipt_value_and_current_data_version_authorize_only_matching_descriptive_relation(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    import pandas as pd
+
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.agent.hypotheses import receipt_verified_hypothesis_measurements
+    from data_agent.config import get_config
+    from data_agent.session.workspace import Workspace
+
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path / "sessions")
+    workspace = Workspace()
+    workspace.add("sales", pd.DataFrame({
+        "day": pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-03"]),
+        "revenue": [10, 15, 20],
+    }))
+    ctx = AgentContext(session_id="hyp_receipt_values", workspace=workspace)
+    ctx.analysis_state = AnalysisSessionState(session_id=ctx.session_id)
+    result = {"metrics": {"revenue": {"period_a": 10, "period_b": 20, "diff": 10}}}
+    detail = cfg.sessions_resolved / ctx.session_id / "tool_outputs" / "comparison_detail.json"
+    detail.parent.mkdir(parents=True)
+    detail.write_text(json.dumps(result), encoding="utf-8")
+    digest = "sha256:" + hashlib.sha256(
+        json.dumps(result, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+    identity = {"sales": workspace.get_data_identity("sales")}
+    ctx.analysis_state.tool_receipts = [{
+        "id": "tr_comparison", "tool_call_id": "call_comparison", "tool_name": "compare_periods",
+        "arguments": {"name": "sales", "date_col": "day", "metrics": "revenue"},
+        "data_identities": identity, "structured_result_sha256": digest,
+        "detail_ref": {"path": "tool_outputs/comparison_detail.json"},
+    }]
+    hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), _state())
+    primary = hypothesis_set["hypotheses"][0]
+    record = _relation_evidence(
+        "ev_receipt", primary["id"], "supports", "revenue", "increased", delta=10,
+        claim="Revenue increased between compared periods.",
+    )
+    record["tool_receipt_ids"] = ["tr_comparison"]
+    record["result_bindings"] = [{
+        "receipt_id": "tr_comparison", "result_sha256": digest, "data_identities": identity,
+    }]
+    with use_agent_context(ctx):
+        verified = receipt_verified_hypothesis_measurements(ctx.analysis_state, [record])
+        supported = update_hypotheses_from_evidence(
+            hypothesis_set, [record], verified_measurements=verified,
+        )
+        assert supported["hypotheses"][0]["status"] == "supported"
+        assert supported["hypotheses"][0]["evidence_relations"][0]["receipt_id"] == "tr_comparison"
+
+        trend_result = {"data_points": 3, "trend": {"slope": 5.0, "direction": "up", "p_value": 0.0}}
+        trend_detail = detail.parent / "trend_detail.json"
+        trend_detail.write_text(json.dumps(trend_result), encoding="utf-8")
+        trend_digest = "sha256:" + hashlib.sha256(
+            json.dumps(trend_result, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+        ).hexdigest()
+        ctx.analysis_state.tool_receipts.append({
+            "id": "tr_trend", "tool_call_id": "call_trend", "tool_name": "analyze_time_series",
+            "arguments": {"name": "sales", "date_col": "day", "value_col": "revenue"},
+            "data_identities": identity, "structured_result_sha256": trend_digest,
+            "detail_ref": {"path": "tool_outputs/trend_detail.json"},
+        })
+        trend_record = _relation_evidence(
+            "ev_trend", primary["id"], "supports", "revenue", "increased", delta=5,
+            claim="Revenue has an observed upward descriptive trend.",
+        )
+        trend_record["measurements"][0].pop("delta")
+        trend_record["measurements"][0]["value"] = 5
+        trend_record["tool_receipt_ids"] = ["tr_trend"]
+        trend_record["result_bindings"] = [{
+            "receipt_id": "tr_trend", "result_sha256": trend_digest, "data_identities": identity,
+        }]
+        trend_verified = receipt_verified_hypothesis_measurements(ctx.analysis_state, [trend_record])
+        assert update_hypotheses_from_evidence(
+            hypothesis_set, [trend_record], verified_measurements=trend_verified,
+        )["hypotheses"][0]["status"] == "supported"
+        causal = hypothesis_set["hypotheses"][1]
+        causal_record = dict(trend_record)
+        causal_record["competing_hypotheses"] = [{
+            "hypothesis_id": causal["id"], "relation": "supports",
+            "metric": "revenue", "observed": "increased",
+        }]
+        causal_record["method"] = "causal"
+        assert update_hypotheses_from_evidence(
+            hypothesis_set, [causal_record], verified_measurements=trend_verified,
+        )["hypotheses"][1]["status"] != "supported"
+
+        record["measurements"][0]["delta"] = 99
+        assert receipt_verified_hypothesis_measurements(ctx.analysis_state, [record]) == {}
+        record["measurements"][0]["delta"] = 10
+        workspace.add("sales", pd.DataFrame({
+            "day": pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-03"]),
+            "revenue": [100, 150, 200],
+        }))
+        assert receipt_verified_hypothesis_measurements(ctx.analysis_state, [record]) == {}
+
+
+def _verified_unit_stub(*records):
+    """Supply already-verified host values to exercise the pure relation rule."""
+    return {
+        record["id"]: {
+            measurement["metric"]: {
+                "value": measurement["delta"],
+                "direction": "increased" if measurement["delta"] > 0 else "decreased" if measurement["delta"] < 0 else "flat",
+                "receipt_id": f"tr_{record['id']}",
+            }
+            for measurement in record["measurements"]
+        }
+        for record in records
+    }
+
+
 class TestHypothesisRelations:
 
     def test_h06_valid_structured_relation_marks_supported(self):
@@ -259,12 +388,13 @@ class TestHypothesisRelations:
         hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), state)
         primary = hypothesis_set["hypotheses"][0]
 
-        updated = update_hypotheses_from_evidence(hypothesis_set, [
-            _relation_evidence(
-                "ev_h06", primary["id"], "supports", "revenue", "increased",
-                delta=112, claim="Revenue increased between the compared periods.",
-            ),
-        ])
+        record = _relation_evidence(
+            "ev_h06", primary["id"], "supports", "revenue", "increased",
+            delta=112, claim="Revenue increased between the compared periods.",
+        )
+        updated = update_hypotheses_from_evidence(
+            hypothesis_set, [record], verified_measurements=_verified_unit_stub(record),
+        )
 
         hypothesis = updated["hypotheses"][0]
         assert hypothesis["status"] == "supported"
@@ -279,12 +409,13 @@ class TestHypothesisRelations:
         hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), _state())
         primary = hypothesis_set["hypotheses"][0]
 
-        refuted = update_hypotheses_from_evidence(hypothesis_set, [
-            _relation_evidence(
-                "ev_flat", primary["id"], "refutes", "revenue", "flat",
-                delta=0, claim="Revenue was flat between the compared periods.",
-            ),
-        ])
+        record = _relation_evidence(
+            "ev_flat", primary["id"], "refutes", "revenue", "flat",
+            delta=0, claim="Revenue was flat between the compared periods.",
+        )
+        refuted = update_hypotheses_from_evidence(
+            hypothesis_set, [record], verified_measurements=_verified_unit_stub(record),
+        )
         assert refuted["hypotheses"][0]["status"] == "refuted"
         assert refuted["hypotheses"][0]["conflicting_evidence_ids"] == ["ev_flat"]
 
@@ -299,16 +430,15 @@ class TestHypothesisRelations:
         hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), _state())
         primary = hypothesis_set["hypotheses"][0]
 
-        updated = update_hypotheses_from_evidence(hypothesis_set, [
-            _relation_evidence(
-                "ev_up", primary["id"], "supports", "revenue", "increased",
-                delta=112, claim="Revenue increased.",
-            ),
-            _relation_evidence(
-                "ev_flat", primary["id"], "refutes", "revenue", "flat",
-                delta=0, claim="Revenue was flat in the matched window.",
-            ),
-        ])
+        records = [
+            _relation_evidence("ev_up", primary["id"], "supports", "revenue", "increased",
+                               delta=112, claim="Revenue increased."),
+            _relation_evidence("ev_flat", primary["id"], "refutes", "revenue", "flat",
+                               delta=0, claim="Revenue was flat in the matched window."),
+        ]
+        updated = update_hypotheses_from_evidence(
+            hypothesis_set, records, verified_measurements=_verified_unit_stub(*records),
+        )
 
         hypothesis = updated["hypotheses"][0]
         assert hypothesis["status"] == "contested"
@@ -321,18 +451,20 @@ class TestHypothesisRelations:
         primary_en = set_en["hypotheses"][0]
         primary_zh = set_zh["hypotheses"][0]
 
-        updated_en = update_hypotheses_from_evidence(set_en, [
-            _relation_evidence(
-                "ev_en", primary_en["id"], "supports", "revenue", "increased",
-                delta=112, claim="Revenue increased between the compared periods.",
-            ),
-        ])
-        updated_zh = update_hypotheses_from_evidence(set_zh, [
-            _relation_evidence(
-                "ev_zh", primary_zh["id"], "supports", "revenue", "increased",
-                delta=112, claim="对比周期内收入上升。",
-            ),
-        ])
+        english = _relation_evidence(
+            "ev_en", primary_en["id"], "supports", "revenue", "increased",
+            delta=112, claim="Revenue increased between the compared periods.",
+        )
+        chinese = _relation_evidence(
+            "ev_zh", primary_zh["id"], "supports", "revenue", "increased",
+            delta=112, claim="对比周期内收入上升。",
+        )
+        updated_en = update_hypotheses_from_evidence(
+            set_en, [english], verified_measurements=_verified_unit_stub(english),
+        )
+        updated_zh = update_hypotheses_from_evidence(
+            set_zh, [chinese], verified_measurements=_verified_unit_stub(chinese),
+        )
 
         assert updated_en["hypotheses"][0]["status"] == updated_zh["hypotheses"][0]["status"] == "supported"
 
@@ -357,12 +489,13 @@ class TestHypothesisRelations:
         state = _state()
         hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), state)
         primary = hypothesis_set["hypotheses"][0]
-        updated = update_hypotheses_from_evidence(hypothesis_set, [
-            _relation_evidence(
-                "ev_h12", primary["id"], "supports", "revenue", "increased",
-                delta=112, claim="Revenue increased between the compared periods.",
-            ),
-        ])
+        record = _relation_evidence(
+            "ev_h12", primary["id"], "supports", "revenue", "increased",
+            delta=112, claim="Revenue increased between the compared periods.",
+        )
+        updated = update_hypotheses_from_evidence(
+            hypothesis_set, [record], verified_measurements=_verified_unit_stub(record),
+        )
         state.hypothesis_sets = [{
             "id": updated["id"],
             "dataset": updated["dataset"],

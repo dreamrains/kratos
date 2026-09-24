@@ -151,6 +151,7 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
             build_hypothesis_set,
             hydrate_hypothesis_refs,
             persist_hypothesis_set,
+            receipt_verified_hypothesis_measurements,
             update_hypotheses_from_evidence,
         )
 
@@ -165,6 +166,7 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
         fresh_evidence, exclusions = _split_evidence_by_data_freshness(
             evidence_records, _workspace_data_identities(),
         )
+        verified_measurements = receipt_verified_hypothesis_measurements(state, fresh_evidence)
         hypothesis_set = build_hypothesis_set(user_input, decision, state)
         dataset = str(hypothesis_set.get("dataset") or "")
         route = str(hypothesis_set.get("route") or "")
@@ -186,9 +188,13 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
             # so it can become stale instead of silently keeping its verdict.
             if not fresh_evidence and not decided:
                 return None
-            hypothesis_set = update_hypotheses_from_evidence(hydrated[0], fresh_evidence)
+            hypothesis_set = update_hypotheses_from_evidence(
+                hydrated[0], fresh_evidence, verified_measurements=verified_measurements,
+            )
         elif fresh_evidence:
-            hypothesis_set = update_hypotheses_from_evidence(hypothesis_set, fresh_evidence)
+            hypothesis_set = update_hypotheses_from_evidence(
+                hypothesis_set, fresh_evidence, verified_measurements=verified_measurements,
+            )
         if exclusions:
             hypothesis_set["evidence_exclusions"] = exclusions
 

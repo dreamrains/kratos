@@ -2344,6 +2344,7 @@ class AgentLoop:
             # fresh evidence, rather than trusting a model-authored relation.
             from data_agent.agent.hypotheses import (
                 hydrate_hypothesis_refs,
+                receipt_verified_hypothesis_measurements,
                 update_hypotheses_from_evidence,
             )
             from data_agent.agent.trust_workflow_runtime import (
@@ -2356,18 +2357,34 @@ class AgentLoop:
                 [record for record in (evidence_records or []) if isinstance(record, dict)],
                 _workspace_data_identities(),
             )
-            has_validated_relation = False
+            verified_measurements = receipt_verified_hypothesis_measurements(state, fresh_records)
+            has_audited_relation = False
             for hypothesis_set in hydrate_hypothesis_refs(hypothesis_sets):
                 if not current_plan_id or hypothesis_set.get("plan_id") != current_plan_id:
                     continue
-                refreshed = update_hypotheses_from_evidence(hypothesis_set, fresh_records)
+                refreshed = update_hypotheses_from_evidence(
+                    hypothesis_set, fresh_records, verified_measurements=verified_measurements,
+                )
                 if any(
-                    isinstance(hypothesis, dict) and hypothesis.get("evidence_relations")
+                    isinstance(hypothesis, dict)
+                    and (
+                        hypothesis.get("evidence_relations")
+                        or any(
+                            isinstance(candidate, dict) and candidate.get("reason") in {
+                                "measurement_not_receipt_verified", "measurement_value_mismatch",
+                                "inferential_relation_not_receipt_verified",
+                            }
+                            for candidate in hypothesis.get("relation_candidates") or []
+                        )
+                    )
                     for hypothesis in (refreshed.get("hypotheses") or [])
                 ):
-                    has_validated_relation = True
+                    # A current-ID proposal with an explicit evidence gap is
+                    # an auditable unresolved relation, not a support verdict.
+                    # Keep the task deliverable without an endless repair loop.
+                    has_audited_relation = True
                     break
-            if not has_validated_relation:
+            if not has_audited_relation:
                 gaps.append("no current-plan host-validated hypothesis relation exists")
         return gaps
 

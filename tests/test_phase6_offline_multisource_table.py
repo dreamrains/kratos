@@ -3,7 +3,10 @@
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
-from data_agent.agent.publication_synthesis import build_publication_packet, render_trusted_core_preview
+from data_agent.agent.publication_synthesis import (
+    build_publication_packet, extract_publication_fact_groups, publication_contract,
+    render_trusted_core_preview,
+)
 from data_agent.session.workspace import Workspace
 
 
@@ -107,3 +110,64 @@ def test_receipt_identity_forgery_or_zero_baseline_does_not_invent_change_rate()
     facts = state.tool_receipts[0]["publication_facts"]
     next(item for item in facts if item["path"] == "source_identities.source_1.version_id")["value"] = "dv_forged"
     assert _project(state, workspace, ["tr_six"])["offline_trust_projection"]["aligned_tables"] == []
+
+
+def test_six_independent_compare_receipts_preserve_current_two_date_value_without_answer_credit():
+    workspace = Workspace()
+    state = AnalysisSessionState("offline_six_comparisons")
+    dates = pd.to_datetime(["2026-09-01", "2026-09-02"])
+    receipt_ids = []
+    for index in range(1, 7):
+        name = f"M03-source-{index}"
+        receipt_id = f"tr_cmp_{index}"
+        workspace.add(name, pd.DataFrame({"date": dates, "amount": [10 * index, 11 * index]}))
+        result = {
+            "period_a": {"range": ["2026-09-01", "2026-09-01"], "rows": 1, "day_count": 1},
+            "period_b": {"range": ["2026-09-02", "2026-09-02"], "rows": 1, "day_count": 1},
+            "metrics": {"amount": {"period_a": 10 * index, "period_b": 11 * index, "diff": index}},
+        }
+        state.tool_receipts.append({
+            "id": receipt_id, "tool_name": "compare_periods",
+            "result_sha256": f"sha256:compare-{index}",
+            "arguments": {"name": name, "date_col": "date", "metrics": "amount"},
+            "dataset_refs": [name], "data_identities": {name: workspace.get_data_identity(name)},
+            "publication_fact_groups": extract_publication_fact_groups(result, receipt_id=receipt_id)["groups"],
+            "publication_contract": publication_contract("compare_periods", result, args={"name": name}),
+        })
+        receipt_ids.append(receipt_id)
+    packet = build_publication_packet(
+        state, user_input="六个来源的两日金额与变化", substantive_tools={"compare_periods"},
+        receipt_ids=receipt_ids, offline_trust_projection=True, offline_workspace=workspace,
+    )
+    rows = packet["offline_trust_projection"]["comparison_rows"]
+    assert len(rows) == 6
+    assert [(row["dataset"], row["period_a"], row["period_b"], row["absolute_change"], row["relative_change_percent"])
+            for row in rows] == [
+                (f"M03-source-{i}", str(10 * i), str(11 * i), str(i), "10") for i in range(1, 7)
+            ]
+    preview = render_trusted_core_preview(packet, None)
+    assert "M03-source-1" in preview["text"] and "M03-source-6" in preview["text"]
+    assert "差额 1；相对变化 10%" in preview["text"]
+    assert "差额 6；相对变化 10%" in preview["text"]
+    assert preview["accepted_claim_ids"] == []
+    assert packet["requirements"] == []
+    assert preview["publication_effect"] == "none"
+
+    workspace.add("M03-source-2", pd.DataFrame({"date": dates, "amount": [200, 220]}))
+    stale = build_publication_packet(
+        state, user_input="六个来源的两日金额与变化", substantive_tools={"compare_periods"},
+        receipt_ids=receipt_ids, offline_trust_projection=True, offline_workspace=workspace,
+    )
+    assert "M03-source-2" not in {row["dataset"] for row in stale["offline_trust_projection"]["comparison_rows"]}
+
+    for group in state.tool_receipts[0]["publication_fact_groups"]:
+        for field in group.get("fields", []):
+            if field.get("path") == "metrics.amount.period_a":
+                field["value"] = "99"
+            if field.get("path") == "metrics.amount.period_b":
+                field["value"] = "100"
+    forged = build_publication_packet(
+        state, user_input="六个来源的两日金额与变化", substantive_tools={"compare_periods"},
+        receipt_ids=receipt_ids, offline_trust_projection=True, offline_workspace=workspace,
+    )
+    assert "M03-source-1" not in {row["dataset"] for row in forged["offline_trust_projection"]["comparison_rows"]}

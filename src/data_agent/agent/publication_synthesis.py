@@ -1048,6 +1048,9 @@ def _build_offline_trust_projection(
         )
         projected["executed_results"] = executed_results
         projected["result_omissions"] = result_omissions
+        projected["comparison_rows"] = _project_offline_comparison_rows(
+            state, allowed_receipts, packet, offline_workspace,
+        )
     # Without an explicit current-turn receipt selection, historical session
     # artifacts cannot be distinguished from this answer's evidence snapshot.
     if not session_id or not allowed_receipts:
@@ -1139,7 +1142,7 @@ def _build_offline_trust_projection(
                     # Only the metric and recomputed change may influence the
                     # hypothesis gate. Model-supplied p-values or methods do
                     # not inherit authority from this descriptive receipt.
-                    verified.append({"metric": metric, "delta": float(resolved[3][2])})
+                    verified.append({"metric": metric, "delta": float(resolved[3][2]), "receipt_id": receipt_id})
                     break
         return verified
 
@@ -1192,8 +1195,24 @@ def _build_offline_trust_projection(
                 or hypothesis_set.get("plan_id") != plan_id
                 or hypothesis_set.get("dataset") != ref.get("dataset")):
             continue
+        offline_verified = {
+            str(record.get("id")): {
+                str(measurement["metric"]): {
+                    "value": measurement["delta"],
+                    "direction": (
+                        "increased" if measurement["delta"] > 0 else
+                        "decreased" if measurement["delta"] < 0 else "flat"
+                    ),
+                    "receipt_id": measurement["receipt_id"],
+                }
+                for measurement in record.get("measurements") or []
+            }
+            for record in current_evidence
+        }
         try:
-            refreshed = update_hypotheses_from_evidence(hypothesis_set, current_evidence)
+            refreshed = update_hypotheses_from_evidence(
+                hypothesis_set, current_evidence, verified_measurements=offline_verified,
+            )
         except (KeyError, TypeError, ValueError):
             continue
         for hypothesis in refreshed.get("hypotheses", []):
@@ -1210,6 +1229,124 @@ def _build_offline_trust_projection(
                 "artifact_sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
             })
     return projected
+
+
+def _project_offline_comparison_rows(
+    state: Any, allowed_receipts: set[str], packet: dict[str, Any], offline_workspace: Any,
+) -> list[dict[str, Any]]:
+    """Reuse the existing typed comparison verifier for current receipt values.
+
+    This is a descriptive, default-off preview. It never assigns a user
+    requirement or accepts a model-authored EvidenceRecord measurement.
+    """
+    import pandas as pd
+
+    from data_agent.session.workspace import Workspace
+    from data_agent.tools._utils import inclusive_date_period_mask
+
+    receipts = {
+        str(receipt.get("id")): receipt for receipt in getattr(state, "tool_receipts", []) or []
+        if isinstance(receipt, dict) and receipt.get("id") in allowed_receipts
+        and receipt.get("tool_name") == "compare_periods"
+    }
+    scopes = {
+        str(scope.get("receipt_id")): scope for scope in packet.get("publication_scope", [])
+        if isinstance(scope, dict) and scope.get("tool") == "compare_periods"
+    }
+    rows: list[dict[str, Any]] = []
+    for source in packet.get("sources", []):
+        if not isinstance(source, dict) or source.get("tool_name") != "compare_periods":
+            continue
+        receipt_id = str(source.get("receipt_id") or "")
+        receipt, scope = receipts.get(receipt_id), scopes.get(receipt_id)
+        if not receipt or not scope or not receipt.get("result_sha256"):
+            continue
+        if (source.get("result_sha256") != receipt["result_sha256"]
+                or source.get("structured_result_sha256") != (receipt.get("structured_result_sha256") or "")):
+            continue
+        dataset = scope.get("source_dataset")
+        identities = receipt.get("data_identities")
+        args = receipt.get("arguments")
+        if (not isinstance(dataset, str) or not dataset
+                or not isinstance(identities, dict) or set(identities) != {dataset}
+                or source.get("data_identities") != identities
+                or not isinstance(args, dict) or args.get("name") != dataset):
+            continue
+        try:
+            current = offline_workspace.get_data_identity(dataset)
+            frame = offline_workspace.get(dataset)
+            if (not current or current != identities[dataset] or frame is None
+                    or Workspace._frame_fingerprint(frame) != current.get("fingerprint")):
+                continue
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        facts = {
+            str(fact.get("path") or ""): str(fact.get("fact_id") or "")
+            for fact in source.get("facts", []) if isinstance(fact, dict)
+        }
+        metric_names = sorted({
+            path[len("metrics."):-len(".period_a")]
+            for path in facts if path.startswith("metrics.") and path.endswith(".period_a")
+        })
+        denominators = scope.get("denominators")
+        if not isinstance(denominators, dict):
+            continue
+        counts = [
+            (denominators.get(period) or {}).get("rows")
+            for period in ("period_a", "period_b")
+        ] if all(isinstance(denominators.get(period), dict) for period in ("period_a", "period_b")) else []
+        if len(counts) != 2:
+            continue
+        if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in counts):
+            continue
+        for metric in metric_names:
+            refs = [facts.get(f"metrics.{metric}.{field}") for field in ("period_a", "period_b", "diff")]
+            if not all(refs):
+                continue
+            claim_id = "claim_offline_comparison"
+            block = {
+                "claim_id": claim_id, "exact_text": f"[[claim:{claim_id}]]",
+                "claim_type": "comparison", "status": "computed", "unit_status": "not_confirmed",
+                "receipt_ref": receipt_id, "requirement_refs": [], "fact_refs": refs,
+                "derived_refs": [],
+            }
+            resolved = _comparison_binding_values(block, packet)
+            if resolved is None or resolved[0] != metric:
+                continue
+            _, windows, _days, values = resolved
+            date_col = args.get("date_col")
+            bounds = scope.get("observation_window") or {}
+            if (not isinstance(date_col, str) or date_col not in frame.columns
+                    or metric not in frame.columns
+                    or not pd.api.types.is_numeric_dtype(frame[metric])):
+                continue
+            try:
+                dates = pd.to_datetime(frame[date_col], errors="coerce")
+                actual = []
+                for period in ("period_a", "period_b"):
+                    start, end = (pd.Timestamp(day) for day in bounds[period])
+                    mask = inclusive_date_period_mask(dates, start, end) & dates.notna()
+                    amount = frame.loc[mask, metric].sum()
+                    actual.append((Decimal(str(round(float(amount), 4))), int(mask.sum())))
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            if any(not amount.is_finite() or abs(amount - values[index]) > Decimal("0.00015")
+                   or count != counts[index]
+                   for index, (amount, count) in enumerate(actual)):
+                continue
+            change = values[1] - values[0]
+            relative = change / abs(values[0]) * 100 if values[0] != 0 else None
+            def number(value: Decimal) -> str:
+                return format(value.normalize(), "f")
+            rows.append({
+                "receipt_id": receipt_id, "dataset": dataset, "metric": metric,
+                "windows": windows, "period_a": number(values[0]), "period_b": number(values[1]),
+                "absolute_change": number(change),
+                "relative_change_percent": number(round(relative, 2)) if relative is not None else None,
+                "period_a_rows": counts[0], "period_b_rows": counts[1],
+                "unit_status": "not_confirmed", "status": "descriptive_preview_only",
+            })
+    return rows
 
 
 def build_publication_packet(
@@ -3954,6 +4091,24 @@ def render_trusted_core_preview(
                 )
         if aligned_lines:
             sections.append("当前派生数据两日对照（不跨来源合计，不等于已回答）：\n" + "\n".join(aligned_lines))
+        comparison_lines = []
+        for row in projection.get("comparison_rows", []):
+            if (not isinstance(row, dict) or row.get("status") != "descriptive_preview_only"
+                    or row.get("receipt_id") not in receipt_ids):
+                continue
+            relative = row.get("relative_change_percent")
+            relative_text = f"{relative}%" if isinstance(relative, str) else "基准期为零，变化比例不适用"
+            dataset = str(row.get("dataset") or "").replace("`", "").replace("\n", " ")
+            metric = str(row.get("metric") or "").replace("`", "").replace("\n", " ")
+            comparison_lines.append(
+                f"- `{dataset}` / `{metric}`（回执 `{row['receipt_id']}`）："
+                f"{row['windows'][0]} {row['period_a']}→{row['windows'][1]} {row['period_b']}；"
+                f"差额 {row['absolute_change']}；相对变化 {relative_text}；"
+                f"两期记录 {row['period_a_rows']}/{row['period_b_rows']}；"
+                "数值单位未确认，不跨来源合计。"
+            )
+        if comparison_lines:
+            sections.append("同回执同版本的时段比较（描述性预览；不自动授权已回答）：\n" + "\n".join(comparison_lines))
         chart_lines = [
             f"- [[chart:{chart['path']}]]（已创建产物，不证明图中分析结论）"
             for chart in projection.get("charts", [])

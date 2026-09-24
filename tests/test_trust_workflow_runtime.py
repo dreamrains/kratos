@@ -632,9 +632,28 @@ def _structured_evidence(evidence_id, hypothesis_id, relation, observed, delta, 
     }
 
 
-def test_h11_new_evidence_changes_hypothesis_state_on_refresh(tmp_path):
+def _verified_measurements_for_lifecycle(_state, records):
+    """Isolate hypothesis refresh/stale tests from the separately tested receipt loader."""
+    return {
+        record["id"]: {
+            measurement["metric"]: {
+                "value": measurement["delta"],
+                "direction": "increased" if measurement["delta"] > 0 else "decreased" if measurement["delta"] < 0 else "flat",
+                "receipt_id": "tr_host_verified_lifecycle_fixture",
+            }
+            for measurement in record["measurements"]
+        }
+        for record in records
+    }
+
+
+def test_h11_new_evidence_changes_hypothesis_state_on_refresh(tmp_path, monkeypatch):
     from data_agent.config import get_config
 
+    monkeypatch.setattr(
+        "data_agent.agent.hypotheses.receipt_verified_hypothesis_measurements",
+        _verified_measurements_for_lifecycle,
+    )
     cfg = get_config()
     old_sessions = cfg.sessions_dir
     cfg.sessions_dir = tmp_path / "sessions"
@@ -677,9 +696,13 @@ def test_h11_new_evidence_changes_hypothesis_state_on_refresh(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
-def test_h11_supported_hypothesis_becomes_stale_when_its_evidence_disappears(tmp_path):
+def test_h11_supported_hypothesis_becomes_stale_when_its_evidence_disappears(tmp_path, monkeypatch):
     from data_agent.config import get_config
 
+    monkeypatch.setattr(
+        "data_agent.agent.hypotheses.receipt_verified_hypothesis_measurements",
+        _verified_measurements_for_lifecycle,
+    )
     cfg = get_config()
     old_sessions = cfg.sessions_dir
     cfg.sessions_dir = tmp_path / "sessions"
@@ -761,11 +784,15 @@ def test_b04_freshness_gate_is_pure_and_conservative():
     }]
 
 
-def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path):
+def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path, monkeypatch):
     from data_agent.config import get_config
     from data_agent.agent.context import AgentContext, use_agent_context
     from data_agent.session.workspace import Workspace
 
+    monkeypatch.setattr(
+        "data_agent.agent.hypotheses.receipt_verified_hypothesis_measurements",
+        _verified_measurements_for_lifecycle,
+    )
     cfg = get_config()
     old_sessions = cfg.sessions_dir
     cfg.sessions_dir = tmp_path / "sessions"

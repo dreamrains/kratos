@@ -219,3 +219,11 @@ M04 后续协议裁决：用户同意仅 M04 分两阶段上传；v1 首轮前�
 最小修复沿用既有 hypothesis validator，对当前 plan 和新鲜 EvidenceRecord 重算关系后才认可结构完成；有界摘要及 guard 后续轮次展示当前真实 ID，晚到的 plan 仍用既有宿主生产者刷新。未完成 task 仍不阻断，普通任务和正式自由散文发布不变。详细 RED（3 failed/33 passed）、替代物、退役旧门、最终定向 45 passed、Windows 长路径导致的非产品 full-offline 失败和剩余风险见 `docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md`。最终 fresh `tmp/tp4a2` full-offline 为 **2969 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `FB56F3DDF2409BC8B2C301622747ED62E0DAAC472A3BB51C4D7F2A37926C42A0`、Provider forbidden/initiated 0。Phase 4 状态由“笼统完成”改为“task 边界完成，关系审计 E2 纠偏；E3/E4 待验”，不提前进入 Shadow/D/Phase 7；R11/R16/R4 正确价值与独立无据 99% 仍是 A 的双向门。真实 Provider 授权已用完。
 
 `main@5467897` 的 Provider-disabled E3 尝试在矩阵前因官方 `iab` 浏览器桥接 `Unable to load browser request-header policy` 阻断；本地服务 PID 18572/端口 5229/exec session 59389 曾健康且 `provider_enabled=false`，现已停止，`tmp/tp4e3r1/runtime.jsonl` 只有启动事件、真实 Provider 0。未导航、上传或执行场景；恢复官方绑定后须新目录完整矩阵。详见 M04 纠偏记录末节，不能把此次记为 E3 失败场景或通过，也不能换自动化栈。
+
+## 32. A/M03 通用比较数值与 Phase 4/M04 原值证实
+
+用户批准在 `main@3539067b5bb2a020fcf0b5615867b25f6e063fc5` 后做两处最小实现，完整跨历史 RED→结构化替代→退役旧门、测试失败前提和结果见 `docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md` §9。A 仅在显式 `offline_workspace` 的同一个默认关闭 packet 中，按已选 `compare_periods` 回执、源事实 SHA、数据身份与当前帧指纹复算逐来源两期值、差额、相对变化、记录数；原始尺度、单位未确认、`answer_coverage=unassessed`、`publication_effect=none`。这帮助保留 R4/E4 M03 的可核验数值形状，但旧自然正文的“七天跨度”及旧 packet 仍非 typed 正例，R11/R16 完整正确价值未等价重建。
+
+Phase 4 现在将模型 EvidenceRecord 的 measurement 视为候选：只有同数据版本且经原 `compare_periods` 或 `analyze_time_series` 回执 detail digest 和指标数值验证的描述性测量，才能赋予正式假设关系 `supported/refuted`；因果/统计推断不可借描述工具的模型标签升级。真正假设 ID 下的未证实关系会留在 `relation_candidates`，作为可审计的 `inconclusive` 交付而不反复要求同一种无从补证的关系；错 ID/指标仍触发 guard。它收紧权威，不取消显式竞争假设 plan 审计，也不另建 planner 或模型门。
+
+最终定向 **87 passed**；fresh `tmp/tp4a4` full-offline **2972 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `4D2ED505DEC58C9C3929EC6900983E7389B50C4946FB1F00952A86356F576547`、真实 Provider initiated 0。先前 `tp4a3` 的 3 个旧无回执夹具失败已按新前提修正，不能引用它作为最终通过，也不能隐藏。此切片仅 E2，没有当前 HEAD 的完整 E3 或新 E4；正式自由散文旁侧 99%、Phase 5 真 Shadow、Phase 6 A/B/C/D 的完整验收及 Phase 7 均未获本收据授权。继续时先核对新 HEAD/dirty、三份原始需求和 §9 的跨历史分母；若必须改变默认发布或新增语义身份生产者，先和用户确认，真实 Provider 必须新精确冻结和新授权。

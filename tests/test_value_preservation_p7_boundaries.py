@@ -100,7 +100,15 @@ def test_p7_relation_must_satisfy_target_predicate(metric, delta, relation, expe
             "metric": metric, "observed": observed,
         }],
     }
-    updated = update_hypotheses_from_evidence(hypothesis_set, [evidence])
+    # This is the pure predicate oracle. Receipt identity/value verification
+    # is exercised separately; model measurements alone no longer authorize a
+    # supported/refuted status.
+    verified = {"ev_p7": {metric: {
+        "value": delta, "direction": observed, "receipt_id": "tr_host_verified_for_predicate_test",
+    }}}
+    updated = update_hypotheses_from_evidence(
+        hypothesis_set, [evidence], verified_measurements=verified,
+    )
     actual = updated["hypotheses"][0]
     record_property("hypothesis", json.dumps(target, ensure_ascii=False))
     record_property("evidence", json.dumps(evidence, ensure_ascii=False))
