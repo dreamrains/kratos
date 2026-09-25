@@ -41,3 +41,23 @@
 后续 M04 协议裁决：用户确认唯一两阶段上传例外。冻结契约现显式记录首轮前只上传 v1、首轮终态后同会话再上传 v2，且每一阶段仍用可见标签和一次 `filechooser`；其余场景不变。原 `1f4327e` 提交和 `r2` 离线收据是这一裁决之前的时点，不能作为最终冻结提交与测试收据。
 
 M04 协议修订后定向 **26 passed**；fresh `tmp/trust-reset-fo-20260924-contract-r3` full-offline **2964 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2965/failures=0/errors=0/skipped=1`、SHA256 `ACF02767CD5613CC8AAD6B021CB94DB6D362CCB6BB2DBFB687948311876C4E7F`，runner `provider_calls=forbidden`。此时尚未执行零调用 preflight 或真实 Provider。项目运行时代码未改，先前 `e05d957` 的完整 Provider-disabled 浏览器批次是运行时代码等价证据；不能将它自动写成新 HEAD 的自然模型通过。
+
+## 2026-09-25：Phase 8 分层验收后的当前 HEAD 完整 E3
+
+本节是独立新批次，源码 `main@fbbc14741fa79901272fbcbd69cb48e15b7146b7`，启动前 clean。此前 fresh `tmp/tp8-layered-20260925-r1` full-offline 为 **3016 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `163A6F9BFFE8CFE5237929127EC192E478D8A8F2AB8DCAAF3400B202F01422F4`，Provider transport forbidden。浏览器批次使用原入口 `run_p7_browser_rehearsal.py`（SHA256 `168820B56236DB0C418BD5979A01CA214D3D8B4002858FB2861E267EEF21E6E4`）、Codex `iab` 单 tab 6、端口 5235、隔离目录 `tmp/tp8-e3-20260925-r1`、OS PID 23740、保留 exec session 5856；stdout/stderr 同该 exec session，未单独重定向。启动前及 B05、IC、CONTENT 分组和结束健康检查均为 `ok=true/provider_enabled=false`。终局从同一 exec session 中断后 PID 消失、端口未监听，浏览器 tab 已关闭。
+
+| 组 | 会话与实际结果 |
+| --- | --- |
+| B01、B02/NEG | `a52f084dce17` 保留 120/12 与有条件行动；`bfbfb70eedb3` 保留 D7=10% 且拒绝 D30 确定预测。这里的百分比是脚本候选文字，不构成当前 R11 数据单位授权。 |
+| B03、B04 | `8ebde68ff94b` 六文件一次上传、同会话续轮、压缩/刷新/MD 导出；`b96c19c87237` 初轮及同会话第 2—13 步，刷新后 13 步仍在，持久状态有 1 plan、3 evidence、13 hypothesis sets、2 packets。 |
+| B05、B06 | `3dc62023f20a` 五种表达均保留 120/12；`3f7f9183e33d` 缺数据集不发布计算结论；`4e57847458f5` 注入保存故障后 `unknown` 且界面明示未完成；`71af1a19b1c8` 预算耗尽后 `failed` 且界面明示限制。 |
+| IC | `cb9336292978` 内部方法名不挂起；`68f61d086b3e` 九子问题区分未算与证据不足；`885c1d9bf408` 成本范围选“代金券及渠道成本”、同范围复用、窗口变化另选 7 天，两条确认记录 `resolved`；`ic-b05-legacy` 旧通用方法确认 `retired`、真实分母问题按矩阵跳过且未给确定复购率；`8e42c33a8eee` 方法许可非阻塞；`5dc46b4328d2` 自然周口径获选择。 |
+| CONTENT | `67f2b39ed222` 六文件一次上传、续轮、压缩/刷新/导出；`5d58dd87ef6f` 刷新后标题、120/12 表格、公式与探索图仍可见，741×805 视口 document `scrollWidth=clientWidth=741`，视口已复原。 |
+
+16 会话最终为 **14 completed、1 预期 unknown、1 预期 failed**，未把故障改写为完成。浏览器 console warn/error 为 0。B03 与 CONTENT-B03 的 MD 导出各 9620 字节，同会话计算来源说明各 9390 字节，保留 `src_1`—`src_6` 和来源 6 的 60→66；B07 导出 56790 字节。IAB 的 download 事件未到达，但服务对 `/export-reply` 与导出文件读取均返回 200，三个会话的持久 `reports/` 文件实际存在。脚本候选在 B03 的屏幕正文仍只是简短概述，不能据导出完整误称正文逐来源价值通过。
+
+`runtime.jsonl` SHA256 `04D25863F126952672E6658D12D5BE876F30D5A75411FBA6395220C835A43C91`：`server_start=1`、`scripted_round=75`、`auxiliary_call=151`、`injected_save_failure=3`、`forbidden_provider_transport=0`，实际 Provider initiated calls **0**。本目录没有持久逐轮 SSE terminal 序列；UI 与 `run_state.json` 可证明各会话收口，不能独立宣称每轮 terminal 恰好一次。
+
+同一当前审计器只读回放旧完整真实 P08 `tmp/trust-reset-p08-real-20260924-r1`，六个 M01—M06 场景均识别，报告在 `tmp/tp8-e3-20260925-r1/archived-p08-audit.json`（SHA256 `6178C7D6B01F37CE50DABE5A4BDBCB39EAFB75FA9F7ACB069028FDCBCF2C99DE`）：`verdict=failed`；执行与导出为 `failed`，证据与解释价值为 `unassessed`，声明为 `passed`。执行失败涉及 M04 缺结构化假设关系、M06 缺有效 claim binding；导出失败为既有会话缺 publication 导出。自然 M03-P/N 旧受控批次各 6 条可定位宿主 claim，但邻接解释/建议未审计、整批 `executed_not_accepted`；R11 百分比单位、R16 方法等价价值也不能由本次脚本候选证明。
+
+**阶段边界**：Phase 8 的分维判定和当前 HEAD 的 E2/E3 完整矩阵已有可核收据；真实 E4 归档仍失败，开放语义仍未评估，故不称整体验收通过。按用户裁决继续保留 Phase 7 的现有自由散文门；没有足以逐族退役的正反证据。Phase 6 仍是默认关闭局部 typed 能力，不称 A/C/D 全部退出；正式发布默认、Provider 配置、Shadow 调度均未改变。本轮未新建词表、planner、账本或浏览器框架，也未调用真实 Provider。
