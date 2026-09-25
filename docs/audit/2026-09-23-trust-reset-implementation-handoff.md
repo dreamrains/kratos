@@ -341,3 +341,9 @@ Phase 4 现在将模型 EvidenceRecord 的 measurement 视为候选：只有同�
 - **RED／结构化替代**：`test_confirmed_multisource_comparison_claim.py` 首次因缺 `produce_offline_comparison_claim_candidate` 收集失败。生产者仅消费同一个默认关闭 packet 中显式选中的六份成功回执及 `comparison_rows`；后者已由当前 Workspace 帧、回执 SHA、版本、两期范围和原数值宿主复算。每份回执仍用既有 `answer_bindings.v1` 的 `comparison` block、三个同指标 A/B/差额 fact refs；宿主在原位呈现来源名、各期日期/日数/原值与差额。没有新 claim 类型、跨来源合计或第二套审核。六块各有 trace，可供后续局部审计输入；`requirement_refs=[]`，不声称整个 M03 用户请求 `answered`。
 - **正反与停止门**：六份同版本回执的值与来源保留；漏选一份、源帧过期或交换不同来源 fact refs 时不可生成或不能通过 parser。生成的纯 typed 正例不含“七天跨度”“相互独立”或 210→231 跨源求和。但正式默认旧门**尚未退役**，若自然模型把这些句子写在有效 claim 旁，现行普通发布仍可能误放；离线生产者不能证明自然模型会自发形成六块。R4 `synthesize_time_series` 与图表、M03 来源同质性/独立性及用户请求的业务解释仍未有等价 typed 身份；M04 真 ID/关系及 R11/R16 历史正例也不能由此结案。Phase 5/C 自然层、Phase 6 B/D 与新 HEAD 的 E3/E4 仍独立未退出。
 - **收据**：定向 M03/R16/相邻六源投影 **14 passed**；fresh `tmp/tp6a-m03-typed-r1` full-offline **3016 passed、1 skipped、16 warnings、0 failures**（224.53 秒），JUnit SHA256 `F22CA5384AC0FEA51DD7AE34428B4EFE598F8213AA37CAC910DA91749B9546E3`，runner `provider_calls=forbidden`，本切片实际 Provider initiated 0；仅 E2。
+
+## 46. M04 关系身份取舍及 Phase 6 当前停止门
+
+用户选择先按既有结构保留 M04 假设关系：只认可当前方案中的真实假设 ID、同版本回执及宿主复算测量所支持的描述性 `supported/refuted`，其余保持 `inconclusive`；用户子问题的关系解释覆盖仍为 `unassessed`。不新增关系 claim 类型，不用 R4 的 `h_trend/h_level_shift` 别名回填真实 ID，也不将模型 EvidenceRecord 原文作为测量事实。现有 `test_current_plan_relation_is_recomputed_from_bound_evidence` 的正例及错误数值/过期 SHA/错误 plan 反例与 Phase 6 B 离线边界定向 **14 passed**；本节没有生产代码变更，沿用 §45 的 full-offline E2 收据。
+
+此取舍明确了 A 的局部停止条件，但**不等于 A 全退出**：R16 新确认链和 M03 逐来源 typed 均是本地默认关闭构造，不是旧自然 R16/R4/E4 的现行 `answered`；M04 关系不取得 answer binding 身份。C 的 r4 仅四个人工内容等价 Shadow 样本，旧自然 E4 四个成功正文的 typed trace 仍为空；B 仅模拟，D 正式策略与当前 HEAD 的 E3/E4 尚未实施。要进入自然模型层，需先决定是否把现有宿主生产的 typed 输入以显式默认关闭方式暴露给普通 AgentLoop 的受控本地试验，然后完成 E2/E3、零调用精确冻结及新的 Provider 授权。正式发布是否改为 claim 级可信核心是独立的 D 目标取舍，不得借本节决定提前切换。
