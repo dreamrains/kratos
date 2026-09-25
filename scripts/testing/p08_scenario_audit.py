@@ -1,8 +1,8 @@
 """P0-3 objective scenario auditor: deterministic five-dimension verdicts.
 
 Reads only persisted artifacts (session dirs, provider ledger, reports).
-Blocking checks are closed-class (protocol states, numeric oracles, artifact
-presence, receipt arithmetic); open-class semantics are advisory only.
+Blocking checks are closed-class (protocol states, artifact presence, receipt
+arithmetic); unverified answer numbers remain unassessed.
 Every mechanical oracle cites the plan principle it enforces so oracle drift
 from the approved principles is detectable (``oracle_contract_is_consistent``).
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import sys
 from pathlib import Path
@@ -50,17 +49,6 @@ AUTHORIZED_CONFIRMATION_TYPES = {
     "M06": {"metric_definition", "business_scope", "cost_scope", "decision"},
 }
 
-NUMERIC_ORACLES = {
-    "M01": ["12", "120"],
-    # A text token cannot establish whether 0.10 was rendered on raw scale or
-    # silently converted to 10%; M02 is explicitly unassessed below.
-    "M02": [],
-    "M03": ["210", "231"],
-    "M04": [],
-    "M05": ["12", "120"],
-    "M06": ["120"],
-}
-
 HOST_DEADLINE_SECONDS = 120.0
 DEADLINE_SLACK_SECONDS = 5.0
 
@@ -71,6 +59,8 @@ DEADLINE_SLACK_SECONDS = 5.0
 #   CP=2026-09-08 answer-content plan (CR-goals / §5-§6).
 # ---------------------------------------------------------------------------
 MECHANICAL_ORACLES: list[dict] = [
+    {"id": "scenario_matrix_coverage", "scenario": "*", "dim": "execution", "blocking": True,
+     "principle": "VP-P8(完整 M01-M06 批次)/CP-CR03(逐项交付)", "type": "matrix"},
     {"id": "run_state_terminal_unique", "scenario": "*", "dim": "execution", "blocking": True,
      "principle": "VP-G6(能力不回退)/P08验收§15(终态唯一)", "type": "run_state"},
     {"id": "run_state_completed", "scenario": "*", "dim": "execution", "blocking": True,
@@ -83,16 +73,16 @@ MECHANICAL_ORACLES: list[dict] = [
      "principle": "VP-P8-12.1(调用核算完整性)", "type": "ledger"},
     {"id": "ledger_max_duration", "scenario": "*", "dim": "execution", "blocking": True,
      "principle": "VP-G6(宿主 deadline 生效)", "type": "ledger"},
-    {"id": "answer_numeric_oracles", "scenario": "*", "dim": "evidence", "blocking": True,
-     "principle": "CP-CR02/CR04(绑定数字一致)", "type": "numeric"},
+    {"id": "answer_numeric_oracles", "scenario": "*", "dim": "evidence", "blocking": False,
+     "principle": "CP-CR02/CR04(绑定数字一致)/CP-§5(未知不得伪装为已检查)", "type": "numeric"},
     {"id": "export_dual_artifacts", "scenario": "*", "dim": "transfer", "blocking": True,
      "principle": "CP-CR06(图文对应、导出一致)/VP-P8-12.1(生命周期一致性)", "type": "export"},
     {"id": "tasks_terminal", "scenario": "*", "dim": "declaration", "blocking": True,
      "principle": "VP-G5(假设生命周期闭合)/CP-CR03(覆盖或具体缺口)", "type": "tasks"},
-    {"id": "extrapolated_value_receipt_bound", "scenario": "*", "dim": "evidence", "blocking": True,
-     "principle": "VP-4.1(允许标注的待验证解释,禁止无依据外推)", "type": "extrapolation"},
-    {"id": "yoy_requires_crossyear_receipt", "scenario": "*", "dim": "evidence", "blocking": True,
-     "principle": "VP-4.1(口径正确)/CP-CR04", "type": "yoy"},
+    {"id": "extrapolated_value_receipt_bound", "scenario": "*", "dim": "evidence", "blocking": False,
+     "principle": "VP-4.1(允许标注的待验证解释,禁止无依据外推)/CP-§5(未知待评)", "type": "extrapolation"},
+    {"id": "yoy_requires_crossyear_receipt", "scenario": "*", "dim": "evidence", "blocking": False,
+     "principle": "VP-4.1(口径正确)/CP-CR04/CP-§5(开放语义待评)", "type": "yoy"},
     # Open-class semantics: advisory only (CP-§5: 规则不能可靠判定的语义不伪精确).
     {"id": "unit_drift_advisory", "scenario": "*", "dim": "value", "blocking": False,
      "principle": "CP-§5(unknown 不得写成已知)/CP-§6(避免过度保守)", "type": "advisory_unit"},
@@ -103,7 +93,7 @@ MECHANICAL_ORACLES: list[dict] = [
 ]
 
 _KNOWN_CHECK_TYPES = {
-    "run_state", "pairing", "confirmations", "ledger", "numeric", "export",
+    "matrix", "run_state", "pairing", "confirmations", "ledger", "numeric", "export",
     "tasks", "extrapolation", "yoy", "advisory_unit", "advisory_origin",
     "advisory_next_step",
 }
@@ -251,101 +241,8 @@ _SINGLE_NEXT_STEP = re.compile(
     r"只有(?:一条|一个)(?:路|途径|选项|下一步|办法)",
     re.I,
 )
-_UNCERTAINTY_ESCAPE = re.compile(
-    r"未知|不能|无法|非观测|未观测|情景|假设|待确认|未验证|不是预测", re.I
-)
 _D_TOKEN = re.compile(r"(?<![A-Za-z0-9])D(\d+)")
 _PCT = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*%")
-
-
-def _find_curve_receipt(tool_outputs_dir: Path) -> dict | None:
-    if not tool_outputs_dir.exists():
-        return None
-    for path in sorted(tool_outputs_dir.glob("*.json")):
-        data = _read_json(path)
-        if not isinstance(data, dict):
-            continue
-
-        def walk(node):
-            if isinstance(node, dict):
-                if isinstance(node.get("fits"), list) and isinstance(node.get("points"), list):
-                    return node
-                for value in node.values():
-                    found = walk(value)
-                    if found is not None:
-                        return found
-            elif isinstance(node, list):
-                for value in node:
-                    found = walk(value)
-                    if found is not None:
-                        return found
-            return None
-
-        found = walk(data)
-        if found is not None:
-            return found
-    return None
-
-
-def _find_compare_periods_receipts(tool_outputs_dir: Path) -> list[dict]:
-    """All compare_periods receipts (period_a/period_b carrying date ranges)."""
-    receipts: list[dict] = []
-    if not tool_outputs_dir.exists():
-        return receipts
-    for path in sorted(tool_outputs_dir.glob("*.json")):
-        data = _read_json(path)
-        if not isinstance(data, dict):
-            continue
-
-        def walk(node):
-            if isinstance(node, dict):
-                pa, pb = node.get("period_a"), node.get("period_b")
-                if (
-                    isinstance(pa, dict) and isinstance(pb, dict)
-                    and isinstance(pa.get("range"), list) and isinstance(pb.get("range"), list)
-                ):
-                    receipts.append(node)
-                    return
-                for value in node.values():
-                    walk(value)
-            elif isinstance(node, list):
-                for value in node:
-                    walk(value)
-
-        walk(data)
-    return receipts
-
-
-def _receipt_is_cross_year(receipt: dict) -> bool:
-    """P1-6：跨年判定只认回执里的结构化日期范围，不挖散文年份。"""
-    from datetime import date as _date
-
-    starts = []
-    for key in ("period_a", "period_b"):
-        raw = (receipt.get(key) or {}).get("range") or []
-        if len(raw) < 2:
-            return False
-        try:
-            starts.append(_date.fromisoformat(str(raw[0])[:10]))
-        except ValueError:
-            return False
-    left, right = starts
-    return left.month == right.month and left.day == right.day and left.year != right.year
-
-
-def _family_value(fit: dict, x: float) -> float | None:
-    params = fit.get("parameters") or {}
-    try:
-        family = fit.get("family")
-        if family == "power":
-            return float(params["a"]) * x ** float(params["b"])
-        if family == "exponential":
-            return float(params["a"]) * math.exp(float(params["b"]) * x)
-        if family == "logarithmic":
-            return float(params["a"]) + float(params["b"]) * math.log(x)
-    except (KeyError, TypeError, ValueError, OverflowError):
-        return None
-    return None
 
 
 def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -> dict:
@@ -415,23 +312,18 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         o["blocking"], o["dim"], o["principle"],
     ))
 
-    # 4. Numeric token presence is only a coarse check. M02 needs a
-    # receipt-bound raw-scale/unit review; do not falsely pass 10% or reject
-    # 0.10 from a substring search.
+    # 4. Answer text cannot certify numeric correctness or completeness.
+    # Keep this obligation explicitly unassessed until a current receipt,
+    # binding and rendered span can be checked together.
     o = _oracle_meta("answer_numeric_oracles")
-    if scenario == "M02":
-        checks.append(_check(
-            False, o["id"],
-            "unassessed: review raw-scale D1-D7, unit evidence, and receipt-bound D30",
-            False, o["dim"], o["principle"],
-        ))
-    else:
-        missing = [tok for tok in NUMERIC_ORACLES.get(scenario, []) if tok not in final_text]
-        checks.append(_check(
-            not missing, o["id"],
-            f"missing_tokens={missing}" if missing else "numeric oracles present",
-            o["blocking"], o["dim"], o["principle"],
-        ))
+    detail = (
+        "unassessed: review raw-scale D1-D7, unit evidence, and receipt-bound D30"
+        if scenario == "M02" else
+        "unassessed: answer numbers require current receipt, binding, and rendered-span review"
+    )
+    numeric_check = _check(False, o["id"], detail, o["blocking"], o["dim"], o["principle"])
+    numeric_check["assessment"] = "unassessed"
+    checks.append(numeric_check)
 
     # 5. export dual artifacts (blocking when the scenario exports)
     o = _oracle_meta("export_dual_artifacts")
@@ -470,53 +362,39 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         detail = f"run_state={status!r}; declaration check applies to completed runs"
     checks.append(_check(tasks_ok, o["id"], detail, o["blocking"], o["dim"], o["principle"]))
 
-    # 7. extrapolated % values must be receipt-bound or uncertainty-marked (blocking)
+    # 7. Text/curve-value coincidence does not prove a scenario binding, and
+    # wording-based uncertainty escapes do not establish whether a claim is safe.
     o = _oracle_meta("extrapolated_value_receipt_bound")
-    receipt = _find_curve_receipt(sdir / "tool_outputs")
-    offenders: list[str] = []
-    if receipt:
-        xs = [float(p.get("x")) for p in receipt.get("points", []) if isinstance(p, dict) and p.get("x") is not None]
-        max_x = max(xs) if xs else None
-        fits = [f for f in receipt.get("fits", []) if isinstance(f, dict)]
-        if max_x is not None:
-            for clause in re.split(r"[。；;\n]", final_text):
-                for dm in _D_TOKEN.finditer(clause):
-                    day = float(dm.group(1))
-                    if day <= max_x:
-                        continue
-                    window = clause[max(0, dm.start() - 40): dm.end() + 60]
-                    for pm in _PCT.finditer(clause[dm.end():dm.end() + 80]):
-                        reported = float(pm.group(1)) / 100
-                        matches = [
-                            abs(reported - v) <= 0.0005
-                            for v in (_family_value(f, day) for f in fits)
-                            if v is not None
-                        ]
-                        if any(matches):
-                            continue
-                        if _UNCERTAINTY_ESCAPE.search(window):
-                            continue
-                        offenders.append(window.strip()[:60])
-    checks.append(_check(
-        not offenders, o["id"],
-        f"unbound_extrapolated_values={len(offenders)}" if offenders else "no unbound extrapolated values",
+    d_point_rate = any(
+        _PCT.search(clause) and _D_TOKEN.search(clause)
+        for clause in re.split(r"[。；;\n]", final_text)
+    )
+    extrapolation_check = _check(
+        not d_point_rate, o["id"],
+        "unassessed: D-point rate needs a current claim-bound receipt and host-rendered span"
+        if d_point_rate else "no D-point rate expression found",
         o["blocking"], o["dim"], o["principle"],
-    ))
+    )
+    if d_point_rate:
+        extrapolation_check["assessment"] = "unassessed"
+    checks.append(extrapolation_check)
 
-    # 8. 同比 label requires a cross-year period receipt (blocking)
+    # 8. A lexical label is a review lead, not a verified claim. An unrelated
+    # cross-year receipt cannot authorize the sentence that used the label.
     o = _oracle_meta("yoy_requires_crossyear_receipt")
     yoy_labelled = any(
         "同比" in clause and "同比例" not in clause
         for clause in re.split(r"[。；;\n]", final_text)
     )
-    period_receipts = _find_compare_periods_receipts(sdir / "tool_outputs")
-    crossyear_count = sum(1 for receipt in period_receipts if _receipt_is_cross_year(receipt))
-    yoy_ok = not yoy_labelled or crossyear_count > 0
-    checks.append(_check(
-        yoy_ok, o["id"],
-        f"yoy_labelled={yoy_labelled} crossyear_receipts={crossyear_count}",
+    yoy_check = _check(
+        not yoy_labelled, o["id"],
+        "unassessed: 同比 wording needs a claim-bound same-period cross-year receipt"
+        if yoy_labelled else "no 同比 label found",
         o["blocking"], o["dim"], o["principle"],
-    ))
+    )
+    if yoy_labelled:
+        yoy_check["assessment"] = "unassessed"
+    checks.append(yoy_check)
 
     # 9-10. advisory open-class semantics (never blocking)
     o = _oracle_meta("unit_drift_advisory")
@@ -604,6 +482,15 @@ def audit_run_dir(run_dir: Path) -> dict:
                 continue
             sessions[sdir.name] = audit_session(sdir, scenario=scenario)
 
+    o = _oracle_meta("scenario_matrix_coverage")
+    observed_scenarios = {item["scenario"] for item in sessions.values()}
+    missing_scenarios = sorted(set(SCENARIO_PROMPT_PREFIXES) - observed_scenarios)
+    run_checks.append(_check(
+        not missing_scenarios, o["id"],
+        f"observed={sorted(observed_scenarios)} missing={missing_scenarios}",
+        o["blocking"], o["dim"], o["principle"],
+    ))
+
     any_blocking = any(
         (not c["passed"]) and c["blocking"]
         for c in run_checks
@@ -612,11 +499,15 @@ def audit_run_dir(run_dir: Path) -> dict:
         for verdict in sessions.values()
         for c in verdict["checks"]
     )
+    needs_review = any(
+        check.get("assessment") == "unassessed"
+        for verdict in sessions.values() for check in verdict["checks"]
+    )
     return {
         "run_dir": str(run_dir),
         "run_checks": run_checks,
         "sessions": sessions,
-        "verdict": "passed" if not any_blocking else "failed",
+        "verdict": "failed" if any_blocking else "needs_review" if needs_review else "passed",
     }
 
 
@@ -636,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
     print(text)
-    return 0 if report["verdict"] == "passed" else 1
+    return {"passed": 0, "failed": 1, "needs_review": 2}[report["verdict"]]
 
 
 if __name__ == "__main__":

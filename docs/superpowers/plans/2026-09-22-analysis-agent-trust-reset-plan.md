@@ -639,6 +639,12 @@ evidence refs；无绑定意见 advisory，`overall` 不影响发布。尚未接
 | C 真 Shadow | 独立版本化提示、输入/输出 digest、统一 Provider 账本/预算、显式开启/超时降级；历史正反候选校准误删、漏检、动作、成本；整个 Shadow 不改可见发布 | r4 经独立精确授权后四例全部可评：2/2 受控正例保留、2/2 受控负例命中正确维度且仅 `advisory_only`，4 次实际发起/11113 token、正式无效果（交接 §43）。这只覆盖同一人工构造 claim 的局部内容等价层；旧自然包 0 现行 typed 分母。§47 的受控入口已接线但 E3 使用脚本模型；§48 的自然 M03 正反协议/同账本启动器仅完成零调用 E2，须新提交冻结与新授权。尚无自然 typed 产率、误删或漏检样本；C 自然层及整阶段均未退出 |
 | D 正式处置 | 用户另行裁决默认发布切换；仅受限 claim 动作，确定性复核与最多一次定向修订；完整 Provider-disabled 浏览器 E3，E4 另冻结/授权 | 未授权、未开始 |
 
+**2026-09-25 顺序纠偏（用户确认保留有依据的解释后）**：上表是最终验收门，不应被解释为“完成全部自然 Provider 校准后才允许开始 Phase 7/8”。当前已观察到六个自然 typed 比较块与正确解释并存，也观察到邻接无据断言；纯宿主核心会丢掉正确解释。接下来先把 Phase 6 限定为可集成的默认关闭机制：继续复用现有 packet、`answer_bindings.v1`、原位 trace、一次定向修订和已验证事实回退；保留有依据的模型解释，不为每句解释新增 claim 类型或把未绑定散文一律删除。停止扩展工具专用投影、词表、确认流程和离线选择器，除非跨历史正反证据证明现有结构无法承载必答结果。
+
+随后立即做 Phase 7 的旧散文门逐族退役及 Phase 8 的分层验收契约；每族须同时证明正确解释/方法上下文保留和无据强断言受限，不能靠单个测试词句或纯核心删文过关。完成这两阶段后，再按三份原始计划复核产品价值与复杂度，统一执行当前 HEAD 的离线、Provider-disabled 浏览器及经新精确冻结授权的真实 Provider 系统矩阵。Phase 5/C 的自然质量、Phase 6/D 的正式默认切换和整个 Phase 6 的“已验收”状态均留在系统矩阵之后裁决；实现就绪不得写成阶段退出。此前自然调用只是定位生产缺口的诊断，不以连续追加 E4 来驱动局部补丁。
+
+Phase 8 的首个已知 RED 是 `p08_scenario_audit.py` 把 M01/M03/M05/M06 的答案数字 token 出现当成 blocking 数值 oracle，而 M02 已因原始 `0.10` 与 `10%` 尺度歧义标为 `unassessed`。token 出现既不能证明数值/口径正确，缺失也不能证明结论错误；调整前不得用现有总 `passed` 作为答案质量验收。替代物须读取同版本回执、binding 和原位 trace 的可核数值，并把无法机器判定的解释单列待评，不以放宽 token 列表或给全部未知项直接判通过收尾。
+
 后续 E4 时点（交接 §49）：用户另行授权的 `0c579a2` 自然 M03-P/N 冻结批次已按序执行，账本 12 started/12 dispatched/0 failed；两例均完成浏览器会话、刷新和导出，却只选出 `preview_data` 等工具，两个最终 packet 均为 **0 binding / 0 trace**。P 的正确六源正文是未绑定散文，N 的可见拒绝误导不构成宿主 typed 负例通过；此批 `executed_not_accepted`，A 的自然生产、C 的自然审计分母和 D 的默认处置均未升级。下一 RED 先检查已执行 `preview_data` 是否足以由宿主证明完整两行和同版本数值；否则维持不授权，不能用提示词或旧散文补证。该批授权已消费。
 
 后续本地切片（交接 §50）：经用户选择，默认关闭的 AgentLoop 现仅对完整两行、同版本/哈希、单来源、两日各一行、有限数值 `amount` 的 `preview_data` 建立宿主事实与 scope，复用既有 `comparison` block 原位渲染。E2 全量 3024 passed/1 skipped；§49 自然 M03-P 原回执和帧经**新代码离线回放**可得六个 block，但旧正文仍未变。Provider-disabled E3 的服务健康且零 Provider，官方 IAB 新标签被自动审批拒绝，矩阵未开始，不能算 E3。新的自然模型 typed 产率、C 自然层、D 默认处置及 A 全历史价值均待后续独立验收；§49 授权不能复用。
@@ -668,6 +674,8 @@ evidence refs；无绑定意见 advisory，`overall` 不影响发布。尚未接
 
 禁止一次删除全部门，再依靠附录或审计模型兜底。
 
+当前退役清点：`_period_label_issues` 已是一次修订后的软提示，但尚不能证明自由散文的“同比”绑定了宿主表格；`_extrapolation_issues` 与 `_currency_unit_issues` 仍可能对未绑定散文形成硬判断。对应的 `comparison`、`scenario_extrapolation` 和宿主单位渲染只覆盖原位 typed 块，不覆盖旁侧独立句。因此本轮不删除这些正式发布门；下一退役切片必须先让无据强断言可定位并局部处置，同时保住 R4/R11 的正确边界解释，再按族删除旧硬规则。
+
 ### Phase 8：验收契约与判定器重写
 
 - 将 oracle 分为 blocking、structured completeness、semantic audit、advisory；
@@ -675,6 +683,8 @@ evidence refs；无绑定意见 advisory，`overall` 不影响发布。尚未接
 - 移除依赖特定自然语言措辞的硬 oracle；
 - 判定器输出各维结果，不再用单一 6/6 掩盖失败性质；
 - 保持现有 runner、浏览器工作流和账本，不新增重复机制。
+
+首个收敛切片：P08 审计器不再用答案数字 token、散文“同比”加任意跨年回执、或 D 日百分比与拟合值的词面碰巧一致，给出自动通过/阻断。三项均显式 `unassessed`；没有其他 blocking 失败时总判定为 `needs_review`，不能被写成验收通过。完整矩阵另要求 M01–M06 场景实际出现，零识别或缺场景为结构化失败。前三组 RED 分别为 3 failed/19 passed、2 failed/1 passed、2 failed/2 passed；最终定向 26 passed，fresh `tmp/tp8o1` full-offline **3030 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `84BEE529EF99A049D9669A7870D901BA6BEFF540573DC3E118903AAF596BB101`，runner 标明 Provider transport forbidden。只读回放旧完整 P08 目录仍识别六场景并维持失败，自然 M03 试验目录从错误的 `passed/0 sessions` 变为 `failed/0 sessions`。这只是移除伪精确 verdict，尚未实现同版本回执、binding、trace 的正向数值验收，也没有改变正式发布或调用 Provider。
 
 ### Phase 9：验证顺序
 

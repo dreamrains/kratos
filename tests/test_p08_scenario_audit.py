@@ -15,6 +15,7 @@ import pytest
 
 from scripts.testing.p08_scenario_audit import (
     MECHANICAL_ORACLES,
+    SCENARIO_PROMPT_PREFIXES,
     _detect_scenario_from,
     audit_run_dir,
     audit_session,
@@ -81,6 +82,21 @@ class TestSessionVerdicts:
             ],
         )
         verdict = audit_session(sdir, scenario="M02", actions=[])
+        check = next(c for c in verdict["checks"] if c["check"] == "answer_numeric_oracles")
+        assert check["passed"] is False
+        assert check["blocking"] is False
+        assert "unassessed" in check["detail"]
+
+    @pytest.mark.parametrize("answer", [
+        "12 条订单，合计 120。",
+        "订单数和金额已计算，详见同版本回执。",
+    ])
+    def test_numeric_prose_presence_or_absence_cannot_pass_or_block(self, tmp_path, answer):
+        sdir = _make_session(tmp_path, "s_numeric", summary=M01_SUMMARY, messages=[
+            {"role": "user", "content": M01_SUMMARY},
+            {"role": "assistant", "content": answer},
+        ])
+        verdict = audit_session(sdir, scenario="M01", actions=[])
         check = next(c for c in verdict["checks"] if c["check"] == "answer_numeric_oracles")
         assert check["passed"] is False
         assert check["blocking"] is False
@@ -171,7 +187,7 @@ class TestRunLevelVerdicts:
             for c in report["run_checks"]
         )
 
-    def test_clean_run_passes(self, tmp_path):
+    def test_partial_run_cannot_claim_complete_matrix(self, tmp_path):
         self._base_run(tmp_path)
         report = audit_run_dir(tmp_path)
         blocking = [c for c in report["run_checks"] if c["blocking"] and not c["passed"]]
@@ -179,9 +195,36 @@ class TestRunLevelVerdicts:
             sid: [c for c in v["checks"] if c["blocking"] and not c["passed"]]
             for sid, v in report["sessions"].items()
         }
-        assert blocking == []
+        assert [c["check"] for c in blocking] == ["scenario_matrix_coverage"]
         assert all(v == [] for v in scenarios_blocking.values())
-        assert report["verdict"] == "passed"
+        assert report["verdict"] == "failed"
+
+    def test_unrecognized_sessions_cannot_make_empty_matrix_pass(self, tmp_path):
+        _make_session(tmp_path, "s_unknown", summary="非 P08 测试会话")
+        _make_ledger(tmp_path, [
+            {"at": 1.0, "event": "started", "call_number": 1},
+            {"at": 2.0, "event": "dispatched", "call_number": 1},
+        ])
+        report = audit_run_dir(tmp_path)
+        assert report["sessions"] == {}
+        assert report["verdict"] == "failed"
+        assert any(c["check"] == "scenario_matrix_coverage" and not c["passed"]
+                   for c in report["run_checks"])
+
+    def test_complete_protocol_matrix_waits_for_content_review(self, tmp_path):
+        for scenario, prompt in SCENARIO_PROMPT_PREFIXES.items():
+            _make_session(tmp_path, f"s_{scenario}", summary=prompt, reports={
+                "conversation_1.md": "12 条订单，合计 120",
+                "publication_1.md": "12 条订单，合计 120",
+            })
+        _make_ledger(tmp_path, [
+            {"at": 1.0, "event": "started", "call_number": 1},
+            {"at": 2.0, "event": "dispatched", "call_number": 1},
+        ])
+        report = audit_run_dir(tmp_path)
+        assert len(report["sessions"]) == 6
+        assert not [c for c in report["run_checks"] if c["blocking"] and not c["passed"]]
+        assert report["verdict"] == "needs_review"
 
 
 class TestAdvisoryOnlySemantics:
@@ -261,18 +304,20 @@ class TestYoyReceiptBinding:
         _write_json(sdir / "tool_outputs" / "compare_periods_1.json", receipt)
         return sdir
 
-    def test_sameyear_receipt_with_yoy_label_is_blocking_even_with_prose_years(self, tmp_path):
-        """R16 通路收口：散文出现两个年份不再放行，判定只认回执。"""
+    def test_sameyear_receipt_with_yoy_label_needs_binding_review(self, tmp_path):
+        """A label and an unrelated receipt cannot establish a sentence-level claim."""
         sdir = self._m03_session(
             tmp_path, "s_yoy_r",
             "2025 与 2026 两个年度口径合并后六来源合计 210 与 231，金额同比增长 10%。",
             self._SAME_YEAR,
         )
         verdict = audit_session(sdir, scenario="M03", actions=[])
-        failed = [c["check"] for c in verdict["checks"] if c["blocking"] and not c["passed"]]
-        assert "yoy_requires_crossyear_receipt" in failed
+        yoy = next(c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt")
+        assert yoy["passed"] is False
+        assert yoy["blocking"] is False
+        assert yoy["assessment"] == "unassessed"
 
-    def test_crossyear_receipt_supports_yoy_label_without_prose_years(self, tmp_path):
+    def test_crossyear_receipt_alone_does_not_authorize_yoy_sentence(self, tmp_path):
         sdir = self._m03_session(
             tmp_path, "s_yoy_ok",
             "六来源合计 210 与 231；金额同比增长 10%。",
@@ -280,7 +325,9 @@ class TestYoyReceiptBinding:
         )
         verdict = audit_session(sdir, scenario="M03", actions=[])
         yoy = [c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt"][0]
-        assert yoy["passed"]
+        assert yoy["passed"] is False
+        assert yoy["blocking"] is False
+        assert yoy["assessment"] == "unassessed"
 
     def test_same_proportional_wording_is_not_a_yoy_label(self, tmp_path):
         sdir = self._m03_session(
@@ -291,6 +338,24 @@ class TestYoyReceiptBinding:
         verdict = audit_session(sdir, scenario="M03", actions=[])
         yoy = [c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt"][0]
         assert yoy["passed"]
+
+
+class TestExtrapolationEvidence:
+    @pytest.mark.parametrize("answer", ["D30 为 9.1%。", "D30 为 12%。"])
+    def test_curve_value_match_or_mismatch_cannot_certify_unbound_prose(self, tmp_path, answer):
+        sdir = _make_session(tmp_path, "s_curve", summary="请计算并解释 D1 至 D7 留存", messages=[
+            {"role": "user", "content": "请计算并解释 D1 至 D7 留存"},
+            {"role": "assistant", "content": answer},
+        ])
+        _write_json(sdir / "tool_outputs" / "curve.json", {
+            "points": [{"x": 1}, {"x": 7}],
+            "fits": [{"family": "power", "parameters": {"a": 0.5, "b": -0.5}}],
+        })
+        verdict = audit_session(sdir, scenario="M02", actions=[])
+        check = next(c for c in verdict["checks"] if c["check"] == "extrapolated_value_receipt_bound")
+        assert check["passed"] is False
+        assert check["blocking"] is False
+        assert check["assessment"] == "unassessed"
 
 
 M06_SUMMARY = "请分析名为 missing_orders 的数据集"
