@@ -115,7 +115,7 @@ def test_shadow_request_is_bounded_to_current_located_claim_and_reproducible():
     request = build_shadow_audit_request(packet, answer, state=state, canonical_history=history)
     assert request["status"] == "ready"
     assert request["publication_effect"] == "none"
-    assert request["prompt_version"] == "publication_audit_shadow.v2"
+    assert request["prompt_version"] == "publication_audit_shadow.v3"
     assert request["packet_digest"] == packet["snapshot_digest"]
     assert request["answer_sha256"] == packet["answer_sha256"]
     assert len(request["claims"]) == 1
@@ -187,6 +187,8 @@ def test_shadow_dispatch_is_explicit_one_shot_and_diagnostic_only():
     )
     assert len(calls) == 1
     assert calls[0][-1] == 65_536
+    assert "schema_version exactly to publication_audit.v1" in calls[0][1]
+    assert "finding_id" in calls[0][1] and "recommended_action" in calls[0][1]
     assert result["status"] == "valid"
     assert result["publication_effect"] == "none"
     assert result["audit"]["findings"] == []

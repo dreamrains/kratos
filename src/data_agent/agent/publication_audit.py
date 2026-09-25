@@ -27,7 +27,7 @@ _ACTIONS = frozenset({
 })
 
 SHADOW_MAX_OUTPUT_TOKENS = 65_536
-_SHADOW_PROMPT_VERSION = "publication_audit_shadow.v2"
+_SHADOW_PROMPT_VERSION = "publication_audit_shadow.v3"
 _SHADOW_SYSTEM_PROMPT = (
     "Review only the host-located claims in the supplied publication audit view. "
     "The host-rendered claim is receipt-bound; same-line local_explanation and verbatim "
@@ -35,9 +35,19 @@ _SHADOW_SYSTEM_PROMPT = (
     "Assess local_explanation only when its status is same_line_untrusted. "
     "If a concern is only in local_explanation, set recommended_action=advisory_only; "
     "do not remove or downgrade the host-rendered claim for that prose. "
-    "Return one JSON object using publication_audit.v1 with packet_digest, "
-    "answer_sha256, overall, findings, missing_requirements=[], and contradictions=[]. "
-    "Each finding must name an included claim_id and evidence_refs from that claim. "
+    "Return only one JSON object, without markdown. Set schema_version exactly to "
+    "publication_audit.v1; copy packet_digest and answer_sha256 exactly from the input. "
+    "Required top-level fields are schema_version, packet_digest, answer_sha256, "
+    "overall, findings, missing_requirements, contradictions. "
+    "overall must be pass, pass_with_findings, or inconclusive. "
+    "missing_requirements and contradictions must both be empty arrays. "
+    "For no issue, findings must be an empty array. For each finding, supply all "
+    "of finding_id (unique string), claim_id (included claim ID), dimension, "
+    "severity, recommended_action, evidence_refs (array copied from that claim), "
+    "and reason (string of at most 500 characters). "
+    f"Allowed dimension values: {', '.join(sorted(_DIMENSIONS))}. "
+    f"Allowed severity values: {', '.join(sorted(_SEVERITIES))}. "
+    f"Allowed recommended_action values: {', '.join(sorted(_ACTIONS))}. "
     "Do not invent facts, units, validation, requirement coverage, or citations. "
     "A valid receipt reference proves provenance only; assess semantic claims separately. "
     "Do not use this review to approve unbound prose or override host validation."
