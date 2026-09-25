@@ -304,13 +304,18 @@ class ScriptedClient:
                 "已完成六个来源的分组汇总。来源 1 至来源 6 均保留在本轮收据中；导出时应保留全部来源和每个来源的金额与记录数。"
             )
 
-        if marker == "TRIAL-M03":
+        if marker in {"TRIAL-M03", "TRIAL-M03-PREVIEW"}:
             if step == 0:
                 return self._response(calls=[
                     ("load_data", {"source": f"F-SRC{number}.csv", "name": f"src_{number}"})
                     for number in range(1, 7)
                 ])
             if step == 1:
+                if marker == "TRIAL-M03-PREVIEW":
+                    return self._response(calls=[
+                        ("preview_data", {"name": f"src_{number}"})
+                        for number in range(1, 7)
+                    ])
                 return self._response(calls=[
                     ("compare_periods", {
                         "name": f"src_{number}", "date_col": "date", "metrics": "amount",
@@ -554,7 +559,7 @@ class ScriptedClient:
             if message.get("role") != "user":
                 continue
             found = re.search(
-                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION)|CONTENT-B0[37]|IC-B(?:01|02|03|04-REUSE|04-CHANGE|05|06-METHOD|06-SEMANTIC)|TRIAL-M03)】",
+                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION)|CONTENT-B0[37]|IC-B(?:01|02|03|04-REUSE|04-CHANGE|05|06-METHOD|06-SEMANTIC)|TRIAL-M03(?:-PREVIEW)?)】",
                 str(message.get("content") or ""),
             )
             if found:

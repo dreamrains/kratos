@@ -1051,6 +1051,9 @@ def _build_offline_trust_projection(
         projected["comparison_rows"] = _project_offline_comparison_rows(
             state, allowed_receipts, packet, offline_workspace,
         )
+        projected["comparison_rows"].extend(_project_offline_preview_comparisons(
+            state, allowed_receipts, packet, offline_workspace,
+        ))
     # Without an explicit current-turn receipt selection, historical session
     # artifacts cannot be distinguished from this answer's evidence snapshot.
     if not session_id or not allowed_receipts:
@@ -1347,6 +1350,103 @@ def _project_offline_comparison_rows(
                 "period_a_rows": counts[0], "period_b_rows": counts[1],
                 "unit_status": "not_confirmed", "status": "descriptive_preview_only",
             })
+    return rows
+
+
+def _project_offline_preview_comparisons(
+    state: Any, allowed_receipts: set[str], packet: dict[str, Any], offline_workspace: Any,
+) -> list[dict[str, Any]]:
+    """Admit only a complete two-row preview to the existing comparison path.
+
+    The preview tool supplies no structured facts. These facts and scope are
+    host-recomputed in this explicitly selected, default-off packet only.
+    """
+    import pandas as pd
+    from data_agent.session.workspace import Workspace
+
+    receipts = {str(item.get("id")): item for item in getattr(state, "tool_receipts", []) or []
+                if isinstance(item, dict) and item.get("id") in allowed_receipts
+                and item.get("tool_name") == "preview_data"}
+    rows = []
+    for source in packet.get("sources", []):
+        if not isinstance(source, dict) or source.get("tool_name") != "preview_data":
+            continue
+        receipt_id = source.get("receipt_id")
+        receipt = receipts.get(receipt_id)
+        scopes = [item for item in packet.get("publication_scope", [])
+                  if isinstance(item, dict) and item.get("receipt_id") == receipt_id
+                  and item.get("tool") == "preview_data"]
+        if receipt is None or len(scopes) != 1 or source.get("facts") or source.get("fact_groups"):
+            continue
+        args = receipt.get("arguments")
+        if not isinstance(args, dict) or set(args) - {"name", "n"}:
+            continue
+        dataset, n = args.get("name"), args.get("n", 10)
+        if (not isinstance(dataset, str) or not dataset
+                or isinstance(n, bool) or not isinstance(n, int) or not 2 <= n <= 50
+                or scopes[0].get("source_dataset") != dataset):
+            continue
+        identities = receipt.get("data_identities")
+        if (not isinstance(identities, dict) or set(identities) != {dataset}
+                or source.get("data_identities") != identities
+                or not isinstance(identities[dataset], dict)
+                or not identities[dataset].get("version_id")):
+            continue
+        try:
+            frame = offline_workspace.get(dataset)
+            current = offline_workspace.get_data_identity(dataset)
+            if (frame is None or len(frame) != 2 or list(frame.columns) != ["source", "date", "amount"]
+                    or current != identities[dataset]
+                    or Workspace._frame_fingerprint(frame) != current.get("fingerprint")
+                    or not pd.api.types.is_numeric_dtype(frame["amount"])
+                    or pd.api.types.is_bool_dtype(frame["amount"])):
+                continue
+            preview = frame.head(n).to_string()
+            digest = "sha256:" + hashlib.sha256(preview.encode("utf-8")).hexdigest()
+            if (len(preview) > 2000 or receipt.get("result_preview") != preview
+                    or receipt.get("result_sha256") != digest
+                    or source.get("result_sha256") != digest
+                    or source.get("structured_result_sha256")):
+                continue
+            labels = frame["source"].tolist()
+            if (len(set(labels)) != 1 or not isinstance(labels[0], str) or not labels[0].strip()):
+                continue
+            dates = [pd.Timestamp(value) for value in frame["date"]]
+            if (any(pd.isna(value) or value.time() != pd.Timestamp(0).time()
+                    for value in dates)
+                    or dates[0].date() == dates[1].date()
+                    or dates[0] >= dates[1]):
+                continue
+            amounts = [Decimal(str(value)) for value in frame["amount"]]
+            if any(not value.is_finite() for value in amounts):
+                continue
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError, ArithmeticError):
+            continue
+        first, second = (value.date().isoformat() for value in dates)
+        values = (amounts[0], amounts[1], amounts[1] - amounts[0])
+        fact_ids = []
+        for field, value in zip(("period_a", "period_b", "diff"), values):
+            fact_id = "f_preview_" + hashlib.sha256(
+                f"{receipt_id}|{current['fingerprint']}|{field}".encode("utf-8")
+            ).hexdigest()[:20]
+            source["facts"].append({"fact_id": fact_id, "group_id": "", "path": f"metrics.amount.{field}",
+                                    "value": format(value, "f"), "unit": "unknown"})
+            fact_ids.append(fact_id)
+        scopes[0]["observation_window"] = {"period_a": [first, first], "period_b": [second, second]}
+        scopes[0]["denominators"] = {"period_a": {"rows": 1, "day_count": 1},
+                                      "period_b": {"rows": 1, "day_count": 1}}
+        scopes[0]["unit_status"] = "not_confirmed"
+        change = values[2]
+        relative = change / abs(amounts[0]) * 100 if amounts[0] != 0 else None
+        rows.append({
+            "receipt_id": receipt_id, "result_sha256": digest, "dataset": dataset,
+            "metric": "amount", "windows": [f"{first}—{first}", f"{second}—{second}"],
+            "period_a": format(amounts[0], "f"), "period_b": format(amounts[1], "f"),
+            "absolute_change": format(change, "f"),
+            "relative_change_percent": format(round(relative, 2), "f") if relative is not None else None,
+            "period_a_rows": 1, "period_b_rows": 1,
+            "unit_status": "not_confirmed", "status": "descriptive_preview_only",
+        })
     return rows
 
 
@@ -3250,7 +3350,7 @@ def _derived_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> str
 def _comparison_binding_values(
     block: dict[str, Any], packet: dict[str, Any],
 ) -> tuple[str, list[str], list[int], list[Decimal]] | None:
-    """Resolve one executed compare_periods metric and its two time windows."""
+    """Resolve one bounded, host-verified metric and its two time windows."""
     if set(block) != _COMPARISON_BINDING_FIELDS:
         return None
     claim_id = block.get("claim_id")
@@ -3276,17 +3376,19 @@ def _comparison_binding_values(
     sources = [
         source for source in packet.get("sources", [])
         if isinstance(source, dict) and source.get("receipt_id") == receipt_ref
-        and source.get("tool_name") == "compare_periods"
+        and source.get("tool_name") in {"compare_periods", "preview_data"}
     ]
     scopes = [
         scope for scope in packet.get("publication_scope", [])
         if isinstance(scope, dict) and scope.get("receipt_id") == receipt_ref
-        and scope.get("tool") == "compare_periods"
+        and scope.get("tool") in {"compare_periods", "preview_data"}
         and scope.get("unit_status") == "not_confirmed"
     ]
     if len(sources) != 1 or len(scopes) != 1:
         return None
     source, scope = sources[0], scopes[0]
+    if source.get("tool_name") != scope.get("tool"):
+        return None
     facts = [
         next((fact for fact in source.get("facts", []) if isinstance(fact, dict)
               and fact.get("fact_id") == ref), None)
@@ -3299,6 +3401,8 @@ def _comparison_binding_values(
         return None
     metric = match.group(1)
     if len(metric) > 120 or any(ord(character) < 32 for character in metric):
+        return None
+    if source.get("tool_name") == "preview_data" and metric != "amount":
         return None
     if [fact.get("path") for fact in facts[1:]] != [
         f"metrics.{metric}.period_b", f"metrics.{metric}.diff",
@@ -4026,7 +4130,7 @@ def produce_offline_comparison_claim_candidate(
     for receipt_ref in refs:
         sources = [source for source in packet.get("sources", [])
                    if isinstance(source, dict) and source.get("receipt_id") == receipt_ref
-                   and source.get("tool_name") == "compare_periods"]
+                   and source.get("tool_name") in {"compare_periods", "preview_data"}]
         rows = [row for row in packet["offline_trust_projection"].get("comparison_rows", [])
                 if isinstance(row, dict) and row.get("receipt_id") == receipt_ref]
         if len(sources) != 1 or len(rows) != 1:

@@ -1842,14 +1842,16 @@ class AgentLoop:
                         for source in prior_packet.get("sources", [])
                         if isinstance(source, dict) and source.get("receipt_id")
                     ]
+            publication_tools = (
+                _SUBSTANTIVE_TOOLS if self._has_substantive_turn_evidence()
+                else _PUBLICATION_EVIDENCE_TOOLS
+            )
+            if trial:
+                publication_tools = publication_tools | {"preview_data"}
             packet = build_publication_packet(
                 state,
                 user_input=user_input,
-                substantive_tools=(
-                    _SUBSTANTIVE_TOOLS
-                    if self._has_substantive_turn_evidence()
-                    else _PUBLICATION_EVIDENCE_TOOLS
-                ),
+                substantive_tools=publication_tools,
                 receipt_ids=receipt_ids,
                 requirement_ids=list(getattr(self.context, "turn_requirement_ids", []) or []),
                 phase=phase,
@@ -1888,7 +1890,7 @@ class AgentLoop:
         selected = set(getattr(self.context, "turn_receipt_ids", []) or [])
         receipts = [item for item in getattr(state, "tool_receipts", []) or []
                     if isinstance(item, dict) and item.get("id") in selected
-                    and item.get("tool_name") in {"compare_periods", "transform_data"}]
+                    and item.get("tool_name") in {"compare_periods", "preview_data", "transform_data"}]
         if not receipts:
             from data_agent.agent.confirmation.models import ConfirmationStatus
             from data_agent.agent.confirmation.store import ConfirmationStore
