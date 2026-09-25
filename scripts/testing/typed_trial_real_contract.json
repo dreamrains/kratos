@@ -15,7 +15,7 @@
       "prompt": "请分别比较上传的六个来源在 2026-09-01 与 2026-09-02 的 amount 原始值，逐来源给出两期值、差额、日期范围和来源。单位未知时保留原始尺度；不要推断跨来源合计、来源独立性或更长时间趋势。",
       "fixtures": ["F-SRC1.csv", "F-SRC2.csv", "F-SRC3.csv", "F-SRC4.csv", "F-SRC5.csv", "F-SRC6.csv"],
       "oracles": [
-        "same-session selected compare_periods receipts and six answer_bindings.v1 comparison blocks are persisted with six answer_render_trace entries",
+        "same-session selected compare_periods receipts or complete same-version preview_data receipts and six answer_bindings.v1 comparison blocks are persisted with six answer_render_trace entries",
         "each source keeps its own 2026-09-01 and 2026-09-02 values, from 10 to 11 through 60 to 66, with host-recomputed delta",
         "unit remains unconfirmed and answer coverage remains unassessed without a proven user-subquestion mapping",
         "no unsupported cross-source total, source-independence claim, causal claim, or seven-day description is published",
