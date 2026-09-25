@@ -10,6 +10,7 @@ from the approved principles is detectable (``oracle_contract_is_consistent``).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -223,6 +224,41 @@ def _oracle_meta(check_id: str) -> dict:
     raise KeyError(check_id)
 
 
+def _structured_claim_evidence(sdir: Path, accepted_answer: str) -> dict:
+    """Reuse the host's persisted-claim view without upgrading answer quality."""
+    result = {"claim_location_status": "unavailable", "host_rendered_claims": 0,
+              "unlocatable_claims": 0, "request_completeness": "unassessed",
+              "unbound_prose_status": "not_audited"}
+    state_data = _read_json(sdir / "analysis_state.json")
+    if not isinstance(state_data, dict):
+        return result
+    try:
+        from data_agent.agent.analysis_state import AnalysisSessionState
+        from data_agent.agent.publication_audit import build_offline_audit_view
+        from data_agent.session.history import _read_canonical_snapshot
+
+        state = AnalysisSessionState.from_dict(state_data, sdir.name)
+        packets = [packet for packet in state.publication_packets
+                   if isinstance(packet, dict)
+                   and packet.get("answer_sha256") == "sha256:" + hashlib.sha256(
+                       accepted_answer.encode("utf-8")).hexdigest()]
+        if len(packets) != 1:
+            return result
+        view = build_offline_audit_view(
+            packets[0], accepted_answer, state=state,
+            canonical_history=_read_canonical_snapshot(sdir),
+        )
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        return result
+    return {
+        "claim_location_status": view["status"],
+        "host_rendered_claims": len(view["claims"]),
+        "unlocatable_claims": len(view.get("unlocatable_claim_ids", [])),
+        "request_completeness": "unassessed",
+        "unbound_prose_status": view.get("unbound_prose_status", "not_audited"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # per-session checks
 # ---------------------------------------------------------------------------
@@ -382,7 +418,8 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         o["blocking"], o["dim"], o["principle"],
     ))
 
-    return {"session": sdir.name, "scenario": scenario, "checks": checks}
+    return {"session": sdir.name, "scenario": scenario, "checks": checks,
+            "structured_evidence": _structured_claim_evidence(sdir, final_text)}
 
 
 # ---------------------------------------------------------------------------

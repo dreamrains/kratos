@@ -85,6 +85,8 @@ class TestSessionVerdicts:
         assert check["passed"] is False
         assert check["blocking"] is False
         assert "unassessed" in check["detail"]
+        assert verdict["structured_evidence"]["host_rendered_claims"] == 0
+        assert verdict["structured_evidence"]["request_completeness"] == "unassessed"
 
     @pytest.mark.parametrize("answer", [
         "12 条订单，合计 120。",

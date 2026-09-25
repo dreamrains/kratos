@@ -694,6 +694,10 @@ Phase 8 的首个已知 RED 是 `p08_scenario_audit.py` 把 M01/M03/M05/M06 的�
 
 该删减后的 fresh `tmp/tp8converge2` full-offline 为 **3014 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `01BFAE487DC9AB2A90CF6EBA2B376AD1A8ED922BA0D86612B3C41736D5821A7F`，runner 标明 `provider_calls=forbidden`；只是 E2，不改变产品正式发布或 Phase 6 退出判定。
 
+现有 `build_offline_audit_view` 已接入 P08 只读报告的 `structured_evidence`：只记录已持久化同版本 packet／回执／原位 trace 可定位的宿主 claim 数量，需求完整性固定 `unassessed`，旁侧自由散文固定 `not_audited`，不参与总判定。自然 M03-P/N 归档各得 6 个可定位 claim、0 个不可定位；旧完整 P08 的 M03 仍为 unavailable/0。相关两组定向 39 passed。此举给 Phase 8 一个可复用的结构证据输入，但没有实现数字口径正向 oracle 或开放解释质量判定。
+
+该报告接线后的 fresh `tmp/tp8structured3` full-offline 为 **3014 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `34B42BE1F4A6BC569F0A9C8EF2C433A93AF9266BC4589E589DA368A2984ACB33`，Provider transport forbidden；仍只是 E2。Phase 6 的 A 跨历史价值、C 自然 Shadow 和 D 正式处置均未因此退出。
+
 ### Phase 9：验证顺序
 
 1. 单元与真实轨迹回放；
