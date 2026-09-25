@@ -272,3 +272,12 @@ Phase 4 现在将模型 EvidenceRecord 的 measurement 视为候选：只有同�
 - **结构化替代**：复用 `_curve_confirmed_series` 对 packet 中同一 typed claim、七组事实、版本和 requirement 的校验，仅在通过时将确认 ID 加入该 claim 的受限 evidence refs，并向现有 `publication_audit_input.v1` 投影 `unit_status=confirmed` 与已核验覆盖。请求仍有原 prompt/input/view digest、24 KB 限额及 `publication_effect=none`；未引入新审计器、账本、模型调用或整篇散文授权。
 - **退役与停止门**：不改变正式发布或旧散文门，也不把已确认的观测尺度解释为拟合验证、D30 可预测或自然历史 R11 已通过。真实 Phase 5/C Shadow 调度、正反质量与成本校准仍需单独冻结和授权；Phase 6 A 的 R16/M03/M04 双向价值、D 正式策略和 E3/E4 也未由此完成。
 - **收据**：首轮单测 RED 为 `unit_status=not_confirmed`，修复后相关定向 **23 passed**。最终 fresh `tmp/tp5c-confirmed-view-r1` full-offline **2995 passed、1 skipped、16 warnings、0 failures**（317.65 秒），JUnit SHA256 `601C8420AA8A6B1DCFBBD15B4F298F8DF94C95CC890AB93049155C1C2F1F5C14`，runner `provider_calls=forbidden`、实际 Provider initiated 0。未进行浏览器 E3、真实 Shadow 或 E4。
+
+## 38. Phase 6 A：R16/M03/M04 真实归档的同版本价值回放
+
+用户选择先补本地 A 门的 R16/M03/M04 价值证据，保持 Provider 0 调用与正式默认不变。从 `main@134e3cd` 进入；仅在默认关闭的离线 packet 中显式选取原回执并载入同一会话保存的帧。归档文件若不在干净检出中，测试明确 skip，不能将该环境的 skip 算作历史通过。
+
+- **RED 与双向边界**：旧 R16 M05 自然答案曾保留订单数 12、`amount` 总和 120 和方法表，但旧终局 packet 只选 `preview_data`，没有将原 `transform_data` 数值事实绑定为现行 typed claim。R4 M03 六来源原答案/合成帧和 E4 M03 六个比较回执提供正确数值候选，E4 M03 旧正文却另写无依据的“七天跨度”。E4 M04 有两个版本的趋势执行结果与模型撰写的 EvidenceRecord，归档中没有可验证假设关系；最初把 packet 的 `evidence` 误断言为空的单测失败，核对后改为明确区分**packet 中的上下文记录**与**可信投影中的关系**，后者为空。不得用“有证据文本”推断 `supported/refuted`。
+- **结构化替代与正反验收**：新增归档回放测试沿用既有 `derived_snapshots`、`comparison_rows`、`executed_results` 和 `render_trusted_core_preview`，不改生产代码。R16 原 `transform_data` 与帧重现 `order_id_size=12`、`amount_sum=120` 和 `group_by=channel`、`order_id=count,size`、`amount=sum,mean,min,max`；R4 M03 合成帧重现六来源两日原值；E4 M03 六份 `compare_periods` 各自重现 `10i→11i`、差额 `i`、相对变化 10%，可信预览不带“七天跨度”；E4 M04 v1 均值 `16.6667`、v2 均值 `10`、v2 斜率 `0` 各属自己的数据版本，假设投影为空。四例均未接受 claim、无发布效果，现有错帧/伪造回执反例仍在定向组。这里的正例是**当前代码重放旧数据的 E2 数值保留**，不是旧正文通过现行 typed schema，更不是自然 Provider/E3 的新验收。
+- **退役与停止门**：目标仍是逐族退役“一条有效 binding 授权整篇自由散文”，本切片没有改变正式门。R16“订单数”是否指行数或去重 ID、`amount` 单位及方法适当性均无业务确认；M03 跨来源同质性/独立性、R4 图表与解释、M04 假设真实关系仍无宿主可证身份。这些继续 `unassessed`，不可把上下文数值自动标 `answered`。若要求这些旧会话取得 `answered` 或完成假设关系，必须先有真实业务映射/有效关系及同版本来源，不能倒填历史或靠新词表/模型总审。Phase 5 真 Shadow、Phase 6 C/D、正式默认切换及新的 E3/E4 均未由回放完成。
+- **收据**：三文件定向 **29 passed**；fresh `tmp/tp6a-cross-history-r1` full-offline **2999 passed、1 skipped、16 warnings、0 failures**（365.86 秒），JUnit SHA256 `40C2F847AA7CB4184B794BA60CC21E4450E89D022713E5945A1B2AF00F3663DE`，runner `provider_calls=forbidden`、实际 Provider initiated 0。此收据仅 E2；没有浏览器 E3、真实 Shadow 或新 E4。

@@ -1,5 +1,7 @@
 """Receipt- and workspace-bound two-date value preview; never live publication."""
 
+import json
+
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
@@ -171,3 +173,44 @@ def test_six_independent_compare_receipts_preserve_current_two_date_value_withou
         receipt_ids=receipt_ids, offline_trust_projection=True, offline_workspace=workspace,
     )
     assert "M03-source-1" not in {row["dataset"] for row in forged["offline_trust_projection"]["comparison_rows"]}
+
+
+def test_archived_e4_m03_six_receipts_replay_two_dates_when_present():
+    from pathlib import Path
+    import pytest
+
+    root = (Path(__file__).resolve().parents[1]
+            / "tmp/trust-reset-p08-real-20260924-r1/sessions/06a81b4d660c")
+    if not (root / "analysis_state.json").is_file() or not (root / "workspace_meta.json").is_file():
+        pytest.skip("archived E4 M03 session is not part of a clean checkout")
+    state = AnalysisSessionState.from_dict(
+        json.loads((root / "analysis_state.json").read_text(encoding="utf-8")),
+        "06a81b4d660c",
+    )
+    meta = json.loads((root / "workspace_meta.json").read_text(encoding="utf-8"))
+    workspace = Workspace()
+    names = [f"M03-source-{index}" for index in range(1, 7)]
+    for name in names:
+        frame_path = root / "data" / f"{name}.pkl"
+        if name not in meta or not frame_path.is_file():
+            pytest.skip("archived E4 M03 frame is not available")
+        workspace._datasets[name] = pd.read_pickle(frame_path)
+        workspace._metadata[name] = {"data_identity": meta[name]["data_identity"]}
+    receipts = [item["id"] for item in state.tool_receipts
+                if item.get("tool_name") == "compare_periods"]
+    assert len(receipts) == 6
+    packet = build_publication_packet(
+        state, user_input="六来源两日金额与变化", substantive_tools={"compare_periods"},
+        receipt_ids=receipts, offline_trust_projection=True, offline_workspace=workspace,
+    )
+    rows = packet["offline_trust_projection"]["comparison_rows"]
+    assert [(row["dataset"], row["period_a"], row["period_b"],
+             row["absolute_change"], row["relative_change_percent"])
+            for row in rows] == [
+                (f"M03-source-{index}", str(10 * index), str(11 * index),
+                 str(index), "10") for index in range(1, 7)
+            ]
+    preview = render_trusted_core_preview(packet, None)
+    assert preview["publication_effect"] == "none"
+    assert preview["accepted_claim_ids"] == []
+    assert "七天跨度" not in preview["text"]

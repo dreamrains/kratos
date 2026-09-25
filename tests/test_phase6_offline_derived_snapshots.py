@@ -294,3 +294,87 @@ def test_multiturn_link_rejects_forged_history_packet_and_unpersisted_prior():
         current, proposal, state=state, offline_workspace=workspace,
         prior_history=prior_history, current_history=current_history,
     )["results"] == []
+
+
+def test_archived_r16_transform_receipt_replays_values_and_method_when_present():
+    """Historical passed prose is context; replay only its executed receipt and frame."""
+    from pathlib import Path
+    import pytest
+
+    session_root = (Path(__file__).resolve().parents[1]
+                    / "tmp/p08-real-provider-20260914-b833501-r1/sessions/58da9082dc02")
+    state_path = session_root / "analysis_state.json"
+    meta_path = session_root / "workspace_meta.json"
+    if not state_path.is_file() or not meta_path.is_file():
+        pytest.skip("archived R16 session is not part of a clean checkout")
+    state = AnalysisSessionState.from_dict(
+        json.loads(state_path.read_text(encoding="utf-8")), "58da9082dc02",
+    )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    workspace = Workspace()
+    for name in ("M01-sales", "M01-sales_totals"):
+        frame_path = session_root / "data" / f"{name}.pkl"
+        if not frame_path.is_file() or name not in meta:
+            pytest.skip("archived R16 data frame is not available")
+        workspace._datasets[name] = pd.read_pickle(frame_path)
+        workspace._metadata[name] = {"data_identity": meta[name]["data_identity"]}
+    packet = build_publication_packet(
+        state, user_input="订单记录数与 amount 总额",
+        substantive_tools={"transform_data"}, receipt_ids=["tr_fb774270b1c9"],
+        offline_trust_projection=True, offline_workspace=workspace,
+    )
+    snapshots = packet["offline_trust_projection"]["derived_snapshots"]
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert snapshot["rows"][0]["order_id_size"] == {"type": "number", "value": "12"}
+    assert snapshot["rows"][0]["amount_sum"] == {"type": "number", "value": "120"}
+    assert snapshot["method_parameters"] == {
+        "group_by": ["channel"],
+        "agg": {"order_id": ["count", "size"],
+                "amount": ["sum", "mean", "min", "max"]},
+    }
+    assert snapshot["status"] == "context_only"
+    assert all(item["answer_coverage"] == "unassessed" for item in packet["requirements"])
+    preview = render_trusted_core_preview(packet, None)
+    assert preview["publication_effect"] == "none"
+    assert "order_id_size" in preview["text"] and "amount_sum" in preview["text"]
+    assert "group_by=channel" in preview["text"]
+    assert "order_id: count, size" in preview["text"]
+
+
+def test_archived_r4_m03_synthesis_replays_six_source_values_when_present():
+    from pathlib import Path
+    import pytest
+
+    root = (Path(__file__).resolve().parents[1]
+            / "tmp/p08-glm-operator-20260922-r4/sessions/50e734df7af7")
+    if not (root / "analysis_state.json").is_file() or not (root / "workspace_meta.json").is_file():
+        pytest.skip("archived R4 M03 session is not part of a clean checkout")
+    state = AnalysisSessionState.from_dict(
+        json.loads((root / "analysis_state.json").read_text(encoding="utf-8")),
+        "50e734df7af7",
+    )
+    meta = json.loads((root / "workspace_meta.json").read_text(encoding="utf-8"))
+    workspace = Workspace()
+    names = [f"M03-source-{index}" for index in range(1, 7)] + ["sources_combined"]
+    for name in names:
+        frame_path = root / "data" / f"{name}.pkl"
+        if name not in meta or not frame_path.is_file():
+            pytest.skip("archived R4 M03 frame is not available")
+        workspace._datasets[name] = pd.read_pickle(frame_path)
+        workspace._metadata[name] = {"data_identity": meta[name]["data_identity"]}
+    packet = build_publication_packet(
+        state, user_input="六来源两日金额与变化",
+        substantive_tools={"synthesize_time_series"},
+        receipt_ids=["tr_3e70ccb10380"], offline_trust_projection=True,
+        offline_workspace=workspace,
+    )
+    snapshots = packet["offline_trust_projection"]["derived_snapshots"]
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert snapshot["derived_dataset"] == "sources_combined"
+    assert len(snapshot["rows"]) == 2
+    assert snapshot["rows"][0]["M03-source-1"] == {"type": "number", "value": "10"}
+    assert snapshot["rows"][1]["M03-source-6"] == {"type": "number", "value": "66"}
+    assert snapshot["status"] == "context_only"
+    assert render_trusted_core_preview(packet, None)["publication_effect"] == "none"

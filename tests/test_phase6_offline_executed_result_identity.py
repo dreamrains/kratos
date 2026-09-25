@@ -1,6 +1,7 @@
 """Offline executed-result identity must preserve values without granting claims."""
 
 import hashlib
+import json
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
@@ -336,3 +337,47 @@ def test_multiturn_executed_result_links_only_literal_tool_column():
         current, binding, state=state, offline_workspace=workspace,
         prior_history=first_history, current_history=current_history,
     )["results"] == []
+
+
+def test_archived_e4_m04_versioned_trends_replay_separately_when_present():
+    from pathlib import Path
+    import pytest
+
+    root = (Path(__file__).resolve().parents[1]
+            / "tmp/trust-reset-p08-real-20260924-r1/sessions/d4776ba7b746")
+    if not (root / "analysis_state.json").is_file() or not (root / "workspace_meta.json").is_file():
+        pytest.skip("archived E4 M04 session is not part of a clean checkout")
+    state = AnalysisSessionState.from_dict(
+        json.loads((root / "analysis_state.json").read_text(encoding="utf-8")),
+        "d4776ba7b746",
+    )
+    meta = json.loads((root / "workspace_meta.json").read_text(encoding="utf-8"))
+    workspace = Workspace()
+    for name in ("M04-hyp-v1", "M04-hyp-v2"):
+        frame_path = root / "data" / f"{name}.pkl"
+        if name not in meta or not frame_path.is_file():
+            pytest.skip("archived E4 M04 frame is not available")
+        workspace._datasets[name] = pd.read_pickle(frame_path)
+        workspace._metadata[name] = {"data_identity": meta[name]["data_identity"]}
+    receipt_ids = [item["id"] for item in state.tool_receipts
+                   if item.get("tool_name") == "analyze_time_series"]
+    assert len(receipt_ids) == 2
+    packet = build_publication_packet(
+        state, user_input="核对两版本的观测趋势与假设边界",
+        substantive_tools={"analyze_time_series"}, receipt_ids=receipt_ids,
+        offline_trust_projection=True, offline_workspace=workspace,
+    )
+    results = packet["offline_trust_projection"]["executed_results"]
+    by_dataset = {item["dataset"]: item for item in results}
+    assert set(by_dataset) == {"M04-hyp-v1", "M04-hyp-v2"}
+    assert by_dataset["M04-hyp-v1"]["observations"]["mean"] == "16.6667"
+    assert by_dataset["M04-hyp-v2"]["observations"]["mean"] == "10"
+    assert by_dataset["M04-hyp-v2"]["observations"]["slope"] == "0"
+    assert all(item["status"] == "context_only" for item in results)
+    # Model-authored evidence remains context in the packet. This archive has
+    # no same-snapshot hypothesis set or validated relation to promote.
+    assert len(packet["evidence"]) == 2
+    assert packet["offline_trust_projection"]["hypotheses"] == []
+    preview = render_trusted_core_preview(packet, None)
+    assert preview["publication_effect"] == "none"
+    assert preview["accepted_claim_ids"] == []
