@@ -1339,7 +1339,8 @@ def _project_offline_comparison_rows(
             def number(value: Decimal) -> str:
                 return format(value.normalize(), "f")
             rows.append({
-                "receipt_id": receipt_id, "dataset": dataset, "metric": metric,
+                "receipt_id": receipt_id, "result_sha256": receipt["result_sha256"],
+                "dataset": dataset, "metric": metric,
                 "windows": windows, "period_a": number(values[0]), "period_b": number(values[1]),
                 "absolute_change": number(change),
                 "relative_change_percent": number(round(relative, 2)) if relative is not None else None,
@@ -3346,6 +3347,36 @@ def _comparison_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> 
     return None
 
 
+def _offline_comparison_row(
+    block: dict[str, Any], packet: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Tie an existing comparison block to one current-frame offline row."""
+    resolved = _comparison_binding_values(block, packet)
+    projection = packet.get("offline_trust_projection")
+    if resolved is None or not isinstance(projection, dict):
+        return None
+    metric, _windows, _days, values = resolved
+    sources = [source for source in packet.get("sources", []) if isinstance(source, dict)
+               and source.get("receipt_id") == block.get("receipt_ref")]
+    if len(sources) != 1:
+        return None
+    source = sources[0]
+    rows = [row for row in projection.get("comparison_rows", [])
+            if isinstance(row, dict) and row.get("receipt_id") == block.get("receipt_ref")
+            and row.get("result_sha256") == source.get("result_sha256")
+            and row.get("metric") == metric
+            and _decimal_number(str(row.get("period_a"))) == values[0]
+            and _decimal_number(str(row.get("period_b"))) == values[1]
+            and _decimal_number(str(row.get("absolute_change"))) == values[2]]
+    if len(rows) != 1 or not isinstance(rows[0].get("dataset"), str):
+        return None
+    identities = source.get("data_identities") or {}
+    if (len(identities) != 1 or rows[0]["dataset"] not in identities
+            or rows[0].get("unit_status") != "not_confirmed"):
+        return None
+    return rows[0]
+
+
 def _curve_confirmed_series(
     block: dict[str, Any], packet: dict[str, Any],
 ) -> tuple[dict[str, Any], list[tuple[Decimal, Decimal]]] | None:
@@ -3877,8 +3908,12 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
             metric, windows, day_counts, values = resolved
             safe_metric = metric.replace("\\", "\\\\").replace("|", "\\|")
             delta = values[1] - values[0]
+            offline_row = _offline_comparison_row(block, packet)
+            safe_dataset = (offline_row["dataset"].replace("\\", "\\\\").replace("|", "\\|")
+                            if offline_row is not None else "")
             lines = [
-                f"{safe_metric}：已观察两时段的原始数值比较（单位未确认）",
+                (f"{safe_dataset} / {safe_metric}：已观察两时段的原始数值比较（单位未确认）"
+                 if safe_dataset else f"{safe_metric}：已观察两时段的原始数值比较（单位未确认）"),
                 "",
                 "| 时段 | 回执日期范围 | 日历天数 | 原始数值 |",
                 "|---|---|---:|---:|",
@@ -3976,6 +4011,52 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
             rows.append("存在负值情景；需按指标定义判断其是否具有业务可解释性。")
         rendered = rendered.replace(block["exact_text"], "\n".join(rows), 1)
     return rendered
+
+
+def produce_offline_comparison_claim_candidate(
+    packet: dict[str, Any], receipt_refs: Iterable[str],
+) -> str | None:
+    """Host-produce bounded per-source comparison blocks without cross-source claims."""
+    refs = list(receipt_refs)
+    if (packet.get("status") != "ready" or not isinstance(packet.get("offline_trust_projection"), dict)
+            or not 1 <= len(refs) <= 8 or len(refs) != len(set(refs))
+            or not all(isinstance(ref, str) and ref for ref in refs)):
+        return None
+    blocks = []
+    for receipt_ref in refs:
+        sources = [source for source in packet.get("sources", [])
+                   if isinstance(source, dict) and source.get("receipt_id") == receipt_ref
+                   and source.get("tool_name") == "compare_periods"]
+        rows = [row for row in packet["offline_trust_projection"].get("comparison_rows", [])
+                if isinstance(row, dict) and row.get("receipt_id") == receipt_ref]
+        if len(sources) != 1 or len(rows) != 1:
+            return None
+        metric = rows[0].get("metric")
+        paths = [f"metrics.{metric}.{field}" for field in ("period_a", "period_b", "diff")]
+        fact_refs = []
+        for path in paths:
+            matches = [fact.get("fact_id") for fact in sources[0].get("facts", [])
+                       if isinstance(fact, dict) and fact.get("path") == path]
+            if len(matches) != 1 or not isinstance(matches[0], str):
+                return None
+            fact_refs.append(matches[0])
+        claim_id = "claim_comparison_" + hashlib.sha256(receipt_ref.encode()).hexdigest()[:16]
+        block = {"claim_id": claim_id, "exact_text": f"[[claim:{claim_id}]]",
+                 "claim_type": "comparison", "status": "computed",
+                 "unit_status": "not_confirmed", "receipt_ref": receipt_ref,
+                 "requirement_refs": [], "fact_refs": fact_refs, "derived_refs": []}
+        if _comparison_binding_issue(block, packet) or _offline_comparison_row(block, packet) is None:
+            return None
+        blocks.append(block)
+    digest = packet.get("binding_digest")
+    if not isinstance(digest, str) or not digest:
+        return None
+    return ("\n\n".join(block["exact_text"] for block in blocks)
+            + "\n\n```answer-bindings\n"
+            + json.dumps({"schema_version": "answer_bindings.v1",
+                          "packet_digest": digest, "blocks": blocks},
+                         ensure_ascii=False, sort_keys=True)
+            + "\n```")
 
 
 def produce_confirmed_aggregate_claim_candidate(
