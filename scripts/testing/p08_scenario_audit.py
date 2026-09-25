@@ -342,17 +342,25 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         o["blocking"], o["dim"], o["principle"],
     ))
 
-    # 4. Answer text cannot certify numeric correctness or completeness.
-    # Keep this obligation explicitly unassessed until a current receipt,
-    # binding and rendered span can be checked together.
+    # 4. The persisted host trace can certify its own receipt-bound spans,
+    # never the adjacent prose or the completeness of the whole answer.
+    structured_evidence = _structured_claim_evidence(sdir, final_text)
     o = _oracle_meta("answer_numeric_oracles")
+    verified_spans = (
+        structured_evidence["host_rendered_claims"]
+        if structured_evidence["claim_location_status"] == "ready"
+        else 0
+    )
     detail = (
         "unassessed: review raw-scale D1-D7, unit evidence, and receipt-bound D30"
         if scenario == "M02" else
         "unassessed: answer numbers require current receipt, binding, and rendered-span review"
     )
+    if verified_spans:
+        detail += f"; receipt-bound host-rendered spans={verified_spans}, whole-answer numbers and prose remain unassessed"
     numeric_check = _check(False, o["id"], detail, o["blocking"], o["dim"], o["principle"])
     numeric_check["assessment"] = "unassessed"
+    numeric_check["verified_host_spans"] = verified_spans
     checks.append(numeric_check)
 
     # 5. export dual artifacts (blocking when the scenario exports)
@@ -419,7 +427,7 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
     ))
 
     return {"session": sdir.name, "scenario": scenario, "checks": checks,
-            "structured_evidence": _structured_claim_evidence(sdir, final_text)}
+            "structured_evidence": structured_evidence}
 
 
 # ---------------------------------------------------------------------------
