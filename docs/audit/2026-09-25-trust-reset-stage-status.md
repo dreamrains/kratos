@@ -77,6 +77,8 @@
 
 Phase 9 入口：按用户确认的顺序，本地分层契约、当前代码 E2/E3 和原始目标核对已准备；Phase 5/C 自然 Shadow、Phase 6 A/C/D、Phase 7 逐族退役及 Phase 8 真实整体验收明确保持 open，进入系统矩阵后仍须逐项解决，不能把“到 Phase 9”写成前置阶段退出。下一次真实 Provider 先精确冻结，再取得该冻结专属授权；不以连续 E4 为离线状态机问题打补丁。
 
+2026-09-26 Phase 9 R1 已完成 fresh 本地回归和零调用冻结；真实矩阵 M01 后因 M02 发送时自动审批拒绝而停止。M01 11 次 Provider 发起、M02—M06 无发起，不能称完整 E4；精确身份、会话、账本、拒绝原因及新的授权门见 [R1 授权停止记录](2026-09-26-trust-reset-phase9-r1-authorization-stop.md)。
+
 这张表是**实施与验收缺口清单**，不改变原计划退出要求。历史 R7—R21 的边界分类和具体源会话见 [跨历史门记录](2026-09-24-trust-reset-cross-history-gate.md)、[双轨校准](2026-09-24-trust-reset-dual-track-calibration.md)；R4 中断、R16 完整通过项和本地真实会话须共同参与正反验收。
 
 ## 更新规则与停止条件
