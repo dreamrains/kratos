@@ -186,6 +186,7 @@ def test_shadow_dispatch_is_explicit_one_shot_and_diagnostic_only():
         enabled=True, remaining_call_budget=1, client=client,
     )
     assert len(calls) == 1
+    assert calls[0][-1] == 4096
     assert result["status"] == "valid"
     assert result["publication_effect"] == "none"
     assert result["audit"]["findings"] == []
@@ -212,6 +213,31 @@ def test_shadow_dispatch_fails_closed_without_explanation_or_on_client_error():
     )
     assert result["status"] == "unavailable"
     assert result["call_attempted"] is True
+    assert result["publication_effect"] == "none"
+
+
+def test_shadow_empty_visible_output_records_truncation_shape_without_retry():
+    from types import SimpleNamespace
+
+    state, packet, history, answer = _accepted_observation(lead_prose="仅描述观察：")
+    calls = []
+
+    class EmptyClient:
+        def chat_once(self, *args, **kwargs):
+            calls.append(1)
+            return SimpleNamespace(text="  ", finish_reason="length",
+                                   reasoning_content="internal reasoning", completion_tokens=4096)
+
+    result = run_shadow_audit_once(
+        packet, answer, state=state, canonical_history=history,
+        enabled=True, remaining_call_budget=1, client=EmptyClient(),
+    )
+    assert calls == [1]
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "empty_visible_output"
+    assert result["finish_reason"] == "length"
+    assert result["reasoning_chars"] == len("internal reasoning")
+    assert result["completion_tokens"] == 4096
     assert result["publication_effect"] == "none"
 
 

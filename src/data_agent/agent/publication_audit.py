@@ -451,7 +451,7 @@ def run_shadow_audit_once(
         response = client.chat_once(
             [{"role": "user", "content": audit_input}],
             system=request["system_prompt"], response_format=None,
-            max_tokens=800,
+            max_tokens=4096,
         )
     except Exception as exc:
         return {**unavailable, **identity, "call_attempted": True,
@@ -459,27 +459,35 @@ def run_shadow_audit_once(
                 "reason": "client_error", "error_type": type(exc).__name__}
     raw_text = getattr(response, "text", None)
     elapsed_ms = round((time.monotonic() - started) * 1000)
+    finish_reason = getattr(response, "finish_reason", None)
+    reasoning_content = getattr(response, "reasoning_content", None)
+    output_shape = {
+        "finish_reason": finish_reason if isinstance(finish_reason, str) else "unknown",
+        "reasoning_chars": len(reasoning_content) if isinstance(reasoning_content, str) else 0,
+    }
     completion_tokens = getattr(response, "completion_tokens", None)
     usage = {"completion_tokens": completion_tokens} if (
         isinstance(completion_tokens, int) and not isinstance(completion_tokens, bool)
         and completion_tokens >= 0
     ) else {}
-    if not isinstance(raw_text, str) or not raw_text or len(raw_text) > 32_000:
+    if not isinstance(raw_text, str) or not raw_text.strip() or len(raw_text) > 32_000:
         return {**unavailable, **identity, "call_attempted": True,
-                "elapsed_ms": elapsed_ms, **usage, "reason": "invalid_output_size"}
+                "elapsed_ms": elapsed_ms, **usage, **output_shape,
+                "reason": ("empty_visible_output" if not isinstance(raw_text, str)
+                           or not raw_text.strip() else "oversized_output")}
     output_digest = "sha256:" + hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
     try:
         raw_audit = json.loads(raw_text)
     except json.JSONDecodeError:
         return {**unavailable, **identity, "call_attempted": True,
-                "elapsed_ms": elapsed_ms, **usage,
+                "elapsed_ms": elapsed_ms, **usage, **output_shape,
                 "output_digest": output_digest, "reason": "invalid_json"}
     audit = validate_shadow_audit(raw_audit, packet)
     return {
         "schema_version": "publication_audit_shadow_result.v1",
         "status": audit["status"], "call_attempted": True,
         **identity, "output_digest": output_digest,
-        "elapsed_ms": elapsed_ms, **usage,
+        "elapsed_ms": elapsed_ms, **usage, **output_shape,
         "audit": audit, "publication_effect": "none",
     }
 

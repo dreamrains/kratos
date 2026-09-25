@@ -34,6 +34,7 @@
     "No current host-located typed claim with same-line explanation",
     "Prompt, input, source, model, endpoint, budget, or ledger differs from freeze",
     "Any Provider or accounting failure; no retry or later calls",
+    "First empty visible audit output stops later calls and requires a new freeze",
     "Natural-model tier has no evaluable typed claim; do not report it as semantic pass"
   ]
 }
