@@ -1890,7 +1890,9 @@ class AgentLoop:
         selected = set(getattr(self.context, "turn_receipt_ids", []) or [])
         receipts = [item for item in getattr(state, "tool_receipts", []) or []
                     if isinstance(item, dict) and item.get("id") in selected
-                    and item.get("tool_name") in {"compare_periods", "preview_data", "transform_data"}]
+                    and item.get("tool_name") in {
+                        "compare_periods", "preview_data", "transform_data", "curve_fitting",
+                    }]
         if not receipts:
             from data_agent.agent.confirmation.models import ConfirmationStatus
             from data_agent.agent.confirmation.store import ConfirmationStore
@@ -1920,7 +1922,8 @@ class AgentLoop:
         ids = [str(item["id"]) for item in receipts]
         families = {item.get("tool_name") for item in receipts}
         if (not 1 <= len(ids) <= 8 or len(ids) != len(set(ids))
-                or len(families) != 1 or ("transform_data" in families and len(ids) != 1)):
+                or len(families) != 1 or (families & {"transform_data", "curve_fitting"}
+                                         and len(ids) != 1)):
             return False
         self._turn_typed_trial_receipts = ids
         packet = self._prepare_publication_packet(user_input, phase="preview", persist=False)
@@ -1929,13 +1932,16 @@ class AgentLoop:
             return False
         from data_agent.agent.publication_synthesis import (
             parse_answer_bindings, produce_confirmed_aggregate_claim_candidate,
-            produce_offline_comparison_claim_candidate,
-            render_bound_claims,
+            produce_m02_receipt_claim_candidate,
+            produce_offline_comparison_claim_candidate, render_bound_claims,
         )
 
-        candidate = (produce_confirmed_aggregate_claim_candidate(packet, ids[0])
-                     if "transform_data" in families
-                     else produce_offline_comparison_claim_candidate(packet, ids))
+        if "transform_data" in families:
+            candidate = produce_confirmed_aggregate_claim_candidate(packet, ids[0])
+        elif "curve_fitting" in families:
+            candidate = produce_m02_receipt_claim_candidate(packet, ids[0])
+        else:
+            candidate = produce_offline_comparison_claim_candidate(packet, ids)
         if candidate is None:
             self._turn_typed_trial_receipts = []
             return False

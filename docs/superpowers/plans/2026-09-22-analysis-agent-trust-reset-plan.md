@@ -698,6 +698,8 @@ Phase 8 的首个已知 RED 是 `p08_scenario_audit.py` 把 M01/M03/M05/M06 的�
 
 该报告接线后的 fresh `tmp/tp8structured3` full-offline 为 **3014 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `34B42BE1F4A6BC569F0A9C8EF2C433A93AF9266BC4589E589DA368A2984ACB33`，Provider transport forbidden；仍只是 E2。Phase 6 的 A 跨历史价值、C 自然 Shadow 和 D 正式处置均未因此退出。
 
+**当前顺序续接**：Phase 6 默认关闭入口曾漏选本轮 `curve_fitting` 回执，尽管现有 M02 `descriptive_fit` 生产者、同版本确认、`answer_bindings.v1` 与宿主渲染已能闭合观测序列。新增入口 RED 为 1 failed/6 passed；接线后同一测试 7 passed。受控入口只选一份本轮拟合回执，只提供观测拟合 claim；未确认的 D30 不自动生成为情景或预测，普通 AgentLoop 仍不注入。fresh `tmp/tp-m02-entry-20260925` full-offline **3015 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `4DF4CAD5A61CDC2C7ADAFADDDB1A202BCA530020ADD184321E834EF5D7317DA0`，runner 禁止 Provider 调用。该证据是 E2 接线，不证明旧 R11 原句等价、R4 图表价值、自然模型采用率或 Phase 6 A/C/D 退出。Phase 7 清点仍保留 `_extrapolation_issues`、`_currency_unit_issues` 等自由散文门：typed 渲染只证明原位块，旁侧无据句尚无结构化局部处置，不能为完成阶段而删门。Phase 8 的整篇数字与解释仍为 `unassessed`；已定位宿主 claim 数不得升级成整篇质量通过。
+
 ### Phase 9：验证顺序
 
 1. 单元与真实轨迹回放；

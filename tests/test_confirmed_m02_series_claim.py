@@ -8,9 +8,11 @@ from types import SimpleNamespace
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
+from data_agent.agent.context import use_agent_context
 from data_agent.agent.confirmation.runtime import build_action_registry, build_measurement_mapping_candidate
 from data_agent.agent.confirmation.service import ConfirmationService
 from data_agent.agent.loop import AgentLoop
+from data_agent.config import get_config
 from data_agent.agent.publication_audit import build_offline_audit_view, build_shadow_audit_request
 from data_agent.agent import publication_synthesis as ps
 from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
@@ -100,6 +102,43 @@ def test_confirmed_whole_series_uses_existing_fit_claim_and_host_renderer(tmp_pa
     assert "未做留出验证" in rendered and "不是已验证预测" in rendered
     assert packet["requirements"][0]["answer_coverage"] == "answered"
     assert len(packet["answer_render_trace"]["entries"]) == 2
+
+
+def test_opt_in_loop_offers_confirmed_fit_without_scenario_or_default_change(tmp_path):
+    state, workspace, history = _setup(tmp_path)
+    config = get_config()
+    previous = config.sessions_dir
+    config.sessions_dir = tmp_path
+    try:
+        normal = AgentLoop(session_id=state.session_id)
+        normal.context.analysis_state = state
+        normal.context.workspace = workspace
+        normal.context.turn_receipt_ids = [_RECEIPT]
+        normal.messages = list(history.messages)
+        with use_agent_context(normal.context):
+            assert normal._maybe_inject_typed_trial(_PROMPT) is False
+
+        loop = AgentLoop(session_id=state.session_id, typed_trial=True)
+        loop.context.analysis_state = state
+        loop.context.workspace = workspace
+        loop.context.turn_receipt_ids = [_RECEIPT]
+        loop.messages = list(history.messages)
+        with use_agent_context(loop.context):
+            assert loop._maybe_inject_typed_trial(_PROMPT) is True
+            preview_digest = loop._turn_publication_packet["binding_digest"]
+            packet = loop._prepare_publication_packet(_PROMPT, phase="final", persist=False)
+        assert packet["binding_digest"] == preview_digest
+        prompt = loop.messages[-1]["content"]
+        assert len(prompt) <= 8_000
+        assert "claim_m02_fit_" in prompt and "claim_m02_scenario_" not in prompt
+        assert "offline_trust_projection" not in prompt
+        candidate = ps.produce_m02_receipt_claim_candidate(packet, _RECEIPT)
+        rendered, error = loop._render_finalized_publication(candidate)
+        assert error is None and "10%" in rendered
+        assert packet["requirements"][0]["answer_coverage"] == "answered"
+        assert len(packet["answer_render_trace"]["entries"]) == 1
+    finally:
+        config.sessions_dir = previous
 
 
 def test_missing_confirmation_or_tool_column_identity_keeps_unassessed(tmp_path):
