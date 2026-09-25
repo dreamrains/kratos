@@ -26,6 +26,7 @@ _ACTIONS = frozenset({
     "add_host_disclosure", "request_targeted_revision", "advisory_only",
 })
 
+SHADOW_MAX_OUTPUT_TOKENS = 65_536
 _SHADOW_PROMPT_VERSION = "publication_audit_shadow.v2"
 _SHADOW_SYSTEM_PROMPT = (
     "Review only the host-located claims in the supplied publication audit view. "
@@ -451,7 +452,7 @@ def run_shadow_audit_once(
         response = client.chat_once(
             [{"role": "user", "content": audit_input}],
             system=request["system_prompt"], response_format=None,
-            max_tokens=4096,
+            max_tokens=SHADOW_MAX_OUTPUT_TOKENS,
         )
     except Exception as exc:
         return {**unavailable, **identity, "call_attempted": True,
@@ -476,6 +477,10 @@ def run_shadow_audit_once(
                 "reason": ("empty_visible_output" if not isinstance(raw_text, str)
                            or not raw_text.strip() else "oversized_output")}
     output_digest = "sha256:" + hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    if finish_reason == "length":
+        return {**unavailable, **identity, "call_attempted": True,
+                "elapsed_ms": elapsed_ms, **usage, **output_shape,
+                "output_digest": output_digest, "reason": "truncated_output"}
     try:
         raw_audit = json.loads(raw_text)
     except json.JSONDecodeError:

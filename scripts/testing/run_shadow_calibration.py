@@ -16,11 +16,14 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from data_agent.agent.publication_audit import SHADOW_MAX_OUTPUT_TOKENS
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES_PATH = ROOT / "docs/audit/2026-09-25-shadow-c-calibration-cases.json"
-MAX_CALLS = 8
-MAX_OUTPUT_TOKENS = 4096
+MAX_CALLS = 4
+MAX_OUTPUT_TOKENS = SHADOW_MAX_OUTPUT_TOKENS
+REQUEST_TIMEOUT_SECONDS = 600
 
 
 def _digest(data: bytes) -> str:
@@ -115,6 +118,8 @@ def _prepare(run_dir: Path) -> dict[str, Any]:
         "bundles_sha256": _digest(bundle_bytes),
         "model": cfg.model_id, "provider_endpoint": cfg.api_base,
         "call_cap": MAX_CALLS, "output_token_cap": MAX_OUTPUT_TOKENS,
+        "request_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+        "thinking_mode": "provider_default_no_override",
         "case_ids": [case["id"] for case in matrix["cases"]],
         "request_identities": {item["case_id"]: item["request_identity"] for item in bundles},
         "provider_ledger": str((run_dir / "provider-calls.jsonl").relative_to(ROOT)),
@@ -142,6 +147,8 @@ def _load_frozen(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "bundles_sha256": _digest(bundle_path.read_bytes()),
         "model": cfg.model_id, "provider_endpoint": cfg.api_base,
         "call_cap": MAX_CALLS, "output_token_cap": MAX_OUTPUT_TOKENS,
+        "request_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+        "thinking_mode": "provider_default_no_override",
         "request_policy": "one_shot_no_retry",
         "provider_ledger": str((run_dir / "provider-calls.jsonl").relative_to(ROOT)),
         "results_path": str((run_dir / "results.json").relative_to(ROOT)),
@@ -170,7 +177,10 @@ def _run(run_dir: Path, manifest: dict[str, Any], bundles: list[dict[str, Any]])
 
     ledger = ProviderLedger(run_dir / "provider-calls.jsonl", MAX_CALLS)
     client_module.completion = ledger.wrap(client_module.completion)
-    client = client_module.LLMClient(max_tokens=MAX_OUTPUT_TOKENS, timeout=30, request_policy=ONE_SHOT)
+    client = client_module.LLMClient(
+        max_tokens=MAX_OUTPUT_TOKENS, timeout=REQUEST_TIMEOUT_SECONDS,
+        request_policy=ONE_SHOT,
+    )
     rows = []
     stopped = False
     for bundle in bundles:
@@ -200,7 +210,8 @@ def _run(run_dir: Path, manifest: dict[str, Any], bundles: list[dict[str, Any]])
             "source_commit": manifest["source_commit"], "cases": rows,
             "provider_initiated_calls": ledger.count,
         }))
-        if result.get("reason") in {"client_error", "empty_visible_output"} or ledger.count > MAX_CALLS:
+        if (result.get("reason") in {"client_error", "empty_visible_output", "truncated_output"}
+                or result.get("finish_reason") == "length" or ledger.count > MAX_CALLS):
             stopped = True
     summary = {"source_commit": manifest["source_commit"], "cases": rows,
                "provider_initiated_calls": ledger.count, "publication_effect": "none"}

@@ -186,7 +186,7 @@ def test_shadow_dispatch_is_explicit_one_shot_and_diagnostic_only():
         enabled=True, remaining_call_budget=1, client=client,
     )
     assert len(calls) == 1
-    assert calls[0][-1] == 4096
+    assert calls[0][-1] == 65_536
     assert result["status"] == "valid"
     assert result["publication_effect"] == "none"
     assert result["audit"]["findings"] == []
@@ -238,6 +238,32 @@ def test_shadow_empty_visible_output_records_truncation_shape_without_retry():
     assert result["finish_reason"] == "length"
     assert result["reasoning_chars"] == len("internal reasoning")
     assert result["completion_tokens"] == 4096
+    assert result["publication_effect"] == "none"
+
+
+def test_shadow_length_finish_cannot_validate_even_complete_looking_json():
+    from types import SimpleNamespace
+
+    state, packet, history, answer = _accepted_observation(lead_prose="仅描述观察：")
+
+    class TruncatedClient:
+        def chat_once(self, *args, **kwargs):
+            return SimpleNamespace(text=json.dumps({
+                "schema_version": "publication_audit.v1",
+                "packet_digest": packet["snapshot_digest"],
+                "answer_sha256": packet["answer_sha256"],
+                "overall": "pass", "findings": [],
+                "missing_requirements": [], "contradictions": [],
+            }), finish_reason="length", reasoning_content="x", completion_tokens=4096)
+
+    result = run_shadow_audit_once(
+        packet, answer, state=state, canonical_history=history,
+        enabled=True, remaining_call_budget=1, client=TruncatedClient(),
+    )
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "truncated_output"
+    assert result["finish_reason"] == "length"
+    assert result["output_digest"].startswith("sha256:")
     assert result["publication_effect"] == "none"
 
 
