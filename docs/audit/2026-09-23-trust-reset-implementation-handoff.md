@@ -365,3 +365,16 @@ Phase 4 现在将模型 EvidenceRecord 的 measurement 视为候选：只有同�
 新 `run_typed_trial_real.py` 是同一个 Web app 的薄启动器，复用 P08 `ProviderLedger` 与 `ONE_SHOT`，只为当前进程显式设置 `typed_trial=True`；没有第二账本、浏览器框架、模型复审或正式策略切换。零调用 preflight 必须在 clean 提交上生成一次性 `freeze.json`；服务入口再核对提交、runner、合同、fixture、模型/端点、端口、预算和空账本。预设上限为 **30 次物理发起、每次 65536 输出 token、每次 600 秒、无重试**；首个空白可见结果或 Provider/记账/会话隔离/事件传输故障即停。既有 ledger 对流式请求的 token usage 未必完整，因此预算以物理发起次数和单次输出上限约束，不能把账本缺失的 token 数写成 0。若模型未生成有效 typed claim，记为不可评估或失败，不以 Shadow/旧散文补证。
 
 直接脚本入口第一次核查暴露 `scripts` 包导入失败，已修正并加入子进程入口测试；当时的未完 full-offline 运行已停止，未计入验收。最终定向启动器/P08 账本测试 **10 passed**；fresh `tmp/typed-trial-natural-freeze-e2-20260925-r2` full-offline **3021 passed、1 skipped、16 warnings、0 failures**（300.64 秒），JUnit SHA256 `C35C3FF703553EFB807CA06325A0B85FCB989DE25F6A113E706BB7EE8BC7747F`，`provider_calls=forbidden`、真实 Provider initiated 0。此节只准备下一门；实际冻结身份、SHA 与新授权须在提交后核对，不能继承 §43 或旧 P08 授权。
+
+## 49. 自然 M03 正反 E4 已执行，typed 生产未通过
+
+用户针对 `main@0c579a299ab62c0d0908b33b9a316ed697df2cb2` 的 `tmp/typed-trial-natural-m03-20260925-r1/freeze.json`（SHA256 `6D37E130CA3228540B8E9637DDDDC4862B437C2E5A5A3B9A87567F52EFF1D1`）单独确认授权。执行前再次核对 clean HEAD、model `openai/deepseek-flash`、endpoint `https://api.deepseek.com`、两例 M03-P→M03-N、六份 fixture 的摘要、30 次/单次 65536 token/600 秒预算、端口 8771、空账本/结果；零调用 `revalidate` 通过。使用 `iab` 单 tab，服务 PID 24720、exec session 24674，按顺序各新建一会话并通过可见标签一次上传六个文件；两个会话上传内容均逐文件匹配冻结 fixture SHA。执行期间未更改代码、模型、提示、oracle 或夹具，没有补跑。服务现已停止且端口关闭。
+
+| 案例 | 会话 / turn | 实际工具回执 | typed 结果 | 判定 |
+|---|---|---|---|---|
+| M03-P | `717a6d067f5e` / `t_dc18a6` | `preview_data ×6` | packet ready，但 `answer_bindings.blocks=0`、`answer_render_trace.entries=0` | 可见正文保留 10→11 至 60→66 六源两日数值、差额和单位未知边界；**自然 typed 生产失败**，没有已选 `compare_periods` 回执，正确散文不能当现行 typed 正例 |
+| M03-N | `822624a16f86` / `t_ff9f6b` | `preview_data ×6`、`run_python ×1`、`record_evidence_record ×1` | packet ready，blocks/trace 同为 0 | 可见模型拒绝 99%、来源独立和七天预设断言，但开头把“三项全部与数据不符”说得比其后“独立性无法验证”更强，还另加“通常提示合成”等未绑定解释；**typed 负例不可评估**，不能把模型自发拒绝计为宿主无据结论剔除通过 |
+
+两例 `run_state=completed`，上传、会话隔离、刷新恢复及 Markdown 导出均可核；浏览器 console 0 warn/error。实际提交消息 SHA256 分别 `a35691519565c3ef7c194ce143e4b0a0b4665fb0a2f6188cc94593067444b5fe` 和 `8babd76f8f8a5e1b426c39fd78939386b8a07d6a304f2238d47fca8bf5c14597`，追加文件行仅含固定六个文件。既有账本 `provider-calls.jsonl` SHA256 `90AB598FD79D54DA1ADFD4010F987CA23B6C6D040361E0884B296DE2F8763586`：**12 started / 12 dispatched / 0 failed / 0 denied、无重试**，低于 30 上限。非流式可见 usage 为 3680 prompt + 1200 completion = 4880 token；流式 usage 未被原账本记录，**不能将 4880 当全批总 token**。`results.json` SHA256 `41DC28ED53443BD3BA97FE0A64F13AA389EA44791F63338686C492F6DC171E1E` 已逐项对冻结、账本、会话、导出和 packet 校验。没有独立持久化逐条 SSE terminal 序列，不能宣称终态事件恰好一次。
+
+E4 总判定 **`executed_not_accepted`**：这批完成了自然模型价值与工具选择诊断，却没有形成一个现行 typed block。Phase 6 A 的自然生产率和 C 的自然 claim 语义分母仍为 0，Phase 5 真 Shadow 不能由旧 r4 样本平移为本批通过，D 正式默认不变，Phase 7 不启动。下一最小 RED 应针对**正确两行预览散文但 typed=0**，核查 `preview_data` 是否能在同版本、完整两行、来源/时间/数值及回执身份均经宿主验证时承载既有 `comparison`；若预览只是一段抽样、缺少完整性证明，则不能升级为权威，应讨论要求显式 `compare_periods` 的边界。无论哪条路，都不能靠给模型添加关键词指令、把正确旧散文倒填成 binding，或放行旁侧“统一比例提示合成”等解释。下一真实 Provider 批次须重新提交、冻结并获新授权；本次授权已消费。
