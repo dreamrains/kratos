@@ -10,7 +10,7 @@ Design (2026-09-21 realignment + Codex hardening): arithmetic stays the
 decisive closed-class check; range-summary clauses verify against the
 receipt-computed min/max envelope; value-before-family phrasing pairs
 bidirectionally; the four disclosure phrases stop being a gate requirement
-because the host renders the disclosure block itself.
+because terminal publication renders the disclosure in the accepted answer.
 """
 
 from __future__ import annotations
@@ -76,36 +76,11 @@ class TestBidirectionalPairing:
 
 class TestDisclosureRegexesRetired:
     def test_scenario_passes_without_prose_disclosures(self, scope):
-        # No 情景/R²= /未验证/敏感性 phrases anywhere: the host renders the
-        # disclosure block, so the gate only enforces arithmetic.
+        # No disclosure phrase is required from the model; the terminal host
+        # adds it after the arithmetic gate accepts the scenario.
         text = "按回执参数演算：幂律模型情景延伸 D30 约为 3.56%。"
         assert _issues(text, scope) == []
 
     def test_true_violation_still_rejected_without_disclosures(self, scope):
         text = "按回执参数演算：幂律模型情景延伸 D30 约为 9.9%。"
         assert _issues(text, scope)
-
-
-class TestHostRenderedDisclosure:
-    def test_appendix_renders_disclosure_for_scenario_sources(self):
-        packet = {"sources": [{
-            "receipt_id": "rcpt_1", "tool_name": "curve_fitting",
-            "summary": "三族拟合（观测区间内）",
-            "facts": [{"path": "effective_n", "value": 7}],
-            "scenario_extrapolation": {
-                "status": "descriptive_fit_only", "validation": "none",
-                "models": [{"family": "power", "r_squared": 0.8563}],
-            },
-        }]}
-        rendered = ps.render_verified_appendix(packet)
-        assert "拟合情景披露" in rendered
-        assert "未做留出验证" in rendered and "回测" in rendered and "外部数据验证" in rendered
-        assert "敏感性" in rendered
-
-    def test_appendix_without_scenario_sources_has_no_disclosure(self):
-        packet = {"sources": [{
-            "receipt_id": "rcpt_2", "tool_name": "describe_dataset",
-            "summary": "描述", "facts": [],
-        }]}
-        rendered = ps.render_verified_appendix(packet)
-        assert "拟合情景披露" not in rendered

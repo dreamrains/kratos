@@ -2118,7 +2118,7 @@ class AgentLoop:
             error = validate_final_narrative(visible_text, packet)
             if error and getattr(self, "_turn_origin_revision_issued", False):
                 # Second pass after the origin revision: origin-class findings
-                # no longer block; the host annotates the appendix instead.
+                # no longer block; the host annotates the accepted answer.
                 from data_agent.agent.publication_synthesis import (
                     drop_revision_only_issues,
                     validate_final_narrative_issues,
@@ -2149,6 +2149,7 @@ class AgentLoop:
             # The free prose has passed its existing checks. A typed claim's
             # placeholder is now replaced at its own position by receipt-only
             # content; this is not a post-hoc disclaimer for incorrect prose.
+            candidate_text = visible_text
             try:
                 visible_text, render_entries = render_bound_claims_with_trace(
                     visible_text, packet, bindings,
@@ -2156,6 +2157,26 @@ class AgentLoop:
             except Exception as exc:
                 return None, f"[invalid_scenario_binding] 宿主无法复算或渲染绑定情景：{exc}"
             accepted_text = visible_text.rstrip()
+            boundary_notes = []
+            if packet.get("provenance_unverified"):
+                boundary_notes.append(
+                    "数据来源状态：回执未声明数据来源；上述来源判断未经证实，"
+                    "请以数据提供方确认为准。"
+                )
+            from data_agent.agent.publication_synthesis import _extrapolation_issues
+
+            accepted_scenarios: list[dict] = []
+            _extrapolation_issues(
+                candidate_text, packet.get("publication_scope") or [],
+                accepted_scenarios=accepted_scenarios,
+            )
+            if accepted_scenarios:
+                boundary_notes.append(
+                    "上述观测区间外数值仅为拟合参数下的情景；"
+                    "未做留出验证、回测或外部验证，不是已验证预测。"
+                )
+            if boundary_notes:
+                accepted_text += "\n\n" + "\n".join(boundary_notes)
             trace_body = {
                 "schema_version": "answer_render_trace.v1",
                 "packet_digest": packet.get("snapshot_digest"),

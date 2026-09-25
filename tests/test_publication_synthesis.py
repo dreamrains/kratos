@@ -6,7 +6,6 @@ from data_agent.agent.publication_synthesis import (
     parse_answer_bindings,
     render_publication_receipt_markdown,
     render_verified_partial_answer,
-    render_verified_appendix,
     validate_final_narrative,
     validate_final_narrative_issues,
 )
@@ -64,7 +63,7 @@ def test_packet_carries_curve_values_that_the_final_model_must_not_reconstruct_f
     assert packet["status"] == "ready"
     values = {fact["value"] for fact in packet["sources"][0]["facts"]}
     assert {"0.18800129", "0.98240474", "62"} <= values
-    rendered = render_verified_appendix(packet)
+    rendered = render_publication_receipt_markdown(packet)
     assert "0.18800129" in rendered
     assert "0.98240474" in rendered
     assert "tr_curve" in rendered
@@ -79,7 +78,7 @@ def test_packet_renders_period_comparison_anchors_from_receipts_not_model_text()
         substantive_tools={"compare_periods"},
     )
 
-    rendered = render_verified_appendix(packet)
+    rendered = render_publication_receipt_markdown(packet)
     for anchor in ("1818", "684", "71", "30"):
         assert anchor in rendered
 
@@ -131,9 +130,9 @@ def test_structured_result_preview_does_not_duplicate_raw_json_into_publication(
         user_input="比较前后两个周期",
         substantive_tools={"compare_periods"},
     )
-    rendered = render_verified_appendix(packet)
+    rendered = render_publication_receipt_markdown(packet)
 
-    assert "结构化计算结果" in rendered
+    assert "计算来源与省略说明" in rendered
     assert '"dates"' not in rendered
 
 
@@ -903,8 +902,8 @@ class TestNSeriesPublication:
         """Contract change (2026-09-21 realignment).
 
         The R20 contract required 情景/R²=/未验证/敏感性 phrases in the prose;
-        the gate conjunction is retired because the host renders the
-        disclosure block itself (render_verified_appendix).  Arithmetic
+        the gate conjunction is retired because the terminal host renders the
+        disclosure in the accepted answer. Arithmetic
         remains decisive: see test_scenario_envelope_and_disclosure.py for
         the new positive/negative pair (prose without disclosures passes,
         wrong arithmetic still rejects).

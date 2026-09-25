@@ -144,6 +144,25 @@ def test_finalization_returns_host_rendered_body_not_appendix_only():
     assert rendered is not None and "[[claim:" not in rendered
     assert "D30" in rendered and "exponential" in rendered
     assert "answer-bindings" not in rendered
+    assert rendered.count("未做留出验证") == 1
+
+
+def test_legacy_receipt_matched_scenario_gets_visible_host_disclosure():
+    packet = _packet()
+    fake_loop = SimpleNamespace(
+        _turn_publication_packet=packet,
+        _turn_origin_revision_issued=False,
+        context=SimpleNamespace(turn_state=None),
+    )
+    prose = "按回执参数演算：幂律模型情景延伸 D30 约为 3.56%。"
+    published, error = AgentLoop._render_finalized_publication(fake_loop, prose)
+    assert error is None
+    assert published is not None and prose in published
+    assert "未做留出验证" in published and "不是已验证预测" in published
+    rejected, rejection = AgentLoop._render_finalized_publication(
+        fake_loop, prose.replace("3.56%", "9.9%")
+    )
+    assert rejected is None and rejection is not None
 
 
 def test_explicit_receipt_ratio_unit_allows_percent_conversion():

@@ -680,6 +680,8 @@ Phase 8 的首个已知 RED 是 `p08_scenario_audit.py` 把 M01/M03/M05/M06 的�
 
 当前退役清点：`_period_label_issues` 已是一次修订后的软提示，但尚不能证明自由散文的“同比”绑定了宿主表格；`_extrapolation_issues` 与 `_currency_unit_issues` 仍可能对未绑定散文形成硬判断。对应的 `comparison`、`scenario_extrapolation` 和宿主单位渲染只覆盖原位 typed 块，不覆盖旁侧独立句。因此本轮不删除这些正式发布门；下一退役切片必须先让无据强断言可定位并局部处置，同时保住 R4/R11 的正确边界解释，再按族删除旧硬规则。
 
+2026-09-25 收敛清理：`render_verified_appendix()` 只有测试调用，但旧情景放行与来源修订的注释、测试均误把它当作正式正文的披露保证。两个正式终局 RED 分别证明正确的回执匹配 D30 情景缺少可见验证边界、修订后通过的来源判断缺少“未经证实”宿主标注。现在实际终局对已通过算术门的旧式情景和来源修订追加宿主边界，原位 `scenario_extrapolation` 继续由既有 renderer 自行披露，来源事实仍由现有来源说明 artifact 呈现；删除未接线的旧附录函数及只验该死路径的测试。正确情景保留、错误 9.9% 仍拒绝、typed 披露不重复；定向 170 passed，fresh `tmp/trust-reset-dead-appendix-20260925-r2` full-offline 3015 passed/1 skipped/16 warnings/0 failures，JUnit SHA256 `6D63D48E18E26A6EE36F13F0363D0A58D312C0D4A619C53D059A1530DC8DD2C9`，Provider transport forbidden。产品代码净减 20 行、源码与测试合计净减 11 行。`_extrapolation_issues` 等自由散文门仍在；宿主边界说明不能为错误的预测语气或邻接解释授予权威，Phase 7 没有退出。详见 `docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md` 末节。
+
 ### Phase 8：验收契约与判定器重写
 
 - 将 oracle 分为 blocking、structured completeness、semantic audit、advisory；

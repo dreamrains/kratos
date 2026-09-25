@@ -2,16 +2,18 @@
 
 Per the 2026-09-21 realignment and Codex hardening: the provenance lexicon
 only RECALLS possible unsupported origin claims; after one revision attempt
-the finding stops blocking publication and the host annotates the appendix
+the finding stops blocking publication and the host annotates the answer
 with the authoritative provenance status instead.  Closed-class findings
 (bare extrapolated numbers etc.) keep blocking on every pass.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from data_agent.agent.loop import AgentLoop
 from data_agent.agent.publication_synthesis import (
     drop_revision_only_issues,
-    render_verified_appendix,
     validate_final_narrative_issues,
 )
 
@@ -60,14 +62,28 @@ def test_closed_class_findings_still_block_every_pass():
     assert not revision_only
 
 
-def test_appendix_renders_host_provenance_annotation():
+def test_accepted_revision_renders_host_provenance_annotation_in_answer():
     packet = _packet()
-    packet["provenance_unverified"] = True
-    rendered = render_verified_appendix(packet)
-    assert "数据来源状态" in rendered
-    assert "未经证实" in rendered
+    packet.update({"status": "ready", "snapshot_digest": "sha256:origin-test"})
+    fake_loop = SimpleNamespace(
+        _turn_publication_packet=packet,
+        _turn_origin_revision_issued=True,
+        context=SimpleNamespace(turn_state=None),
+    )
+    published, error = AgentLoop._render_finalized_publication(fake_loop, ORIGIN_CLAUSE)
+    assert error is None
+    assert published is not None and ORIGIN_CLAUSE in published
+    assert "数据来源状态" in published and "未经证实" in published
 
 
-def test_appendix_without_flag_has_no_provenance_annotation():
-    rendered = render_verified_appendix(_packet())
-    assert "数据来源状态" not in rendered
+def test_answer_without_origin_claim_has_no_provenance_annotation():
+    packet = _packet()
+    packet.update({"status": "ready", "snapshot_digest": "sha256:origin-test"})
+    fake_loop = SimpleNamespace(
+        _turn_publication_packet=packet,
+        _turn_origin_revision_issued=False,
+        context=SimpleNamespace(turn_state=None),
+    )
+    published, error = AgentLoop._render_finalized_publication(fake_loop, "这里只说明已观察的数据。")
+    assert error is None
+    assert published is not None and "数据来源状态" not in published

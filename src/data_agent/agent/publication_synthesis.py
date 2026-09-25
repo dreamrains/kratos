@@ -2294,50 +2294,6 @@ def render_publication_receipt_markdown(
     return "\n".join(lines)
 
 
-def render_verified_appendix(packet: dict[str, Any]) -> str:
-    """Render deterministic source facts beside the model's explanatory prose."""
-    lines = ["### 本轮计算收据", "工具已执行不等于结论已验证；统计证据与发布状态以工作台当前验证为准。"]
-    for source in packet.get("sources", []):
-        receipt = source.get("receipt_id") or "-"
-        tool = source.get("tool_name") or "tool"
-        summary = source.get("summary") or "已执行，详见收据。"
-        lines.append(f"- `{tool}`（收据 `{receipt}`）：{summary}")
-        for fact in source.get("facts", []):
-            lines.append(f"  - {fact['path']}: {fact['value']}")
-    if packet.get("limitations"):
-        lines.append("- 边界：" + "；".join(str(value) for value in packet["limitations"]))
-    for source in packet.get("sources", []):
-        if not isinstance(source, dict):
-            continue
-        if packet.get("provenance_unverified"):
-            # Host-rendered authoritative provenance status: the receipt does
-            # not declare data origin, so prose origin judgements stay
-            # explicitly unconfirmed instead of being policed by lexicon.
-            lines.append(
-                "- 数据来源状态：回执未声明数据来源；正文中的来源判断**未经证实**"
-                "（宿主标注，请以数据提供方确认为准）。"
-            )
-        scenario = source.get("scenario_extrapolation")
-        if isinstance(scenario, dict) and scenario.get("validation") == "none":
-            families = [
-                f"{model.get('family')}（R²={model.get('r_squared')}）"
-                for model in scenario.get("models") or []
-                if isinstance(model, dict) and model.get("family")
-            ]
-            # Host-rendered disclosure: guaranteed by construction, not policed
-            # in the model's prose.  Same principle as the unit boundary.
-            lines.append(
-                "### 拟合情景披露（宿主渲染）\n"
-                f"- 本轮情景数值由回执 `{source.get('tool_name') or 'tool'}`"
-                f"（收据 `{source.get('receipt_id') or '-'}`）的拟合参数演算，"
-                "仅描述观测区间内的拟合；"
-                "**未做留出验证、未做回测、未做外部数据验证**，不得表述为已验证预测。\n"
-                "- 模型族间存在敏感性差异：" + "、".join(families) + "；"
-                "观测区间外的取值完全由模型族选择决定。"
-            )
-    return "\n".join(lines)
-
-
 _CLAUSE_SPLIT = re.compile(r"[。；;\n]|但是|但|不过|然而")
 _TIME_POINT = re.compile(r"(?:(?<![A-Za-z0-9])D|第)(\d+(?:\.\d+)?)(?:天|日)?", re.I)
 # A numeric assertion anchored on the out-of-range point (为/是/约/达到 + number).
@@ -2432,9 +2388,8 @@ def _asserts_time_point_payload(clause: str, match: re.Match) -> bool:
     )
 
 
-# Prose disclosure regexes retired 2026-09-21: the host renders the
-# disclosure block itself (render_verified_appendix); arithmetic remains
-# the only gate requirement for fitted scenarios.
+# Arithmetic is the only prose gate for fitted scenarios. The terminal
+# publication path discloses each accepted legacy scenario in the answer.
 
 _PCT = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*%")
 _FAMILY_LABELS = {
@@ -2535,10 +2490,8 @@ def _is_auditable_scenario_extrapolation(
     closed-class arithmetic: every displayed percentage must recompute from
     the receipt-bound model parameters (family named inline), or — for range
     summaries that reference the fitted families without naming them — fall
-    inside the receipt-computed min/max envelope.  Prose disclosure phrases
-    are no longer required here: the host renders the disclosure block
-    itself (see render_verified_appendix), so disclosure is guaranteed by
-    construction instead of policed by regex.
+    inside the receipt-computed min/max envelope. Prose disclosure phrases
+    are not required here; terminal publication renders the disclosure.
     """
 
     scenario = scope.get("scenario_extrapolation")
@@ -2631,7 +2584,9 @@ def _markdown_table_time_point_claims(text: str) -> list[str]:
     return claims
 
 
-def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
+def _extrapolation_issues(
+    text: str, scopes: list[dict], *, accepted_scenarios: list[dict] | None = None,
+) -> list[dict[str, str]]:
     curve_scopes = [
         scope for scope in scopes
         if scope.get("extrapolation_allowed") is False
@@ -2660,6 +2615,8 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
                 if value <= float(bound["observed_x_range"][1]):
                     continue
                 if _is_auditable_scenario_extrapolation(text, clause, match, bound):
+                    if accepted_scenarios is not None:
+                        accepted_scenarios.append(bound)
                     continue
                 return [{
                     "code": "extrapolated_time_point",
@@ -2677,6 +2634,8 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
             if len(curve_scopes) == 1 and _is_auditable_scenario_extrapolation(
                 text, clause, match, curve_scopes[0]
             ):
+                if accepted_scenarios is not None:
+                    accepted_scenarios.append(curve_scopes[0])
                 continue
             return [{
                 "code": "unbound_time_point_claim",

@@ -74,3 +74,11 @@ M04 协议修订后定向 **26 passed**；fresh `tmp/trust-reset-fo-20260924-con
 该矩阵的机器层分别记录执行、回执证据、解释价值、导出和声明；`semantic_audit=unassessed` 是诚实边界。历史 `completed`、脚本 E3、自然局部 typed、正式整篇可发布是四种不同身份，不能互相替代。对 M03 的正反自由散文、M05/M06 的开放解释，本轮使用已有真实答案做人审归类，不把人审意见伪装成一个新的模型总门。也未从单个 R4 中断会话推断整批结果。
 
 **阶段边界**：Phase 8 的分维判定和当前 HEAD 的 E2/E3 完整矩阵已有可核收据；真实 E4 归档仍失败，开放语义仍未评估，故不称整体验收通过。按用户裁决继续保留 Phase 7 的现有自由散文门；没有足以逐族退役的正反证据。Phase 6 仍是默认关闭局部 typed 能力，不称 A/C/D 全部退出；正式发布默认、Provider 配置、Shadow 调度均未改变。本轮未新建词表、planner、账本或浏览器框架，也未调用真实 Provider。
+
+## 2026-09-25：Phase 7 遗留附录清理与正式终局披露接线
+
+从 `main@53a0ab2` 的 clean 工作树出发，复核发现 `render_verified_appendix()` 仅被测试调用，正式 `AgentLoop._render_finalized_publication()` 不调用它；其情景披露还从 `sources` 读取字段，而实际情景授权位于 `publication_scope`。因此旧测试中的“宿主必披露”不是产品证据。正式终局两条 RED 为 2 failed：回执算术正确的旧式 D30 情景缺可见边界，来源修订后通过的来源判断缺宿主未证实标注。
+
+修复将既有 `_extrapolation_issues` 的接受结果用于终局正文披露；来源修订标志也直接标注正文。原位 typed 情景仍用既有 `render_bound_claims()` 披露，不重复尾注；现有来源说明 artifact 继续承担来源事实与省略展示。删除无生产调用的 `render_verified_appendix()` 及其伪验收，改测真实 artifact/终局。正例为正确 D30 情景继续发布且披露、修订后来源判断可见未证实；反例为 9.9% 错误情景仍拒绝、typed 披露仅一份、无来源判断时不加注。定向 **170 passed**；fresh `tmp/trust-reset-dead-appendix-20260925-r2` full-offline **3015 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `6D63D48E18E26A6EE36F13F0363D0A58D312C0D4A619C53D059A1530DC8DD2C9`，runner `provider_calls=forbidden`。产品代码净减 20 行，源码与测试合计净减 11 行。
+
+本次只退役死附录；`_extrapolation_issues`、`_currency_unit_issues` 和其他仍负责旁侧自由散文的门继续保留。末尾宿主边界不能把错误预测语气或未绑定解释变成可信事实，R4/R11 的 typed 等价与真实自然采用率仍需分层验证。此前 `fbbc147` 的 E3 浏览器矩阵不自动升级为本次修改后的 E3；旧 E4 失败、Phase 5/C、Phase 6 A/C/D、Phase 7 和整体 Phase 8/9 的退出条件不变。未调用 Provider；默认策略开关未更改，正式终局对上述两类通过的正文增加可见宿主边界。
