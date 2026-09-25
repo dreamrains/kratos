@@ -2495,6 +2495,7 @@ class AgentLoop:
         from data_agent.agent.confirmation.models import ConfirmationStatus
         from data_agent.agent.confirmation.policy import RequestDisposition
         from data_agent.agent.confirmation.runtime import (
+            build_aggregate_mapping_candidate,
             build_direct_question_candidate,
             build_measurement_mapping_candidate,
             confirmation_record_to_loop_result,
@@ -2510,10 +2511,14 @@ class AgentLoop:
                 target = json.loads(request.measurement_mapping)
             except (TypeError, ValueError):
                 target = None
+            aggregate_fields = {"kind", "exact_span", "dataset", "derived_dataset",
+                                "receipt_id", "order_column", "amount_column"}
+            is_aggregate = isinstance(target, dict) and set(target) == aggregate_fields \
+                and target.get("kind") == "group_aggregate"
             if (not isinstance(target, dict)
-                    or set(target) not in ({"exact_span", "dataset", "column"},
-                                           {"exact_span", "dataset", "column", "x_column",
-                                            "x_start", "x_end"})):
+                    or (not is_aggregate and set(target) not in (
+                        {"exact_span", "dataset", "column"},
+                        {"exact_span", "dataset", "column", "x_column", "x_start", "x_end"}))):
                 return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
             span = target["exact_span"]
             if not isinstance(span, str):
@@ -2531,14 +2536,35 @@ class AgentLoop:
                 messages, len(messages), _history_sha256(messages), len(messages),
             )
             source_ref = "msg_" + hashlib.sha256(source_messages[0].encode("utf-8")).hexdigest()[:12]
-            candidate = build_measurement_mapping_candidate(
-                session_id=self.session_id, turn_id=turn_id,
-                workspace=self.context.workspace, canonical_history=history,
-                source_message_ref=source_ref, exact_span=span,
-                dataset=target["dataset"], column=target["column"],
-                x_column=target.get("x_column", ""),
-                x_start=target.get("x_start"), x_end=target.get("x_end"),
-            )
+            if is_aggregate:
+                state = getattr(self.context, "analysis_state", None)
+                receipts = [item for item in (getattr(state, "tool_receipts", []) or [])
+                            if isinstance(item, dict) and item.get("id") == target["receipt_id"]]
+                if len(receipts) != 1:
+                    return "该聚合回执未通过宿主校验；保持口径和子问题覆盖未评估。"
+                current_user = next((message["content"] for message in reversed(messages)
+                                     if message.get("role") == "user"), "")
+                current_ref = "msg_" + hashlib.sha256(current_user.encode("utf-8")).hexdigest()[:12]
+                candidate = build_aggregate_mapping_candidate(
+                    session_id=self.session_id, turn_id=turn_id,
+                    workspace=self.context.workspace, receipt=receipts[0],
+                    canonical_history=history,
+                    source_message_ref=source_ref, current_message_ref=current_ref,
+                    exact_span=span, dataset=target["dataset"],
+                    derived_dataset=target["derived_dataset"],
+                    receipt_id=target["receipt_id"],
+                    order_column=target["order_column"],
+                    amount_column=target["amount_column"],
+                )
+            else:
+                candidate = build_measurement_mapping_candidate(
+                    session_id=self.session_id, turn_id=turn_id,
+                    workspace=self.context.workspace, canonical_history=history,
+                    source_message_ref=source_ref, exact_span=span,
+                    dataset=target["dataset"], column=target["column"],
+                    x_column=target.get("x_column", ""),
+                    x_start=target.get("x_start"), x_end=target.get("x_end"),
+                )
             if candidate is None:
                 return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
         else:

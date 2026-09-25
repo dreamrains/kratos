@@ -60,7 +60,7 @@ class QuestionPolicy:
                 reused_confirmation_id=reused.confirmation_id,
             )
 
-        if candidate.source == "host_measurement_mapping.v1" and any(
+        if candidate.source in {"host_measurement_mapping.v1", "host_aggregate_mapping.v1"} and any(
             record.status == ConfirmationStatus.SKIPPED
             and record.decision_key == candidate.decision_key
             and record.data_version == candidate.data_version

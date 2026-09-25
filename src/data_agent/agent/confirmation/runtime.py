@@ -189,6 +189,106 @@ def build_measurement_mapping_candidate(
     return _apply_stable_decision_key(candidate)
 
 
+def build_aggregate_mapping_candidate(
+    *, session_id: str, turn_id: str, workspace: Any, receipt: Any,
+    canonical_history: Any, source_message_ref: str, current_message_ref: str,
+    exact_span: str, dataset: str, derived_dataset: str, receipt_id: str,
+    order_column: str, amount_column: str,
+) -> QuestionCandidate | None:
+    """Confirm one continuation and aggregate meaning for the current data version."""
+    from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+    from data_agent.session.workspace import Workspace, WorkspaceProxy
+    from pandas.api.types import is_numeric_dtype
+
+    fields = (session_id, turn_id, source_message_ref, current_message_ref,
+              exact_span, dataset, derived_dataset, receipt_id, order_column, amount_column)
+    if (not isinstance(canonical_history, CanonicalHistorySnapshot)
+            or canonical_history.message_count != len(canonical_history.messages)
+            or canonical_history.sha256 != _history_sha256(canonical_history.messages)
+            or canonical_history.revision < 0
+            or not isinstance(workspace, (Workspace, WorkspaceProxy))
+            or any(not isinstance(value, str) or not value or len(value) > 120
+                   or any(ord(char) < 32 for char in value) for value in fields)
+            or not source_message_ref.startswith("msg_")
+            or not current_message_ref.startswith("msg_")
+            or source_message_ref == current_message_ref
+            or order_column == amount_column):
+        return None
+    users = [message["content"] for message in canonical_history.messages
+             if isinstance(message, dict) and message.get("role") == "user"
+             and isinstance(message.get("content"), str)]
+    if not users:
+        return None
+    current_ref = "msg_" + hashlib.sha256(users[-1].encode("utf-8")).hexdigest()[:12]
+    earlier = [message for message in users[:-1]
+               if "msg_" + hashlib.sha256(message.encode("utf-8")).hexdigest()[:12]
+               == source_message_ref and message.count(exact_span) == 1]
+    if current_ref != current_message_ref or len(earlier) != 1:
+        return None
+    try:
+        frame = workspace.get(dataset)
+        identity = workspace.get_data_identity(dataset)
+        derived = workspace.get_data_identity(derived_dataset)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if (frame is None or not isinstance(identity, dict) or not isinstance(derived, dict)
+            or list(frame.columns).count(order_column) != 1
+            or list(frame.columns).count(amount_column) != 1
+            or not is_numeric_dtype(frame[amount_column])
+            or identity.get("fingerprint") != Workspace._frame_fingerprint(frame)
+            or not identity.get("version_id") or not derived.get("version_id")
+            or not identity.get("source_fingerprint")):
+        return None
+    args = receipt.get("arguments") if isinstance(receipt, dict) else None
+    if (not isinstance(args, dict) or receipt.get("id") != receipt_id
+            or receipt.get("tool_name") != "transform_data"
+            or not receipt.get("result_sha256")
+            or receipt.get("data_identities") != {dataset: identity, derived_dataset: derived}
+            or args.get("operation") != "group_aggregate"
+            or args.get("name") != dataset or args.get("save_as") != derived_dataset
+            or not isinstance(args.get("aggregations"), list)
+            or not any(item.get("column") == order_column for item in args["aggregations"]
+                       if isinstance(item, dict))
+            or not any(item.get("column") == amount_column for item in args["aggregations"]
+                       if isinstance(item, dict))):
+        return None
+    target = {"source_message_ref": source_message_ref,
+              "current_message_ref": current_message_ref, "exact_span": exact_span,
+              "dataset": dataset, "derived_dataset": derived_dataset,
+              "receipt_id": receipt_id, "order_column": order_column,
+              "amount_column": amount_column}
+    seed = json.dumps([session_id, target, identity["version_id"],
+                       derived["version_id"]], ensure_ascii=False, sort_keys=True)
+    decision_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
+    occurrence = hashlib.sha256(f"{decision_id}|{turn_id}".encode()).hexdigest()[:24]
+    candidate = QuestionCandidate(
+        confirmation_id=f"aggregate_{occurrence}", session_id=session_id,
+        turn_id=turn_id, decision_key=f"aggregate:{decision_id}",
+        source="host_aggregate_mapping.v1", operation="confirm_measurement",
+        question=(f"当前请求是否继续你先前的「{exact_span}」？若是，"
+                  f"在「{dataset}」中订单记录数应按「{order_column}」的哪种口径计算，"
+                  f"且金额总额是否为「{amount_column}」求和？"),
+        decision_impact="继续关系和计数口径会改变本次回答的指标身份与数值。",
+        answer_mode=AnswerMode.SINGLE_SELECT,
+        options=(
+            ConfirmationOption("继续；订单记录数是行数，金额为该列求和", "row_count_sum"),
+            ConfirmationOption("继续；订单数是去重 ID 数，金额为该列求和", "distinct_id_sum"),
+            ConfirmationOption("当前请求不继续这个旧指标", "not_continuing"),
+            ConfirmationOption("目前无法确认这些口径", "unconfirmed"),
+        ),
+        blocking_surfaces=("measurement_mapping",), skippable=True,
+        resolution_action="record_confirmation_answer",
+        resolution_params={"confirmation_type": "metric_definition",
+                           "decision_kind": "metric_definition",
+                           "missing_value": exact_span,
+                           "affected_operations": ["answer_claim"],
+                           "business_scope": f"{source_message_ref}|{current_message_ref}|{dataset}",
+                           "aggregate_mapping": target},
+        data_version=identity["version_id"], spec_version=derived["version_id"],
+    )
+    return _apply_stable_decision_key(candidate)
+
+
 def _build_question_candidate(
     *,
     session_id: str,

@@ -375,6 +375,12 @@ def _ask_multiple(questions: list[dict]) -> dict:
                     '"x_column":"当前横轴列名","x_start":起点整数,"x_end":终点整数；'
                     "宿主核对原文、列、范围、版本并生成一次业务选项；"
                     "不得填写技术哈希、代替用户回答或为方法许可使用。"
+                    "跨轮 group_aggregate 口径歧义可提交同一字段："
+                    '{"kind":"group_aggregate","exact_span":"旧用户原文逐字片段",'
+                    '"dataset":"原数据集","derived_dataset":"派生数据集",'
+                    '"receipt_id":"已执行回执","order_column":"订单ID列",'
+                    '"amount_column":"金额列"}；宿主只在当前会话、版本和回执闭合时'
+                    "生成一次含继续关系、计数口径与求和映射的业务确认。"
                 ),
             },
         },

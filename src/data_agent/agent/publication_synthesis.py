@@ -1493,6 +1493,160 @@ def _confirmed_m02_observation(
     return requirement, context
 
 
+def _confirmed_group_aggregate(
+    *, state: Any, source: dict[str, Any], snapshot: dict[str, Any],
+    workspace: Any, canonical_history: Any, sessions_root: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]] | None:
+    """Recompute a confirmed singleton group aggregate from its current parent."""
+    from data_agent.agent.confirmation.models import AnswerMode, ConfirmationStatus
+    from data_agent.agent.confirmation.runtime import build_aggregate_mapping_candidate
+    from data_agent.agent.confirmation.store import ConfirmationStore
+    from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+    from data_agent.session.workspace import Workspace
+
+    session_id = str(getattr(state, "session_id", "") or "")
+    receipt_id = snapshot.get("receipt_id")
+    receipts = [item for item in getattr(state, "tool_receipts", []) or []
+                if isinstance(item, dict) and item.get("id") == receipt_id
+                and item.get("tool_name") == "transform_data"]
+    if (len(receipts) != 1 or source.get("receipt_id") != receipt_id
+            or source.get("result_sha256") != snapshot.get("result_sha256")
+            or snapshot.get("operation") != "group_aggregate"
+            or snapshot.get("status") != "context_only"
+            or not isinstance(snapshot.get("method_parameters"), dict)
+            or len(snapshot.get("rows") or []) != 1
+            or not isinstance(canonical_history, CanonicalHistorySnapshot)
+            or canonical_history.message_count != len(canonical_history.messages)
+            or canonical_history.sha256 != _history_sha256(canonical_history.messages)):
+        return None
+    receipt = receipts[0]
+    args = receipt.get("arguments") or {}
+    dataset, derived_name = args.get("name"), args.get("save_as")
+    if (not isinstance(dataset, str) or not isinstance(derived_name, str)
+            or snapshot.get("derived_dataset") != derived_name
+            or source.get("data_identities") != receipt.get("data_identities")):
+        return None
+    try:
+        frame, derived_frame = workspace.get(dataset), workspace.get(derived_name)
+        parent_identity = workspace.get_data_identity(dataset)
+        derived_identity = workspace.get_data_identity(derived_name)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if (frame is None or derived_frame is None or len(frame) < 1
+            or len(derived_frame) != 1
+            or parent_identity != (source.get("data_identities") or {}).get(dataset)
+            or derived_identity != (source.get("data_identities") or {}).get(derived_name)
+            or parent_identity.get("fingerprint") != Workspace._frame_fingerprint(frame)
+            or derived_identity.get("fingerprint") != Workspace._frame_fingerprint(derived_frame)
+            or snapshot.get("derived_version_id") != derived_identity.get("version_id")
+            or snapshot.get("parent_version_ids") != [parent_identity.get("version_id")]):
+        return None
+    group_by = snapshot["method_parameters"].get("group_by")
+    agg = snapshot["method_parameters"].get("agg")
+    if (not isinstance(group_by, list) or not group_by or not isinstance(agg, dict)
+            or len(group_by) != len(set(group_by))
+            or any(not isinstance(column, str) or column not in frame for column in group_by)):
+        return None
+    try:
+        one_group = (not any(frame[column].isna().any() for column in group_by)
+                     and len(frame[group_by].drop_duplicates()) == 1)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not one_group:
+        return None
+    try:
+        records = ConfirmationStore(sessions_root, session_id).load_records().values()
+    except (OSError, ValueError, TypeError):
+        return None
+    matched = []
+    for record in records:
+        target = record.resolution_params.get("aggregate_mapping")
+        if (record.session_id != session_id
+                or record.source != "host_aggregate_mapping.v1"
+                or record.status != ConfirmationStatus.RESOLVED
+                or record.answer_mode != AnswerMode.SINGLE_SELECT
+                or record.resolution_action != "record_confirmation_answer"
+                or record.response not in {"row_count_sum", "distinct_id_sum"}
+                or not record.response_id or not isinstance(target, dict)
+                or set(target) != {"source_message_ref", "current_message_ref",
+                                   "exact_span", "dataset", "derived_dataset",
+                                   "receipt_id", "order_column", "amount_column"}
+                or target["dataset"] != dataset
+                or target["derived_dataset"] != derived_name
+                or target["receipt_id"] != receipt_id):
+            continue
+        candidate = build_aggregate_mapping_candidate(
+            session_id=session_id, turn_id=record.turn_id,
+            workspace=workspace, receipt=receipt,
+            canonical_history=canonical_history,
+            **target,
+        )
+        if (candidate is None or record.confirmation_id != candidate.confirmation_id
+                or record.decision_key != candidate.decision_key
+                or record.question != candidate.question
+                or record.options != candidate.options
+                or record.data_version != candidate.data_version
+                or record.spec_version != candidate.spec_version
+                or dict(record.resolution_params) != dict(candidate.resolution_params)):
+            continue
+        matched.append((record, target))
+    if len(matched) != 1:
+        return None
+    record, target = matched[0]
+    order, amount = target["order_column"], target["amount_column"]
+    function = "size" if record.response == "row_count_sum" else "nunique"
+    order_metric, amount_metric = f"{order}_{function}", f"{amount}_sum"
+    if (order not in frame or amount not in frame
+            or function not in agg.get(order, []) or "sum" not in agg.get(amount, [])
+            or order_metric not in derived_frame or amount_metric not in derived_frame
+            or order_metric not in snapshot.get("columns", [])
+            or amount_metric not in snapshot.get("columns", [])):
+        return None
+    try:
+        count = len(frame) if function == "size" else frame[order].nunique(dropna=True)
+        values = [Decimal(str(value)) for value in frame[amount]]
+        total = sum(values, Decimal(0))
+        actual_count = Decimal(str(derived_frame[order_metric].iloc[0]))
+        actual_sum = Decimal(str(derived_frame[amount_metric].iloc[0]))
+    except (InvalidOperation, KeyError, TypeError, ValueError):
+        return None
+    if (not all(value.is_finite() for value in [*values, total, actual_count, actual_sum])
+            or Decimal(count) != actual_count or total != actual_sum
+            or snapshot["rows"][0].get(order_metric) != {"type": "number", "value": str(count)}
+            or _decimal_number(str((snapshot["rows"][0].get(amount_metric) or {}).get("value"))) != total):
+        return None
+    result = []
+    facts = []
+    for metric, value in ((order_metric, str(count)), (amount_metric, format(total, "f"))):
+        requirement_id = "rq_" + hashlib.sha256(
+            json.dumps([target["source_message_ref"], target["current_message_ref"],
+                        target["exact_span"], metric], ensure_ascii=False).encode()
+        ).hexdigest()[:12]
+        result.append({
+            "id": requirement_id, "label": metric, "original_text": target["exact_span"],
+            "source_message_ref": target["source_message_ref"],
+            "priority": "required", "scope_ref": "confirmed_aggregate",
+            "requested_output": "answer_or_specific_gap",
+            "origin": "confirmed_aggregate_mapping", "lifecycle_status": "active",
+            "evidence_coverage": "supported", "context_coverage": "included",
+            "answer_coverage": "unassessed", "coverage_check": "unassessed",
+        })
+        facts.append({"fact_id": f"host_{receipt_id}_{metric}", "group_id": "host_confirmed_aggregate",
+                      "path": metric, "value": value, "unit": "unknown",
+                      "origin": "host_recomputed_from_receipt_frame"})
+    context = {"receipt_id": receipt_id, "source_message_ref": target["source_message_ref"],
+               "current_message_ref": target["current_message_ref"],
+               "exact_span": target["exact_span"], "confirmation_id": record.confirmation_id,
+               "response_id": record.response_id, "data_version": parent_identity["version_id"],
+               "derived_version_id": derived_identity["version_id"],
+               "result_sha256": snapshot["result_sha256"],
+               "group_by": list(group_by), "derived_dataset": derived_name,
+               "metrics": [{"requirement_id": item["id"], "fact_id": fact["fact_id"],
+                            "path": fact["path"], "value": fact["value"]}
+                           for item, fact in zip(result, facts)]}
+    return result, context, facts
+
+
 def build_publication_packet(
     state: Any,
     *,
@@ -1504,6 +1658,7 @@ def build_publication_packet(
     offline_trust_projection: bool = False,
     offline_workspace: Any = None,
     offline_confirmed_m02: bool = False,
+    offline_confirmed_aggregate: bool = False,
     canonical_history: Any = None,
     confirmation_sessions_root: Any = None,
 ) -> dict[str, Any]:
@@ -1785,6 +1940,25 @@ def build_publication_packet(
             state, allowed_receipts if receipt_ids is not None else set(), packet_body,
             offline_workspace=offline_workspace,
         )
+    if (offline_trust_projection and offline_confirmed_aggregate
+            and offline_workspace is not None and canonical_history is not None
+            and confirmation_sessions_root is not None and len(sources) == 1):
+        snapshots = (packet_body["offline_trust_projection"].get("derived_snapshots") or [])
+        if len(snapshots) == 1 and snapshots[0].get("receipt_id") == sources[0].get("receipt_id"):
+            aggregate = _confirmed_group_aggregate(
+                state=state, source=sources[0], snapshot=snapshots[0],
+                workspace=offline_workspace, canonical_history=canonical_history,
+                sessions_root=confirmation_sessions_root,
+            )
+            if aggregate is not None:
+                new_requirements, context, facts = aggregate
+                if (not any(item.get("id") in {req["id"] for req in new_requirements}
+                            for item in requirements)
+                        and not any(item.get("fact_id") in {fact["fact_id"] for fact in facts}
+                                    for item in sources[0].get("facts", []))):
+                    requirements.extend(new_requirements)
+                    sources[0]["facts"].extend(facts)
+                    packet_body["confirmed_aggregate"] = context
     # A model sees a preview packet, while terminal publication rebuilds it
     # as final. Bind the model block to the evidence body, not that presentation
     # phase. Any late receipt, scope, requirement or version change still
@@ -2976,6 +3150,52 @@ def _derived_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> str
         or block.get("unit_status") != "not_confirmed"
     ):
         return "派生量须用无数值占位片段、computed 状态与未确认单位。"
+    aggregate = packet.get("confirmed_aggregate")
+    if isinstance(aggregate, dict) and block.get("derived_refs") == []:
+        metrics = aggregate.get("metrics")
+        if (not isinstance(metrics, list) or len(metrics) != 2
+                or not aggregate.get("confirmation_id") or not aggregate.get("response_id")
+                or not isinstance(block.get("requirement_refs"), list)
+                or not isinstance(block.get("fact_refs"), list)):
+            return "已确认聚合缺少完整业务映射与两项宿主复算。"
+        matches = [item for item in metrics if isinstance(item, dict)
+                   and block["requirement_refs"] == [item.get("requirement_id")]
+                   and block["fact_refs"] == [item.get("fact_id")]]
+        if len(matches) != 1:
+            return "已确认聚合的子问题与复算事实不匹配。"
+        item = matches[0]
+        owned = _bound_metric_fact(packet, item["requirement_id"], item["fact_id"])
+        if owned is None:
+            return "聚合指标身份或数值无效。"
+        requirement, source, fact = owned
+        snapshots = (packet.get("offline_trust_projection") or {}).get("derived_snapshots") or []
+        matched = [snapshot for snapshot in snapshots if isinstance(snapshot, dict)
+                   and snapshot.get("receipt_id") == aggregate.get("receipt_id")
+                   and snapshot.get("result_sha256") == aggregate.get("result_sha256")
+                   and snapshot.get("derived_version_id") == aggregate.get("derived_version_id")]
+        if (len(matched) != 1 or source.get("receipt_id") != aggregate.get("receipt_id")
+                or source.get("result_sha256") != aggregate.get("result_sha256")
+                or requirement.get("origin") != "confirmed_aggregate_mapping"
+                or requirement.get("source_message_ref") != aggregate.get("source_message_ref")
+                or requirement.get("original_text") != aggregate.get("exact_span")
+                or requirement.get("label") != item.get("path")
+                or fact.get("origin") != "host_recomputed_from_receipt_frame"
+                or fact.get("path") != item.get("path")
+                or fact.get("value") != item.get("value")):
+            return "聚合回执、数据版本或宿主复算事实已漂移。"
+        if (aggregate.get("group_by") != (matched[0].get("method_parameters") or {}).get("group_by")
+                or aggregate.get("derived_dataset") != matched[0].get("derived_dataset")):
+            return "聚合方法上下文与派生帧不一致。"
+        cell = (matched[0].get("rows") or [{}])[0].get(item["path"])
+        if (not isinstance(cell, dict) or cell.get("type") != "number"
+                or _decimal_number(str(cell.get("value")))
+                != _decimal_number(str(item.get("value")))):
+            return "聚合派生帧与宿主复算事实不一致。"
+        identities = source.get("data_identities") or {}
+        if (aggregate.get("data_version") not in
+                {value.get("version_id") for value in identities.values() if isinstance(value, dict)}):
+            return "聚合源数据版本已漂移。"
+        return None
     requirement_refs = block.get("requirement_refs")
     fact_refs = block.get("fact_refs")
     derived_refs = block.get("derived_refs")
@@ -3677,9 +3897,16 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
             requirement, _source, fact = _bound_metric_fact(
                 packet, block["requirement_refs"][0], block["fact_refs"][0],
             )
+            aggregate = packet.get("confirmed_aggregate")
+            if isinstance(aggregate, dict) and block.get("derived_refs") == []:
+                groups = ", ".join(aggregate["group_by"])
+                provenance = (f"已执行 group_aggregate，按 {groups} 分组、当前仅一组；"
+                              "源帧经宿主复算；原始数值尺度，单位未确认")
+            else:
+                provenance = "回执原始数值尺度；单位未确认；派生算术经宿主复算"
             rendered = rendered.replace(
                 block["exact_text"],
-                f"{requirement['label']}：{fact['value']}（回执原始数值尺度；单位未确认；派生算术经宿主复算）",
+                f"{requirement['label']}：{fact['value']}（{provenance}）",
                 1,
             )
             continue
@@ -3749,6 +3976,44 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
             rows.append("存在负值情景；需按指标定义判断其是否具有业务可解释性。")
         rendered = rendered.replace(block["exact_text"], "\n".join(rows), 1)
     return rendered
+
+
+def produce_confirmed_aggregate_claim_candidate(
+    packet: dict[str, Any], receipt_ref: str,
+) -> str | None:
+    """Produce two host-rendered derived_metric blocks in the default-off packet."""
+    context = packet.get("confirmed_aggregate")
+    if (not isinstance(context, dict) or packet.get("status") != "ready"
+            or context.get("receipt_id") != receipt_ref
+            or not isinstance(context.get("metrics"), list)
+            or len(context["metrics"]) != 2):
+        return None
+    blocks = []
+    for index, metric in enumerate(context["metrics"]):
+        if not isinstance(metric, dict):
+            return None
+        claim_id = "claim_aggregate_" + hashlib.sha256(
+            f"{receipt_ref}|{metric.get('path')}|{index}".encode("utf-8")
+        ).hexdigest()[:16]
+        block = {
+            "claim_id": claim_id, "exact_text": f"[[claim:{claim_id}]]",
+            "claim_type": "derived_metric", "status": "computed",
+            "unit_status": "not_confirmed",
+            "requirement_refs": [metric.get("requirement_id")],
+            "fact_refs": [metric.get("fact_id")], "derived_refs": [],
+        }
+        if _derived_binding_issue(block, packet):
+            return None
+        blocks.append(block)
+    digest = packet.get("binding_digest")
+    if not isinstance(digest, str) or not digest:
+        return None
+    return ("\n\n".join(block["exact_text"] for block in blocks)
+            + "\n\n```answer-bindings\n"
+            + json.dumps({"schema_version": "answer_bindings.v1",
+                          "packet_digest": digest, "blocks": blocks},
+                         ensure_ascii=False, sort_keys=True)
+            + "\n```")
 
 
 def produce_m02_receipt_claim_candidate(
