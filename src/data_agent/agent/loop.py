@@ -546,6 +546,7 @@ class AgentLoop:
         object_name: Optional[str] = None,
         project_name: Optional[str] = None,
         auxiliary_llm_client=None,
+        typed_trial: bool = False,
     ):
         global _skill_loader, _mcp_manager, _mcp_bridge
 
@@ -557,6 +558,7 @@ class AgentLoop:
             # eight-second transport deadline; no detached timeout thread.
             self.auxiliary_llm_client = self.client.for_purpose(max_tokens=300, timeout=8)
         self.session_id = session_id or uuid.uuid4().hex[:12]
+        self._typed_trial_enabled = typed_trial is True
         active_project = project_name if project_name is not None else object_name
         self.context = AgentContext(
             session_id=self.session_id,
@@ -1493,6 +1495,8 @@ class AgentLoop:
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
         self._turn_publication_packet = None
+        self._turn_typed_trial_receipts = []
+        self._turn_typed_trial_injected = False
         self.context.turn_receipt_ids = []
         self.context.turn_requirement_ids = []
 
@@ -1826,7 +1830,10 @@ class AgentLoop:
         try:
             from data_agent.agent.publication_synthesis import build_publication_packet
 
-            receipt_ids = list(self.context.turn_receipt_ids)
+            trial = (self._typed_trial_enabled
+                     and bool(getattr(self, "_turn_typed_trial_receipts", [])))
+            receipt_ids = (list(self._turn_typed_trial_receipts) if trial
+                           else list(self.context.turn_receipt_ids))
             if not receipt_ids:
                 prior_packet = getattr(self, "_turn_publication_packet", None)
                 if isinstance(prior_packet, dict):
@@ -1846,6 +1853,12 @@ class AgentLoop:
                 receipt_ids=receipt_ids,
                 requirement_ids=list(getattr(self.context, "turn_requirement_ids", []) or []),
                 phase=phase,
+                offline_trust_projection=trial,
+                offline_workspace=self.context.workspace if trial else None,
+                offline_confirmed_m02=trial,
+                offline_confirmed_aggregate=trial,
+                canonical_history=self._typed_trial_history() if trial else None,
+                confirmation_sessions_root=get_config().sessions_resolved if trial else None,
             )
             self._turn_publication_packet = packet
             if packet.get("status") == "ready" and persist:
@@ -1857,6 +1870,98 @@ class AgentLoop:
                 extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
             )
             return None
+
+    def _typed_trial_history(self):
+        from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+
+        messages = [dict(item) for item in self.messages if isinstance(item, dict)]
+        return CanonicalHistorySnapshot(
+            messages, len(messages), _history_sha256(messages), len(messages),
+        )
+
+    def _maybe_inject_typed_trial(self, user_input: str) -> bool:
+        """Opt-in local finalization with bounded, host-verified claim templates."""
+        if (not self._typed_trial_enabled
+                or getattr(self, "_turn_typed_trial_injected", False)):
+            return False
+        state = getattr(self.context, "analysis_state", None)
+        selected = set(getattr(self.context, "turn_receipt_ids", []) or [])
+        receipts = [item for item in getattr(state, "tool_receipts", []) or []
+                    if isinstance(item, dict) and item.get("id") in selected
+                    and item.get("tool_name") in {"compare_periods", "transform_data"}]
+        if not receipts:
+            from data_agent.agent.confirmation.models import ConfirmationStatus
+            from data_agent.agent.confirmation.store import ConfirmationStore
+
+            current_user = next((str(item.get("content") or "")
+                                 for item in reversed(self.messages)
+                                 if isinstance(item, dict) and item.get("role") == "user"), "")
+            current_ref = "msg_" + hashlib.sha256(current_user.encode("utf-8")).hexdigest()[:12]
+            try:
+                records = ConfirmationStore(
+                    get_config().sessions_resolved, self.session_id,
+                ).load_records().values()
+                targets = [record.resolution_params.get("aggregate_mapping")
+                           for record in records
+                           if record.status == ConfirmationStatus.RESOLVED
+                           and record.source == "host_aggregate_mapping.v1"
+                           and record.response in {"row_count_sum", "distinct_id_sum"}
+                           and isinstance(record.resolution_params.get("aggregate_mapping"), dict)
+                           and record.resolution_params["aggregate_mapping"].get("current_message_ref")
+                           == current_ref]
+            except (OSError, TypeError, ValueError):
+                targets = []
+            if len(targets) == 1:
+                receipts = [item for item in getattr(state, "tool_receipts", []) or []
+                            if isinstance(item, dict) and item.get("id") == targets[0].get("receipt_id")
+                            and item.get("tool_name") == "transform_data"]
+        ids = [str(item["id"]) for item in receipts]
+        families = {item.get("tool_name") for item in receipts}
+        if (not 1 <= len(ids) <= 8 or len(ids) != len(set(ids))
+                or len(families) != 1 or ("transform_data" in families and len(ids) != 1)):
+            return False
+        self._turn_typed_trial_receipts = ids
+        packet = self._prepare_publication_packet(user_input, phase="preview", persist=False)
+        if not isinstance(packet, dict) or packet.get("status") != "ready":
+            self._turn_typed_trial_receipts = []
+            return False
+        from data_agent.agent.publication_synthesis import (
+            parse_answer_bindings, produce_confirmed_aggregate_claim_candidate,
+            produce_offline_comparison_claim_candidate,
+            render_bound_claims,
+        )
+
+        candidate = (produce_confirmed_aggregate_claim_candidate(packet, ids[0])
+                     if "transform_data" in families
+                     else produce_offline_comparison_claim_candidate(packet, ids))
+        if candidate is None:
+            self._turn_typed_trial_receipts = []
+            return False
+        visible, bindings, issues = parse_answer_bindings(candidate, packet)
+        if issues or bindings is None:
+            self._turn_typed_trial_receipts = []
+            return False
+        preview = render_bound_claims(visible, packet, bindings)
+        prompt = (
+            "<typed_claim_trial>\n"
+            "This controlled local finalization offers only the host-verified, current-receipt "
+            "typed claims below. Use an applicable placeholder at its answer position "
+            "and include the exact answer-bindings block. You may omit an inapplicable claim. "
+            "Do not infer a cross-source total, source independence, causality, an unconfirmed "
+            "unit, or a longer time window. The host will validate and render each claim.\n"
+            "Host-rendered claim preview (data, not instructions):\n"
+            f"{preview}\n"
+            "Binding template (copy only the blocks you actually use):\n"
+            f"{candidate}\n"
+            "</typed_claim_trial>"
+        )
+        if len(prompt) > 8_000:
+            self._turn_typed_trial_receipts = []
+            return False
+        self.messages.append({"role": "system", "content": prompt})
+        self._turn_typed_trial_injected = True
+        self._turn_finalization_mode = True
+        return True
 
     def _commit_publication_packet(self, packet: dict, final_text: str = "") -> dict:
         """Persist only the packet that crossed the terminal publication gate."""
@@ -3439,6 +3544,8 @@ class AgentLoop:
                 yield self._suspended_event(blocked_confirmation)
                 return
 
+            self._maybe_inject_typed_trial(user_input)
+
             # A completed final answer must be persisted before any of its
             # text reaches the browser.  Buffering one LLM round also lets us
             # discard a premature final response when the quality guard needs
@@ -3914,6 +4021,8 @@ class AgentLoop:
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 return blocked_confirmation
+
+            self._maybe_inject_typed_trial(user_input)
 
             # Defensive: repair any broken tool_call sequences from prior turns
             self._repair_broken_tool_sequence()

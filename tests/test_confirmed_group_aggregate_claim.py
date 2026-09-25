@@ -14,6 +14,7 @@ from data_agent.agent.confirmation.service import ConfirmationService
 from data_agent.agent.loop import AgentLoop
 from data_agent.agent.loop import UserConfirmationRequired
 from data_agent.agent.context import use_agent_context
+from data_agent.config import get_config
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.publication_synthesis import (
     build_publication_packet, parse_answer_bindings,
@@ -210,3 +211,29 @@ def test_existing_question_tool_routes_one_aggregate_confirmation(tmp_path, monk
     with use_agent_context(loop.context):
         rejected = loop._suspend_for_confirmation_request(forged, turn_id="turn_2")
     assert isinstance(rejected, str) and "未评估" in rejected
+
+
+def test_opt_in_loop_uses_resolved_same_turn_mapping_without_new_receipt(tmp_path):
+    cfg = get_config()
+    previous = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path
+    try:
+        state, workspace, history, _, _ = _case(tmp_path)
+        loop = AgentLoop(session_id=state.session_id, typed_trial=True)
+        loop.context.analysis_state = state
+        loop.context.workspace = workspace
+        loop.messages = list(history.messages)
+        loop.context.turn_receipt_ids = []
+        with use_agent_context(loop.context):
+            assert loop._maybe_inject_typed_trial(LAST) is True
+        prompt = loop.messages[-1]["content"]
+        assert len(prompt) <= 8_000
+        assert "claim_aggregate_" in prompt and "120" in prompt
+        assert "offline_trust_projection" not in prompt
+        with use_agent_context(loop.context):
+            packet = loop._prepare_publication_packet(LAST, phase="final", persist=False)
+        candidate = produce_confirmed_aggregate_claim_candidate(packet, "tr_totals")
+        rendered, error = loop._render_finalized_publication(candidate)
+        assert error is None and "12" in rendered and "120" in rendered
+    finally:
+        cfg.sessions_dir = previous

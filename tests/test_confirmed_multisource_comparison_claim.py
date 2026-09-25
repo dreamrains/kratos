@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
+from data_agent.agent.context import use_agent_context
 from data_agent.agent.loop import AgentLoop
 from data_agent.agent.publication_synthesis import (
     build_publication_packet, extract_publication_fact_groups,
@@ -93,3 +94,38 @@ def test_stale_unselected_or_forged_comparison_fails_closed():
     forged += "\n\n```answer-bindings\n" + json.dumps(payload) + "\n```"
     _, bindings, issues = parse_answer_bindings(forged, packet)
     assert issues and len(bindings["blocks"]) == 5
+
+
+def test_opt_in_loop_exposes_only_bounded_typed_candidate_to_finalization():
+    state, workspace, ids = _case()
+    normal = AgentLoop(session_id=state.session_id)
+    normal.context.analysis_state = state
+    normal.context.workspace = workspace
+    normal.messages = [{"role": "user", "content": "逐来源列出两日金额与变化"}]
+    normal.context.turn_receipt_ids = list(ids)
+    with use_agent_context(normal.context):
+        assert normal._maybe_inject_typed_trial("逐来源列出两日金额与变化") is False
+    assert len(normal.messages) == 1
+
+    loop = AgentLoop(session_id=state.session_id, typed_trial=True)
+    loop.context.analysis_state = state
+    loop.context.workspace = workspace
+    loop.messages = [{"role": "user", "content": "逐来源列出两日金额与变化"}]
+    loop.context.turn_receipt_ids = list(ids)
+    with use_agent_context(loop.context):
+        assert loop._maybe_inject_typed_trial("逐来源列出两日金额与变化") is True
+    prompt = loop.messages[-1]["content"]
+    assert loop.messages[-1]["role"] == "system"
+    assert len(prompt) <= 8_000
+    assert "answer-bindings" in prompt and "claim_comparison_" in prompt
+    assert "offline_trust_projection" not in prompt and "source_fingerprint" not in prompt
+    assert loop._turn_finalization_mode is True
+    preview_digest = loop._turn_publication_packet["binding_digest"]
+    with use_agent_context(loop.context):
+        final_packet = loop._prepare_publication_packet(
+            "逐来源列出两日金额与变化", phase="final", persist=False,
+        )
+    assert final_packet["binding_digest"] == preview_digest
+    candidate = produce_offline_comparison_claim_candidate(final_packet, ids)
+    rendered, error = loop._render_finalized_publication(candidate)
+    assert error is None and "source_6" in rendered

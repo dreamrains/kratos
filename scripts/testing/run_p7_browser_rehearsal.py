@@ -304,6 +304,30 @@ class ScriptedClient:
                 "已完成六个来源的分组汇总。来源 1 至来源 6 均保留在本轮收据中；导出时应保留全部来源和每个来源的金额与记录数。"
             )
 
+        if marker == "TRIAL-M03":
+            if step == 0:
+                return self._response(calls=[
+                    ("load_data", {"source": f"F-SRC{number}.csv", "name": f"src_{number}"})
+                    for number in range(1, 7)
+                ])
+            if step == 1:
+                return self._response(calls=[
+                    ("compare_periods", {
+                        "name": f"src_{number}", "date_col": "date", "metrics": "amount",
+                        "period_a": "2026-09-01~2026-09-01",
+                        "period_b": "2026-09-02~2026-09-02",
+                    })
+                    for number in range(1, 7)
+                ])
+            trial = next((str(message.get("content") or "") for message in reversed(messages)
+                          if message.get("role") == "system"
+                          and "<typed_claim_trial>" in str(message.get("content") or "")), "")
+            if "Binding template (copy only the blocks you actually use):\n" not in trial:
+                return self._response("受控 typed 模板未进入最终化轮，保持未评估。")
+            candidate = trial.split("Binding template (copy only the blocks you actually use):\n", 1)[1]
+            candidate = candidate.rsplit("\n</typed_claim_trial>", 1)[0].strip()
+            return self._response(candidate)
+
         if marker in {"B07-PRESENTATION", "CONTENT-B07"}:
             if step == 0:
                 return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "presentation_sales"})])
@@ -530,7 +554,7 @@ class ScriptedClient:
             if message.get("role") != "user":
                 continue
             found = re.search(
-                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION)|CONTENT-B0[37]|IC-B(?:01|02|03|04-REUSE|04-CHANGE|05|06-METHOD|06-SEMANTIC))】",
+                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION)|CONTENT-B0[37]|IC-B(?:01|02|03|04-REUSE|04-CHANGE|05|06-METHOD|06-SEMANTIC)|TRIAL-M03)】",
                 str(message.get("content") or ""),
             )
             if found:
@@ -543,6 +567,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--typed-trial", action="store_true",
+                        help="Enable the default-off typed finalization path in this Provider-disabled run.")
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
     if run_dir.exists():
@@ -552,7 +578,8 @@ def main() -> None:
     _write_fixtures(run_dir)
     _seed_legacy_confirmation_fixture()
     trace = RunTrace(run_dir)
-    trace.append("server_start", provider_enabled=False, port=args.port)
+    trace.append("server_start", provider_enabled=False, port=args.port,
+                 typed_trial=bool(args.typed_trial))
 
     # Belt-and-braces: a default client or accidental direct LiteLLM call fails
     # closed and leaves an auditable trace rather than touching a Provider.
@@ -573,6 +600,15 @@ def main() -> None:
     # browser must receive the production fail-closed ``unknown`` terminal,
     # never a completed turn or a durable final answer.
     original_auto_save = AgentLoop._auto_save
+
+    if args.typed_trial:
+        original_init = AgentLoop.__init__
+
+        def p7_typed_trial_init(loop, *loop_args, **loop_kwargs):
+            loop_kwargs["typed_trial"] = True
+            original_init(loop, *loop_args, **loop_kwargs)
+
+        AgentLoop.__init__ = p7_typed_trial_init
 
     def p7_auto_save_with_failure(loop):
         if any(
@@ -605,7 +641,8 @@ def main() -> None:
 
     @app.get("/__p7__/health")
     def p7_health():
-        return {"ok": True, "provider_enabled": False, "run_dir": str(run_dir)}
+        return {"ok": True, "provider_enabled": False,
+                "typed_trial": bool(args.typed_trial), "run_dir": str(run_dir)}
 
     @app.get("/__p7__/trace")
     def p7_trace():
