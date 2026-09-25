@@ -203,8 +203,15 @@ class ProviderLedger:
                 with self._lock:
                     self._write("failed", call_number=call_number, error_type=type(exc).__name__)
                 raise
+            usage = getattr(result, "usage", None)
+            token_usage = {}
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                value = (usage.get(key) if isinstance(usage, dict)
+                         else getattr(usage, key, None))
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    token_usage[key] = value
             with self._lock:
-                self._write("dispatched", call_number=call_number)
+                self._write("dispatched", call_number=call_number, **token_usage)
             return result
         return audited_completion
 

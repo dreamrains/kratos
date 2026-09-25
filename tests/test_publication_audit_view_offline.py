@@ -3,21 +3,25 @@
 import hashlib
 import json
 from copy import deepcopy
+from pathlib import Path
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.loop import AgentLoop
-from data_agent.agent.publication_audit import build_offline_audit_view, build_shadow_audit_request
+from data_agent.agent.publication_audit import (
+    build_offline_audit_view, build_shadow_audit_request, run_shadow_audit_once,
+)
 from data_agent.agent.publication_synthesis import (
     build_publication_packet,
     extract_publication_facts,
     parse_answer_bindings,
     render_bound_claims_with_trace,
     update_requirement_lifecycle,
+    validate_final_narrative,
 )
 from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
 
 
-def _accepted_observation(*, extra_prose="", duplicate=False):
+def _accepted_observation(*, extra_prose="", duplicate=False, lead_prose=""):
     question = "请回答收入"
     state = AnalysisSessionState("offline_audit_view")
     source_ref = "msg_" + hashlib.sha256(question.encode("utf-8")).hexdigest()[:12]
@@ -45,7 +49,7 @@ def _accepted_observation(*, extra_prose="", duplicate=False):
             "exact_text": placeholder, "requirement_refs": requirement_ids,
             "fact_refs": [fact_id], "derived_refs": [],
         })
-    candidate = "\n".join(placeholders) + extra_prose + "\n```answer-bindings\n" + json.dumps({
+    candidate = lead_prose + "\n".join(placeholders) + extra_prose + "\n```answer-bindings\n" + json.dumps({
         "schema_version": "answer_bindings.v1", "packet_digest": packet["snapshot_digest"],
         "blocks": blocks,
     }, ensure_ascii=False) + "\n```"
@@ -111,7 +115,7 @@ def test_shadow_request_is_bounded_to_current_located_claim_and_reproducible():
     request = build_shadow_audit_request(packet, answer, state=state, canonical_history=history)
     assert request["status"] == "ready"
     assert request["publication_effect"] == "none"
-    assert request["prompt_version"] == "publication_audit_shadow.v1"
+    assert request["prompt_version"] == "publication_audit_shadow.v2"
     assert request["packet_digest"] == packet["snapshot_digest"]
     assert request["answer_sha256"] == packet["answer_sha256"]
     assert len(request["claims"]) == 1
@@ -119,6 +123,158 @@ def test_shadow_request_is_bounded_to_current_located_claim_and_reproducible():
     assert "99%" not in json.dumps(request, ensure_ascii=False)
     assert request == build_shadow_audit_request(packet, answer, state=state,
                                                   canonical_history=history)
+
+
+def test_shadow_request_carries_only_same_line_explanation_as_untrusted_context():
+    state, packet, history, answer = _accepted_observation(
+        lead_prose="模型声称已经完成外部验证，因此可预测：",
+        extra_prose="\n另一结论为99%。",
+    )
+    request = build_shadow_audit_request(packet, answer, state=state,
+                                         canonical_history=history)
+    assert request["status"] == "ready"
+    explanation = request["claims"][0]["local_explanation"]
+    assert "recommended_action=advisory_only" in request["system_prompt"]
+    assert explanation["status"] == "same_line_untrusted"
+    assert explanation["before"] == "模型声称已经完成外部验证，因此可预测："
+    assert explanation["after"] == ""
+    assert "99%" not in json.dumps(request, ensure_ascii=False)
+    assert request["publication_effect"] == "none"
+
+
+def test_shadow_request_does_not_associate_long_or_multiline_prose():
+    state, packet, history, answer = _accepted_observation(
+        lead_prose="x" * 501,
+        extra_prose="\n另一结论为99%。",
+    )
+    request = build_shadow_audit_request(packet, answer, state=state,
+                                         canonical_history=history)
+    assert request["status"] == "ready"
+    assert request["claims"][0]["local_explanation"] == {"status": "unavailable"}
+    assert "99%" not in json.dumps(request, ensure_ascii=False)
+
+
+def test_shadow_dispatch_is_explicit_one_shot_and_diagnostic_only():
+    from types import SimpleNamespace
+
+    state, packet, history, answer = _accepted_observation(
+        lead_prose="这只是已观察数值：",
+    )
+    calls = []
+
+    class FakeClient:
+        def chat_once(self, messages, *, system, response_format, max_tokens):
+            calls.append((messages, system, response_format, max_tokens))
+            return SimpleNamespace(text=json.dumps({
+                "schema_version": "publication_audit.v1",
+                "packet_digest": packet["snapshot_digest"],
+                "answer_sha256": packet["answer_sha256"],
+                "overall": "pass", "findings": [],
+                "missing_requirements": [], "contradictions": [],
+            }))
+
+    client = FakeClient()
+    for enabled, remaining in ((False, 1), (True, 0)):
+        result = run_shadow_audit_once(
+            packet, answer, state=state, canonical_history=history,
+            enabled=enabled, remaining_call_budget=remaining, client=client,
+        )
+        assert result["status"] == "unavailable"
+    assert calls == []
+    result = run_shadow_audit_once(
+        packet, answer, state=state, canonical_history=history,
+        enabled=True, remaining_call_budget=1, client=client,
+    )
+    assert len(calls) == 1
+    assert result["status"] == "valid"
+    assert result["publication_effect"] == "none"
+    assert result["audit"]["findings"] == []
+    assert packet["answer_bindings"]["blocks"][0]["claim_id"] == "claim_revenue"
+
+
+def test_shadow_dispatch_fails_closed_without_explanation_or_on_client_error():
+    state, packet, history, answer = _accepted_observation()
+    class FailClient:
+        def chat_once(self, *args, **kwargs):
+            raise RuntimeError("provider failed")
+
+    result = run_shadow_audit_once(
+        packet, answer, state=state, canonical_history=history,
+        enabled=True, remaining_call_budget=1, client=FailClient(),
+    )
+    assert result["status"] == "unavailable"
+    assert result["call_attempted"] is False
+
+    state, packet, history, answer = _accepted_observation(lead_prose="仅描述观察：")
+    result = run_shadow_audit_once(
+        packet, answer, state=state, canonical_history=history,
+        enabled=True, remaining_call_budget=1, client=FailClient(),
+    )
+    assert result["status"] == "unavailable"
+    assert result["call_attempted"] is True
+    assert result["publication_effect"] == "none"
+
+
+def test_shadow_wrong_remove_opinion_cannot_change_accepted_answer():
+    from types import SimpleNamespace
+
+    state, packet, history, answer = _accepted_observation(
+        lead_prose="这里只描述已观测收入：",
+    )
+    original = deepcopy(packet)
+    original_answer = answer
+    request = build_shadow_audit_request(packet, answer, state=state,
+                                         canonical_history=history)
+    refs = request["claims"][0]["evidence_refs"]
+
+    class WrongOpinionClient:
+        def chat_once(self, messages, *, system, response_format, max_tokens):
+            return SimpleNamespace(text=json.dumps({
+                "schema_version": "publication_audit.v1",
+                "packet_digest": packet["snapshot_digest"],
+                "answer_sha256": packet["answer_sha256"],
+                "overall": "pass_with_findings",
+                "findings": [{
+                    "finding_id": "f_wrong_remove", "claim_id": "claim_revenue",
+                    "dimension": "validation_status", "severity": "high",
+                    "recommended_action": "remove", "evidence_refs": refs,
+                    "reason": "模型误以为正确的观测值应被删除",
+                }],
+                "missing_requirements": [], "contradictions": [],
+            }, ensure_ascii=False))
+
+    result = run_shadow_audit_once(
+        packet, answer, state=state, canonical_history=history,
+        enabled=True, remaining_call_budget=1, client=WrongOpinionClient(),
+    )
+    assert result["status"] == "valid"
+    assert result["audit"]["findings"][0]["suggested_action"] == "remove"
+    assert result["publication_effect"] == "none"
+    assert packet == original and answer == original_answer
+
+
+def test_controlled_shadow_calibration_cases_are_locatable_and_separate_from_99_percent():
+    path = (Path(__file__).resolve().parents[1]
+            / "docs/audit/2026-09-25-shadow-c-calibration-cases.json")
+    matrix = json.loads(path.read_text(encoding="utf-8"))
+    assert [item["id"] for item in matrix["cases"]] == [
+        "C-P1-observation", "C-N1-unverified-forecast",
+        "C-P2-source-boundary", "C-N2-causal-overclaim",
+    ]
+    for case in matrix["cases"]:
+        state, packet, history, answer = _accepted_observation(
+            lead_prose=case["lead_prose"], extra_prose=case["extra_prose"],
+        )
+        request = build_shadow_audit_request(
+            packet, answer, state=state, canonical_history=history,
+        )
+        visible_candidate = (case["lead_prose"] + "[[claim:claim_revenue]]"
+                             + case["extra_prose"])
+        assert validate_final_narrative(visible_candidate, packet) is None
+        assert request["status"] == "ready"
+        assert request["claims"][0]["local_explanation"]["before"] == case["lead_prose"]
+        assert "99%" not in json.dumps(request, ensure_ascii=False)
+        assert request["publication_effect"] == "none"
 
 
 def test_shadow_request_fails_closed_for_stale_or_unlocatable_claims():

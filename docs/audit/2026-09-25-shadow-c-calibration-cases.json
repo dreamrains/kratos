@@ -1,0 +1,39 @@
+{
+  "schema_version": "shadow_c_calibration_cases.v1",
+  "source_class": "controlled_content_equivalent_not_natural_provider_output",
+  "source_note": "Each case reuses one receipt-bound observed_fact and its persisted host render trace. The same-line lead prose is manually labelled; a separate unsupported 99% sentence is excluded from Shadow input.",
+  "user_prompt": "请回答收入",
+  "claim_id": "claim_revenue",
+  "cases": [
+    {
+      "id": "C-P1-observation",
+      "lead_prose": "这是当前回执的已观察收入：",
+      "extra_prose": "\n另一结论为99%。",
+      "oracle": {"local_semantic_risk": false, "expected_findings": 0}
+    },
+    {
+      "id": "C-N1-unverified-forecast",
+      "lead_prose": "已经完成外部验证，可以保证未来收入：",
+      "extra_prose": "\n另一结论为99%。",
+      "oracle": {"local_semantic_risk": true, "dimension": "validation_status", "action_ceiling": "advisory_only"}
+    },
+    {
+      "id": "C-P2-source-boundary",
+      "lead_prose": "仅陈述当前来源和未确认单位下的观察值：",
+      "extra_prose": "\n另一结论为99%。",
+      "oracle": {"local_semantic_risk": false, "expected_findings": 0}
+    },
+    {
+      "id": "C-N2-causal-overclaim",
+      "lead_prose": "广告投放导致收入增长，因果关系已证实：",
+      "extra_prose": "\n另一结论为99%。",
+      "oracle": {"local_semantic_risk": true, "dimension": "causal_inference", "action_ceiling": "advisory_only"}
+    }
+  ],
+  "stop_conditions": [
+    "No current host-located typed claim with same-line explanation",
+    "Prompt, input, source, model, endpoint, budget, or ledger differs from freeze",
+    "Any Provider or accounting failure; no retry or later calls",
+    "Natural-model tier has no evaluable typed claim; do not report it as semantic pass"
+  ]
+}

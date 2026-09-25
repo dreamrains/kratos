@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from data_agent.llm.request_policy import ONE_SHOT
 
@@ -31,6 +32,21 @@ def test_acceptance_launcher_forces_one_physical_attempt_for_every_client():
 
     assert FakeClient().request_policy is ONE_SHOT
     assert FakeClient(request_policy=object()).request_policy is ONE_SHOT
+
+
+def test_existing_provider_ledger_records_nonstream_usage_without_content(tmp_path):
+    launcher = _launcher_module()
+    path = tmp_path / "provider-calls.jsonl"
+    ledger = launcher.ProviderLedger(path, 1)
+    completion = ledger.wrap(lambda **_kwargs: SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=21, completion_tokens=7, total_tokens=28),
+    ))
+    completion(model="test-model", stream=False)
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [item["event"] for item in events] == ["started", "dispatched"]
+    assert events[-1]["prompt_tokens"] == 21
+    assert events[-1]["completion_tokens"] == 7
+    assert events[-1]["total_tokens"] == 28
 
 
 def test_preflight_contract_freezes_complete_prompts_oracles_and_browser_protocol():
