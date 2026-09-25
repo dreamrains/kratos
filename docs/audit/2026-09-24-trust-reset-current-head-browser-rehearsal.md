@@ -58,6 +58,19 @@ M04 协议修订后定向 **26 passed**；fresh `tmp/trust-reset-fo-20260924-con
 
 `runtime.jsonl` SHA256 `04D25863F126952672E6658D12D5BE876F30D5A75411FBA6395220C835A43C91`：`server_start=1`、`scripted_round=75`、`auxiliary_call=151`、`injected_save_failure=3`、`forbidden_provider_transport=0`，实际 Provider initiated calls **0**。本目录没有持久逐轮 SSE terminal 序列；UI 与 `run_state.json` 可证明各会话收口，不能独立宣称每轮 terminal 恰好一次。
 
-同一当前审计器只读回放旧完整真实 P08 `tmp/trust-reset-p08-real-20260924-r1`，六个 M01—M06 场景均识别，报告在 `tmp/tp8-e3-20260925-r1/archived-p08-audit.json`（SHA256 `6178C7D6B01F37CE50DABE5A4BDBCB39EAFB75FA9F7ACB069028FDCBCF2C99DE`）：`verdict=failed`；执行与导出为 `failed`，证据与解释价值为 `unassessed`，声明为 `passed`。执行失败涉及 M04 缺结构化假设关系、M06 缺有效 claim binding；导出失败为既有会话缺 publication 导出。自然 M03-P/N 旧受控批次各 6 条可定位宿主 claim，但邻接解释/建议未审计、整批 `executed_not_accepted`；R11 百分比单位、R16 方法等价价值也不能由本次脚本候选证明。
+同一当前审计器只读回放旧完整真实 P08 `tmp/trust-reset-p08-real-20260924-r1`，六个 M01—M06 场景均识别，报告在 `tmp/tp8-e3-20260925-r1/archived-p08-audit.json`（SHA256 `6178C7D6B01F37CE50DABE5A4BDBCB39EAFB75FA9F7ACB069028FDCBCF2C99DE`）：`verdict=failed`；执行与导出为 `failed`，证据与解释价值为 `unassessed`，声明为 `passed`。执行失败涉及 M04 缺结构化假设关系、M02 缺有效 claim binding；导出失败为既有会话缺 publication 导出。自然 M03-P/N 旧受控批次各 6 条可定位宿主 claim，但邻接解释/建议未审计、整批 `executed_not_accepted`；R11 百分比单位、R16 方法等价价值也不能由本次脚本候选证明。
+
+### 统一场景矩阵：同一需求，不跨证据层升级
+
+| 场景 | 当前 E2／E3 可复核部分 | 真实 Provider／跨历史反例 | 当前分层判定 |
+| --- | --- | --- | --- |
+| M01 行动 | B01 脚本路径交付 12/120、触发与停止条件；本地分层审计不以关键词授予事实权威。 | 旧 E4 M01 已完成，但无 typed trace；条件建议需区分样例阈值与业务授权。 | 执行路径可用；事实绑定和行动价值未通过自然模型验收。 |
+| M02 留存 | B02/NEG 脚本拒绝 D30；默认关闭 `curve_fitting` 观测 claim 的本地生产、回执、渲染已接线。 | R11 正确 D7 边界曾被误拒；旧 E4 M02 以未确认尺度写百分比，绑定格式无效而失败。 | 已有局部结构替代；单位、复合子问题覆盖和自然交付未闭合。 |
+| M03 六源 | B03/CONTENT-B03 六源、压缩、刷新、来源说明与导出持久；脚本屏幕正文仍很短。 | 旧 E4 两日表正确却写“七天跨度”和来源独立；自然 M03-P/N 各有 6 条原位 claim，旁侧汇总/解释/建议未绑定，N 的 99% 被可见拒绝。 | 数字可信核心有自然局部正例；整篇价值与邻接安全未通过。 |
+| M04 假设 | B04 同会话 13 步保留 plan、证据、历史版本和 stale 状态。 | R4 仅部分历史链，旧 E4 两轮均因关系审计缺失失败；关系形状不等于真实假设 ID 的宿主验证。 | 执行与版本保护局部成立；假设关系价值未闭合。 |
+| M05 多角色 | B05 脚本五种措辞保持 12/120。 | R16 完整真实 M05 曾通过；旧 E4 六轮完成，但含决策级与退款范围的过度陈述，且成功 packet 的 typed trace 为空。 | 表达一致性的脚本证据成立；真实方法/解释价值未自动通过。 |
+| M06 故障与确认 | B06 保存故障 `unknown`、预算 `failed` 均不冒充完成；IC 具体确认可同范围复用、变更重问、跳过不授权。 | 旧 E4 首轮多给一步路径，后轮把未定义 `amount` 叫“毛收入”；旧审计器未阻断这些开放语义。 | 状态与确认机械路径可用；开放语义和真实完整交付仍需人工复核。 |
+
+该矩阵的机器层分别记录执行、回执证据、解释价值、导出和声明；`semantic_audit=unassessed` 是诚实边界。历史 `completed`、脚本 E3、自然局部 typed、正式整篇可发布是四种不同身份，不能互相替代。对 M03 的正反自由散文、M05/M06 的开放解释，本轮使用已有真实答案做人审归类，不把人审意见伪装成一个新的模型总门。也未从单个 R4 中断会话推断整批结果。
 
 **阶段边界**：Phase 8 的分维判定和当前 HEAD 的 E2/E3 完整矩阵已有可核收据；真实 E4 归档仍失败，开放语义仍未评估，故不称整体验收通过。按用户裁决继续保留 Phase 7 的现有自由散文门；没有足以逐族退役的正反证据。Phase 6 仍是默认关闭局部 typed 能力，不称 A/C/D 全部退出；正式发布默认、Provider 配置、Shadow 调度均未改变。本轮未新建词表、planner、账本或浏览器框架，也未调用真实 Provider。
