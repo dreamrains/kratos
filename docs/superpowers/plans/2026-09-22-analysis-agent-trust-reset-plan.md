@@ -690,6 +690,10 @@ Phase 8 的首个已知 RED 是 `p08_scenario_audit.py` 把 M01/M03/M05/M06 的�
 
 首个收敛切片：P08 审计器不再用答案数字 token、散文“同比”加任意跨年回执、或 D 日百分比与拟合值的词面碰巧一致，给出自动通过/阻断。三项均显式 `unassessed`；没有其他 blocking 失败时总判定为 `needs_review`，不能被写成验收通过。完整矩阵另要求 M01–M06 场景实际出现，零识别或缺场景为结构化失败。前三组 RED 分别为 3 failed/19 passed、2 failed/1 passed、2 failed/2 passed；最终定向 26 passed，fresh `tmp/tp8o1` full-offline **3030 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `84BEE529EF99A049D9669A7870D901BA6BEFF540573DC3E118903AAF596BB101`，runner 标明 Provider transport forbidden。只读回放旧完整 P08 目录仍识别六场景并维持失败，自然 M03 试验目录从错误的 `passed/0 sessions` 变为 `failed/0 sessions`。这只是移除伪精确 verdict，尚未实现同版本回执、binding、trace 的正向数值验收，也没有改变正式发布或调用 Provider。
 
+后续收敛退役了两个仅靠散文词面识别 D 日百分比和“同比”的非阻断伪证据项：缺少关键词时旧审计器会记录 `passed`，但这并不能证明未发生无据外推或跨年口径错误。数字正确性仍由统一 `answer_numeric_oracles=unassessed` 承担待核验状态，不能因删掉词面提示而自动通过。定向测试 21 passed；旧完整 M01—M06 真实目录只读回放仍识别六场景、总判定 `failed`、六项数字均 `unassessed`、三个 blocking 失败。正向同版本回执／binding／原位 trace 验收和开放解释评估仍未完成。
+
+该删减后的 fresh `tmp/tp8converge2` full-offline 为 **3014 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `01BFAE487DC9AB2A90CF6EBA2B376AD1A8ED922BA0D86612B3C41736D5821A7F`，runner 标明 `provider_calls=forbidden`；只是 E2，不改变产品正式发布或 Phase 6 退出判定。
+
 ### Phase 9：验证顺序
 
 1. 单元与真实轨迹回放；

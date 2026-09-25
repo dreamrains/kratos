@@ -79,10 +79,6 @@ MECHANICAL_ORACLES: list[dict] = [
      "principle": "CP-CR06(图文对应、导出一致)/VP-P8-12.1(生命周期一致性)", "type": "export"},
     {"id": "tasks_terminal", "scenario": "*", "dim": "declaration", "blocking": True,
      "principle": "VP-G5(假设生命周期闭合)/CP-CR03(覆盖或具体缺口)", "type": "tasks"},
-    {"id": "extrapolated_value_receipt_bound", "scenario": "*", "dim": "evidence", "blocking": False,
-     "principle": "VP-4.1(允许标注的待验证解释,禁止无依据外推)/CP-§5(未知待评)", "type": "extrapolation"},
-    {"id": "yoy_requires_crossyear_receipt", "scenario": "*", "dim": "evidence", "blocking": False,
-     "principle": "VP-4.1(口径正确)/CP-CR04/CP-§5(开放语义待评)", "type": "yoy"},
     # Open-class semantics: advisory only (CP-§5: 规则不能可靠判定的语义不伪精确).
     {"id": "unit_drift_advisory", "scenario": "*", "dim": "value", "blocking": False,
      "principle": "CP-§5(unknown 不得写成已知)/CP-§6(避免过度保守)", "type": "advisory_unit"},
@@ -94,7 +90,7 @@ MECHANICAL_ORACLES: list[dict] = [
 
 _KNOWN_CHECK_TYPES = {
     "matrix", "run_state", "pairing", "confirmations", "ledger", "numeric", "export",
-    "tasks", "extrapolation", "yoy", "advisory_unit", "advisory_origin",
+    "tasks", "advisory_unit", "advisory_origin",
     "advisory_next_step",
 }
 _KNOWN_DIMS = {"execution", "evidence", "value", "transfer", "declaration"}
@@ -241,8 +237,6 @@ _SINGLE_NEXT_STEP = re.compile(
     r"只有(?:一条|一个)(?:路|途径|选项|下一步|办法)",
     re.I,
 )
-_D_TOKEN = re.compile(r"(?<![A-Za-z0-9])D(\d+)")
-_PCT = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*%")
 
 
 def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -> dict:
@@ -362,41 +356,7 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         detail = f"run_state={status!r}; declaration check applies to completed runs"
     checks.append(_check(tasks_ok, o["id"], detail, o["blocking"], o["dim"], o["principle"]))
 
-    # 7. Text/curve-value coincidence does not prove a scenario binding, and
-    # wording-based uncertainty escapes do not establish whether a claim is safe.
-    o = _oracle_meta("extrapolated_value_receipt_bound")
-    d_point_rate = any(
-        _PCT.search(clause) and _D_TOKEN.search(clause)
-        for clause in re.split(r"[。；;\n]", final_text)
-    )
-    extrapolation_check = _check(
-        not d_point_rate, o["id"],
-        "unassessed: D-point rate needs a current claim-bound receipt and host-rendered span"
-        if d_point_rate else "no D-point rate expression found",
-        o["blocking"], o["dim"], o["principle"],
-    )
-    if d_point_rate:
-        extrapolation_check["assessment"] = "unassessed"
-    checks.append(extrapolation_check)
-
-    # 8. A lexical label is a review lead, not a verified claim. An unrelated
-    # cross-year receipt cannot authorize the sentence that used the label.
-    o = _oracle_meta("yoy_requires_crossyear_receipt")
-    yoy_labelled = any(
-        "同比" in clause and "同比例" not in clause
-        for clause in re.split(r"[。；;\n]", final_text)
-    )
-    yoy_check = _check(
-        not yoy_labelled, o["id"],
-        "unassessed: 同比 wording needs a claim-bound same-period cross-year receipt"
-        if yoy_labelled else "no 同比 label found",
-        o["blocking"], o["dim"], o["principle"],
-    )
-    if yoy_labelled:
-        yoy_check["assessment"] = "unassessed"
-    checks.append(yoy_check)
-
-    # 9-10. advisory open-class semantics (never blocking)
+    # Open-class semantics remain advisory and never certify answer evidence.
     o = _oracle_meta("unit_drift_advisory")
     unit_hits = _ADVISORY_UNIT.findall(final_text)
     checks.append(_check(
@@ -410,7 +370,7 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         f"origin_lean_candidates={len(origin_hits)}", o["blocking"], o["dim"], o["principle"],
     ))
 
-    # 11. P2-2 排他式"唯一下一步"框架（价值维软检查，永不阻断）：
+    # P2-2 排他式"唯一下一步"框架（价值维软检查，永不阻断）：
     # 把单一路径写成唯一选项（真实 r1 M06"下一步（单一动作）"）压缩了
     # 用户的决策空间；条件式指引（触发/停止条件）不计。
     o = _oracle_meta("single_next_step_advisory")
