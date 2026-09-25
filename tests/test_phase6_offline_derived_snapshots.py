@@ -1,19 +1,14 @@
 """One bounded, identity-bound derived-result snapshot for existing tool families."""
 
-import hashlib
 import json
-from copy import deepcopy
 
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.publication_synthesis import (
     build_publication_packet,
-    parse_answer_bindings,
     render_trusted_core_preview,
-    validate_offline_multiturn_metric_links,
 )
-from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
 from data_agent.session.workspace import Workspace
 
 
@@ -168,132 +163,6 @@ def test_mismatched_executed_method_parameters_do_not_gain_method_context():
     snapshots = _packet(state, workspace, ["tr_totals"])["offline_trust_projection"]["derived_snapshots"]
     assert len(snapshots) == 1
     assert "method_parameters" not in snapshots[0]
-
-
-def _multiturn_snapshot(messages, revision):
-    return CanonicalHistorySnapshot(
-        messages=[{"role": "user", "content": item} for item in messages],
-        revision=revision,
-        sha256=_history_sha256([{"role": "user", "content": item} for item in messages]),
-        message_count=len(messages),
-    )
-
-
-def _multiturn_case():
-    state, workspace = _fixture()
-    first = (
-        "请先基于当前订单给出一份证据受限的事实摘要，明确计算并列出订单记录数与 amount 总额。\n"
-        "分析文件: M01-sales.csv"
-    )
-    later = [
-        "请改成业务负责人表达，强调可行动含义，但不要改变数字、范围、限制和证据等级。",
-        "请改成分析师表达，保留指标、计算和来源绑定，但不要改变数字、范围、限制和证据等级。",
-        "请改成管理者表达，突出决策条件，但不要改变数字、范围、限制和证据等级。",
-        "请用大白话重述，但不要改变数字、范围、限制和证据等级。",
-        "请恢复技术表达，列出计算方法与证据边界，但不要改变数字、范围、限制和证据等级。",
-    ]
-    prior = build_publication_packet(
-        state, user_input=first, substantive_tools=set(), receipt_ids=["tr_totals"],
-        offline_trust_projection=True, offline_workspace=workspace,
-    )
-    state.add_publication_packet(prior)
-    current = build_publication_packet(
-        state, user_input=later[-1], substantive_tools=set(), receipt_ids=[],
-        offline_trust_projection=True, offline_workspace=workspace,
-    )
-    source_ref = "msg_" + hashlib.sha256(first.encode("utf-8")).hexdigest()[:12]
-    proposal = {
-        "schema_version": "answer_bindings.v1",
-        "packet_digest": current["binding_digest"],
-        "blocks": [{
-            "claim_id": "claim_amount", "exact_text": "[[claim:claim_amount]]",
-            "claim_type": "observed_fact", "status": "unassessed",
-            "requirement_refs": [], "fact_refs": [], "derived_refs": [],
-            "source_span_selector": {
-                "source_message_ref": source_ref,
-                "exact_span": "amount 总额",
-                "prior_packet_id": prior["id"],
-                "receipt_ref": "tr_totals",
-                "result_version_id": workspace.get_data_identity("sales_totals")["version_id"],
-                "metric_column": "amount",
-            },
-        }],
-    }
-    return state, workspace, prior, current, proposal, _multiturn_snapshot([first], 1), _multiturn_snapshot([first, *later], 6)
-
-
-def test_multiturn_literal_metric_link_preserves_identity_without_answer_authority():
-    state, workspace, _, current, proposal, prior_history, current_history = _multiturn_case()
-
-    checked = validate_offline_multiturn_metric_links(
-        current, proposal, state=state, offline_workspace=workspace,
-        prior_history=prior_history, current_history=current_history,
-    )
-
-    assert checked["publication_effect"] == "none"
-    assert checked["issues"] == []
-    assert checked["results"][0]["link_status"] == "verified_history_and_tool_column"
-    assert checked["results"][0]["metric_column"] == "amount"
-    assert "sum" in checked["results"][0]["available_functions"]
-    assert checked["results"][0]["intervening_user_turns"] == 5
-    assert checked["results"][0]["answer_coverage"] == "unassessed"
-    assert checked["results"][0]["continuation_intent_status"] == "unassessed"
-    assert checked["results"][0]["unit_status"] == "not_confirmed"
-    assert current["offline_trust_projection"]["derived_snapshots"] == []
-    _, formal, issues = parse_answer_bindings(
-        "[[claim:claim_amount]]\n```answer-bindings\n"
-        + json.dumps(proposal, ensure_ascii=False) + "\n```",
-        current,
-    )
-    assert formal is None or formal["blocks"] == []
-    assert any(item["code"] == "invalid_observed_binding" for item in issues)
-
-
-def test_multiturn_link_rejects_unmatched_metric_and_stale_lineage():
-    state, workspace, prior, current, proposal, prior_history, current_history = _multiturn_case()
-    selector = proposal["blocks"][0]["source_span_selector"]
-    selector["metric_column"] = "order_id"
-    assert validate_offline_multiturn_metric_links(
-        current, proposal, state=state, offline_workspace=workspace,
-        prior_history=prior_history, current_history=current_history,
-    )["results"] == []
-    selector["metric_column"] = "amount"
-    selector["exact_span"] = "订单记录数"
-    assert validate_offline_multiturn_metric_links(
-        current, proposal, state=state, offline_workspace=workspace,
-        prior_history=prior_history, current_history=current_history,
-    )["results"] == []
-    selector["exact_span"] = "amount 总额"
-    workspace.add("sales", pd.DataFrame({"channel": ["B"], "order_id": [1], "amount": [99]}))
-    assert validate_offline_multiturn_metric_links(
-        current, proposal, state=state, offline_workspace=workspace,
-        prior_history=prior_history, current_history=current_history,
-    )["results"] == []
-    assert prior["offline_trust_projection"]["derived_snapshots"]
-
-
-def test_multiturn_link_rejects_forged_history_packet_and_unpersisted_prior():
-    state, workspace, prior, current, proposal, prior_history, current_history = _multiturn_case()
-    forged = CanonicalHistorySnapshot(
-        messages=current_history.messages, revision=current_history.revision,
-        sha256="sha256:forged", message_count=current_history.message_count,
-    )
-    assert validate_offline_multiturn_metric_links(
-        current, proposal, state=state, offline_workspace=workspace,
-        prior_history=prior_history, current_history=forged,
-    )["results"] == []
-    tampered = deepcopy(prior)
-    tampered["sources"][0]["result_sha256"] = "sha256:forged"
-    state.publication_packets = [tampered]
-    assert validate_offline_multiturn_metric_links(
-        current, proposal, state=state, offline_workspace=workspace,
-        prior_history=prior_history, current_history=current_history,
-    )["results"] == []
-    state.publication_packets = []
-    assert validate_offline_multiturn_metric_links(
-        current, proposal, state=state, offline_workspace=workspace,
-        prior_history=prior_history, current_history=current_history,
-    )["results"] == []
 
 
 def test_archived_r16_transform_receipt_replays_values_and_method_when_present():

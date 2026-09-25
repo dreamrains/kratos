@@ -142,6 +142,18 @@ def test_ac18_not_computed_and_evidence_insufficient_stay_distinct():
     assert validate_final_narrative_issues(text, packet) == []
     assert packet["requirements"][0]["answer_coverage"] == "not_computed"
     assert packet["requirements"][1]["answer_coverage"] == "evidence_insufficient"
+    assert all(item["coverage_check"] == "unassessed" for item in packet["requirements"])
+
+
+def test_model_stated_gap_does_not_become_host_checked_coverage():
+    packet = {
+        "requirements": [{"id": "rq_repeat", "label": "复购率"}],
+        "publication_scope": [],
+        "sources": [{"facts": [{"path": "orders.count", "value": 120}]}],
+    }
+    assert validate_final_narrative_issues("复购率缺少订单分母，证据不足。", packet) == []
+    assert packet["requirements"][0]["answer_coverage"] == "evidence_insufficient"
+    assert packet["requirements"][0]["coverage_check"] == "unassessed"
 
 
 def test_ac19_host_rejects_model_binding_to_unknown_fact():
