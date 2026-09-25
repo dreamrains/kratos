@@ -82,3 +82,23 @@ M04 协议修订后定向 **26 passed**；fresh `tmp/trust-reset-fo-20260924-con
 修复将既有 `_extrapolation_issues` 的接受结果用于终局正文披露；来源修订标志也直接标注正文。原位 typed 情景仍用既有 `render_bound_claims()` 披露，不重复尾注；现有来源说明 artifact 继续承担来源事实与省略展示。删除无生产调用的 `render_verified_appendix()` 及其伪验收，改测真实 artifact/终局。正例为正确 D30 情景继续发布且披露、修订后来源判断可见未证实；反例为 9.9% 错误情景仍拒绝、typed 披露仅一份、无来源判断时不加注。定向 **170 passed**；fresh `tmp/trust-reset-dead-appendix-20260925-r2` full-offline **3015 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `6D63D48E18E26A6EE36F13F0363D0A58D312C0D4A619C53D059A1530DC8DD2C9`，runner `provider_calls=forbidden`。产品代码净减 20 行，源码与测试合计净减 11 行。
 
 本次只退役死附录；`_extrapolation_issues`、`_currency_unit_issues` 和其他仍负责旁侧自由散文的门继续保留。末尾宿主边界不能把错误预测语气或未绑定解释变成可信事实，R4/R11 的 typed 等价与真实自然采用率仍需分层验证。此前 `fbbc147` 的 E3 浏览器矩阵不自动升级为本次修改后的 E3；旧 E4 失败、Phase 5/C、Phase 6 A/C/D、Phase 7 和整体 Phase 8/9 的退出条件不变。未调用 Provider；默认策略开关未更改，正式终局对上述两类通过的正文增加可见宿主边界。
+
+## 2026-09-25：当前阶段登记提交的完整 E3
+
+源码 `main@959ea6a11f2689b097d5c118e043cacd1dde6c7a`，启动前工作树 clean。该提交仅增补阶段登记及分层审计的 `verified_host_spans`，正式发布默认不变。对应 fresh full-offline `tmp/trust-reset-stage-gate-20260925-r1`：3015 passed、1 skipped、16 warnings、0 failures，JUnit SHA256 `BD154DC2B2A041F3963063F2DF4F8FEDCFE6207830A50DF74AA314B5BBB437C3`，Provider transport forbidden。
+
+首次 `r1` 服务在端口 5237 通过 `ok=true/provider_enabled=false` 健康检查，但自动审批拒绝新建 IAB 标签：根 `AGENTS.md` 原流程要求先复用旧标签；指定 URL 查询无标签，官方桥接两次报请求头策略加载失败。未执行浏览器矩阵，停止服务，端口关闭，trace 无 Provider transport。用户随后明确允许恢复官方 IAB 并新建**一个**标签。fresh `tmp/trust-reset-stage-e3-20260925-r2` 重新从完整矩阵起点执行；没有把 `r1` 拼入 `r2`，也没有换自动化栈。
+
+`r2` 保留原入口 `run_p7_browser_rehearsal.py`，端口 **5237**、监听 OS PID **13224**、Codex exec session **73435**，stdout/stderr 同该 session，未独立重定向。启动前检查 worktree、`.venv`、脚本、空闲端口和全新 run-dir；健康检查在启动和每个主要组前后均为 `ok=true/provider_enabled=false`。官方 `iab` 单 tab **7**；按根指令操作可见上传标签、单次 filechooser、可见输入框/按钮、同会话续轮与确认。B03、CONTENT-B03 的六文件在各场景一次上传；刷新、压缩和导出保持原矩阵次序。结束后关 tab，从保留 exec session 停止服务，端口 5237 无监听。
+
+| 组 | 会话与可见/持久结果 |
+| --- | --- |
+| B01、B02/NEG | `6aad6038b372` 保留 12/120 与触发/停止；`8da944c5bc69` D7=10% 的脚本情景和 D30 拒绝同会话，NEG 候选拒绝后安全终局。脚本百分比不授权 R11 真实列的尺度。 |
+| B03、B04 | `e8c9107353f0` 六源上传、续轮、压缩、刷新和 MD 导出；`ff62a5e0091b` 初轮及同会话第 2—13 步，刷新后保留 1 plan、3 evidence、13 hypothesis sets、2 publication packets。 |
+| B05、B06 | `23afc4bbe015` 五种表达保留 12/120；`6a9aea91e0a2` 缺数据安全收口；`9f902bf84503` 注入保存故障为 `unknown`；`18a424383edd` 预算耗尽为 `failed`。 |
+| IC | `9aa3c4b94716` 方法非阻塞；`e35c15f9e491` 九子问题区分未算与证据不足；`250d8307587f` 成本范围确认、同范围复用、窗口变化重问；`ic-b05-legacy` 跳过真实分母歧义且未给确定率；`868215603c48` 方法许可非阻塞；`0c4648fc6dd1` 自然周口径确认。 |
+| CONTENT | `e04133aae08c` 六源上传、续轮、压缩、刷新和 MD 导出；`61131761ccb9` 刷新后标题、表格、公式与图及 fallback 保留；741×805 视口 `clientWidth=scrollWidth=741` 后复原。 |
+
+16 会话最终 **14 completed、预期 1 unknown、预期 1 failed**；浏览器 console warn/error **0**。B03、CONTENT-B03 的持久 MD 导出各 9620 字节，SHA256 分别 `936F6DA9556B0D5FBB346569123F51F498BFAAD37DB48CC0BCA7988F7F479ABB`、`FE4B29A120F19EAAE60112805D128304994B7D7CD6FB336AD765A1C441B9DF81`；CONTENT-B07 导出 56804 字节、SHA256 `4207078806892FF59915AEB8A5F3D79F402F96816EC29094A2AFCE3DE45FC142`。B03 与 CONTENT-B03 的导出保留 `src_1`—`src_6` 和 60→66，但屏幕正文仍短，不能据此称自然六源解释价值通过。
+
+`runtime.jsonl` SHA256 `C01D509C4748925B8CD4AE30D3C3561022CA44EFEAD398A2E05C1B389B13B47E`：`server_start=1`、`scripted_round=75`、`auxiliary_call=151`、`injected_save_failure=3`、`forbidden_provider_transport=0`；实际 Provider initiated **0**。run_state/UI 证明各会话收口，本目录没有持久逐轮 SSE terminal 序列，不能独立证明每轮终态恰好一次。当前审计器只读回放旧完整真实 P08 六场景仍 `verdict=failed`：execution/transfer failed，evidence/value unassessed，declaration passed，宿主原位 claim 0。自然 M03-P/N 各六条可定位局部 typed，但旁侧散文未审计；这批 E3 是当前代码的本地路径证据，Phase 5/C、Phase 6 A/C/D、Phase 7 和 Phase 8 的真实整体验收均不因此退出。

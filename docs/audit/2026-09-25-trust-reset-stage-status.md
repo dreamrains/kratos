@@ -26,8 +26,8 @@
 | 7.2 | 对每族删除旧词面硬判并以同版本 claim/回执/宿主渲染或受限语义审计替代 | 局部 typed 族有 E2/E3，R4/R11 误拒仍有历史证据 | 正确解释/方法上下文保留和无据强断言剔除须同时回放；Phase 7 未退出 |
 | 7.3 | 修正上一提交的过渡边界说明 | `fc9ae7a` 把旧情景与来源修订的宿主说明放在正文末尾 | 总计划 §2.3/§4.4 禁止靠末尾说明抵消错误正文；不得将其作为结构化替代或 Phase 7 退出证据 |
 | 8.1 | blocking、structured completeness、semantic audit、advisory 分层；去掉词面数字伪 oracle | E2 已有，旧完整 P08 可分维回放 | 不能把 `unassessed` 当通过；每条 blocking 需原始需求与可机器判定证据 |
-| 8.2 | 同版本回执、binding、原位 trace 的正向事实核验及需求价值矩阵 | 当前审计视图能定位局部 claim；M01—M06 历史/脚本矩阵已汇总 | 邻接解释仍未审计；当前提交仅 E2，E3 是此前 `fbbc147` 的完整批次 |
-| 8.3 | 当前实现的完整 Provider-disabled E3 与最终真实 E4 分层验收 | `fbbc147` E3：16 会话、Provider 0；旧 E4：82 调用、执行完成但验收失败 | 代码收敛后才跑新 HEAD 完整 E3；真实 E4 属 Phase 9，须新冻结和明确授权；Phase 8 整体验收未通过 |
+| 8.2 | 同版本回执、binding、原位 trace 的正向事实核验及需求价值矩阵 | 当前审计视图能定位局部 claim；M01—M06 历史/脚本矩阵已汇总 | 邻接解释仍未审计；原位可信数不得升级成整篇价值通过 |
+| 8.3 | 当前实现的完整 Provider-disabled E3 与最终真实 E4 分层验收 | `959ea6a` E3：16 会话、Provider 0；旧 E4：82 调用、执行完成但验收失败 | 本地路径已完成；真实 E4 属 Phase 9，须新冻结和明确授权；Phase 8 整体真实验收未通过 |
 
 ## Phase 7 门族与删减判据
 
@@ -49,6 +49,8 @@
 
 当前改动在 fresh `tmp/trust-reset-stage-gate-20260925-r1` 完成 full-offline：**3015 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `BD154DC2B2A041F3963063F2DF4F8FEDCFE6207830A50DF74AA314B5BBB437C3`，runner 显式 `provider_calls=forbidden`。这是 E2，不是 Phase 5/C 自然 Shadow、当前提交 E3、真实 E4 或正式发布切换。
 
+随后在该代码提交 `main@959ea6a11f2689b097d5c118e043cacd1dde6c7a` 完成 fresh `tmp/trust-reset-stage-e3-20260925-r2` Provider-disabled 内置浏览器完整矩阵：16 会话，14 completed、预期保存故障 1 unknown、预期预算耗尽 1 failed；实际 Provider initiated **0**。明细、会话、运行端口/PID、导出哈希及局限见 [当前 HEAD 浏览器审计记录](2026-09-24-trust-reset-current-head-browser-rehearsal.md)。`r1` 因官方 IAB 无现存 tab、桥接策略报错未启动浏览器矩阵；用户明确允许新建一个 IAB tab 后，才在 fresh `r2` 完整重跑，未把 `r1` 混入结果。当前审计器只读回放旧完整真实 P08 仍为六例、`verdict=failed`，分维为执行/导出 failed、证据/价值 unassessed、声明 passed，宿主原位 claim 0。新 E3 不升级这些真实 E4 结论。
+
 ## 原始目标防遗漏索引
 
 | 上位目标 | 进入 Phase 9 前必须核对的内容 |
@@ -63,11 +65,17 @@
 | 需求组 | 当前可核代码/证据所有者 | 未完成或不得升格的部分 |
 | --- | --- | --- |
 | VP G1—G3、IC 1—4/6 | 既有确认策略、计划/路由、canonical history；R11/R16 与 IC-B 矩阵有本地和旧 E4 正反 | R11 原句“10%”缺单位确认；R16 的中文订单数与英文列语义映射、跨轮完整方法价值不能从旧文本倒填。IC5 最新完整 E4 仍 `executed_failed`。 |
-| VP G4—G6、P5 竞争假设 | 现有受众表达、analysis_state、真实假设 ID/原回执测量复核、工具/SSE/导出/恢复 | M04 关系的测量可核不等于假设解释被回答；新 HEAD 完整 E3 及 E4 尚待，不能以旧脚本/历史通过替代。 |
+| VP G4—G6、P5 竞争假设 | 现有受众表达、analysis_state、真实假设 ID/原回执测量复核、工具/SSE/导出/恢复 | M04 关系的测量可核不等于假设解释被回答；当前 HEAD 脚本 E3 已跑，E4 尚待，不能以旧脚本/历史通过替代。 |
 | CP CR01—CR02/CR06 | final packet、同版本回执、fact group/omission、artifact、canonical history 与浏览器持久化 | R4 M03 图表及六源解释的等价价值需和原位比较分开；导出/刷新只在对应代码 HEAD 的批次成立。 |
 | CP CR03—CR04 | `answer_bindings.v1`、确认记录、宿主复算 renderer 和原位 trace | 覆盖身份仅在宿主证实后可 `answered`；旧六场景要求记录为 0，不得填“已覆盖”。未知单位/方法仍 `unassessed`。 |
 | CP CR05/CR07、重置完成定义 #6/#10/#11 | 旧散文门、局部 typed 渲染、一次修订、只读受限审计输入 | 自然 M03 正确解释与无据建议同在；有效 binding 旁独立 99% 仍可误放；尾注可能与错误来源正文冲突。无局部可信处置和自然语义校准，不得宣称 Phase 7 退役或整篇质量通过。 |
-| 重置完成定义 #7—#9/#12—#15 | `publication_audit.v1` validator/one-shot Shadow、Phase 8 分维审计器、现有 E3/E4 runner/账本 | 普通路径 Shadow 未调度，自然质量分母未校准；D 默认策略未裁决；当前 HEAD 完整 E3、未来冻结后 E4、正式发布/部署分别是独立证据。用户工作树须保留。 |
+| 重置完成定义 #7—#9/#12—#15 | `publication_audit.v1` validator/one-shot Shadow、Phase 8 分维审计器、现有 E3/E4 runner/账本 | 普通路径 Shadow 未调度，自然质量分母未校准；D 默认策略未裁决；当前 HEAD 完整 E3 已跑，未来冻结后 E4、正式发布/部署分别是独立证据。用户工作树须保留。 |
+
+### Phase 9 前总计划逐项核对结论
+
+完成定义 #1—#5 的现有代码所有者已列出；#2 的非词面暂停、#3 的局部观测/情景重算、#4 的 canonical history 与 #5 的无第二套 planner 都有本地证据，但 R11 原句尺度、R16 业务映射、M03 正文价值和 M04 关系解释使跨历史完整等价仍未通过。#6 的末尾说明风险未闭合。#7—#9 的受限审计协议与单次模拟有 E2，真实 Shadow 调度、自然质量及正式降级未通过。#10—#11 的历史正反要求未通过完整自然验证，且不得以删除正确解释或单个 99% 样例替代。#12 的当前代码 E2/E3 本地矩阵已有隔离收据，其中 E3 不持久逐轮 terminal 序列，不能独立证明唯一 terminal。#13 是未来真实批次的精确冻结/授权要求，旧授权不得复用。#14 的旧完整 E4 失败，须在 Phase 9 新批次验收。#15 本轮工作树 clean，未覆盖用户文件。这是**无遗漏的依赖核对**，不是 15 项都已完成。
+
+Phase 9 入口：按用户确认的顺序，本地分层契约、当前代码 E2/E3 和原始目标核对已准备；Phase 5/C 自然 Shadow、Phase 6 A/C/D、Phase 7 逐族退役及 Phase 8 真实整体验收明确保持 open，进入系统矩阵后仍须逐项解决，不能把“到 Phase 9”写成前置阶段退出。下一次真实 Provider 先精确冻结，再取得该冻结专属授权；不以连续 E4 为离线状态机问题打补丁。
 
 这张表是**实施与验收缺口清单**，不改变原计划退出要求。历史 R7—R21 的边界分类和具体源会话见 [跨历史门记录](2026-09-24-trust-reset-cross-history-gate.md)、[双轨校准](2026-09-24-trust-reset-dual-track-calibration.md)；R4 中断、R16 完整通过项和本地真实会话须共同参与正反验收。
 
