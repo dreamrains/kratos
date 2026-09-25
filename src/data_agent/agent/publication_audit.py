@@ -8,6 +8,7 @@ remains with the existing receipt/binding/renderer path.
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 import json
 import time
 from copy import deepcopy
@@ -180,6 +181,40 @@ def build_offline_audit_view(
             and item.get("result_sha256") == source.get("result_sha256")
         ]
         if len(matching_receipts) != 1:
+            return unavailable
+        receipt = matching_receipts[0]
+        source_groups = source.get("fact_groups") or []
+        if not isinstance(source_groups, list):
+            return unavailable
+        receipt_groups = receipt.get("publication_fact_groups") or []
+        if not isinstance(receipt_groups, list):
+            return unavailable
+        receipt_fields = (
+            (field for group in receipt_groups if isinstance(group, dict)
+             for field in group.get("fields", []) if isinstance(field, dict))
+            if receipt_groups else
+            (fact for fact in receipt.get("publication_facts", []) if isinstance(fact, dict))
+        )
+        available = Counter(
+            (str(field.get("path") or ""), str(field.get("value") or ""))
+            for field in receipt_fields
+        )
+        selected = Counter(
+            (str(field.get("path") or ""), str(field.get("value") or ""))
+            for group in source_groups if isinstance(group, dict)
+            for field in group.get("fields", []) if isinstance(field, dict)
+        )
+        if selected - available:
+            return unavailable
+        group_ids = {group.get("group_id") for group in source_groups
+                     if isinstance(group, dict)}
+        selected_facts = Counter(
+            (str(fact.get("path") or ""), str(fact.get("value") or ""))
+            for fact in source.get("facts", []) if isinstance(fact, dict)
+            and fact.get("group_id") in group_ids
+        )
+        if selected_facts != Counter({item: count for item, count in selected.items()
+                                     if item[0] and item[1]}):
             return unavailable
     accepted_messages = [
         index for index, message in enumerate(canonical_history.messages)

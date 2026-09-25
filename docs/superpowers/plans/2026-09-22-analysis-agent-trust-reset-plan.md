@@ -700,6 +700,10 @@ Phase 8 的首个已知 RED 是 `p08_scenario_audit.py` 把 M01/M03/M05/M06 的�
 
 **当前顺序续接**：Phase 6 默认关闭入口曾漏选本轮 `curve_fitting` 回执，尽管现有 M02 `descriptive_fit` 生产者、同版本确认、`answer_bindings.v1` 与宿主渲染已能闭合观测序列。新增入口 RED 为 1 failed/6 passed；接线后同一测试 7 passed。受控入口只选一份本轮拟合回执，只提供观测拟合 claim；未确认的 D30 不自动生成为情景或预测，普通 AgentLoop 仍不注入。fresh `tmp/tp-m02-entry-20260925` full-offline **3015 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `4DF4CAD5A61CDC2C7ADAFADDDB1A202BCA530020ADD184321E834EF5D7317DA0`，runner 禁止 Provider 调用。该证据是 E2 接线，不证明旧 R11 原句等价、R4 图表价值、自然模型采用率或 Phase 6 A/C/D 退出。Phase 7 清点仍保留 `_extrapolation_issues`、`_currency_unit_issues` 等自由散文门：typed 渲染只证明原位块，旁侧无据句尚无结构化局部处置，不能为完成阶段而删门。Phase 8 的整篇数字与解释仍为 `unassessed`；已定位宿主 claim 数不得升级成整篇质量通过。
 
+**用户确认的后续次序取舍**：自然 M03 正反答案的原位 claim 与旁侧正确解释、无据建议并存；当前 packet/回执/trace 不能判定自由散文语义。保留现有散文门，先完成 Phase 8 分层验收和统一矩阵，再据真实正反证据决定 Phase 7 各族退役。Phase 7 的退出因此延后；Phase 6 默认关闭实现准备也不得改写为 A/C/D 验收完成。
+
+Phase 8 本地校准先复现一个证据断链 RED：原回执 `publication_facts` 从 100 漂移为 999、packet 与已接受正文仍保持旧值时，只读审计视图旧行为仍为 `ready`。现从同一持久回执复核被选择的事实组字段，并与 packet 可引用的事实字段逐项核对；变更后相关审计/M02/聚合/M03/P08 定向 50 passed，自然 M03-P/N 归档仍各 6 个可定位 claim、0 个不可定位，旁侧散文仍 `not_audited`。该校验只证明原位数字与持久回执一致，**不**证明原始数据、跨来源业务解释或整篇答案正确。P08 分维报告的 RED 为 2 failed/3 passed，现分别输出执行、证据、解释价值、导出、声明状态；开放语义固定 `unassessed`，未调用隐藏模型审核。旧完整 P08 只读回放仍识别六场景、总判定 `failed`，执行/导出 `failed`、证据/价值 `unassessed`。fresh `tmp/tp8-layered-20260925-r1` full-offline **3016 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `163A6F9BFFE8CFE5237929127EC192E478D8A8F2AB8DCAAF3400B202F01422F4`，runner 禁止 Provider 调用。下一步按根 `AGENTS.md` 在当前提交上跑完整 Provider-disabled 内置浏览器矩阵；该矩阵的脚本模型结果不能替代自然模型或 Phase 5/C、Phase 6/D 裁决。
+
 ### Phase 9：验证顺序
 
 1. 单元与真实轨迹回放；

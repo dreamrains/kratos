@@ -110,6 +110,16 @@ def test_current_accepted_claim_has_unique_host_text_and_verbatim_user_anchor():
     assert packet == before
 
 
+def test_audit_view_refuses_receipt_facts_changed_after_publication():
+    state, packet, history, answer = _accepted_observation()
+    assert build_offline_audit_view(packet, answer, state=state,
+                                    canonical_history=history)["status"] == "ready"
+    state.tool_receipts[0]["publication_facts"][0]["value"] = "999"
+    view = build_offline_audit_view(packet, answer, state=state,
+                                    canonical_history=history)
+    assert view["status"] == "unavailable"
+
+
 def test_shadow_request_is_bounded_to_current_located_claim_and_reproducible():
     state, packet, history, answer = _accepted_observation(extra_prose="\n另一结论为99%。")
     request = build_shadow_audit_request(packet, answer, state=state, canonical_history=history)

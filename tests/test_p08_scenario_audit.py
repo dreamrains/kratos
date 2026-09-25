@@ -199,6 +199,7 @@ class TestRunLevelVerdicts:
         assert [c["check"] for c in blocking] == ["scenario_matrix_coverage"]
         assert all(v == [] for v in scenarios_blocking.values())
         assert report["verdict"] == "failed"
+        assert report["dimensions"]["execution"] == "failed"
 
     def test_unrecognized_sessions_cannot_make_empty_matrix_pass(self, tmp_path):
         _make_session(tmp_path, "s_unknown", summary="非 P08 测试会话")
@@ -226,6 +227,12 @@ class TestRunLevelVerdicts:
         assert len(report["sessions"]) == 6
         assert not [c for c in report["run_checks"] if c["blocking"] and not c["passed"]]
         assert report["verdict"] == "needs_review"
+        assert report["dimensions"] == {
+            "execution": "passed", "evidence": "unassessed",
+            "value": "unassessed", "transfer": "passed",
+            "declaration": "passed",
+        }
+        assert report["semantic_audit"] == "unassessed"
 
 
 class TestAdvisoryOnlySemantics:

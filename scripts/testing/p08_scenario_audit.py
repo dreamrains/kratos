@@ -488,23 +488,30 @@ def audit_run_dir(run_dir: Path) -> dict:
         o["blocking"], o["dim"], o["principle"],
     ))
 
-    any_blocking = any(
-        (not c["passed"]) and c["blocking"]
-        for c in run_checks
-    ) or any(
-        (not c["passed"]) and c["blocking"]
-        for verdict in sessions.values()
-        for c in verdict["checks"]
-    )
-    needs_review = any(
-        check.get("assessment") == "unassessed"
-        for verdict in sessions.values() for check in verdict["checks"]
-    )
+    checks = [*run_checks, *(check for session in sessions.values()
+                            for check in session["checks"])]
+    dimensions = {}
+    for dim in ("execution", "evidence", "value", "transfer", "declaration"):
+        scoped = [check for check in checks if check["dim"] == dim]
+        if any(check["blocking"] and not check["passed"] for check in scoped):
+            dimensions[dim] = "failed"
+        elif (dim == "value" or not scoped or
+              (dim == "evidence" and (
+                  any(check.get("assessment") == "unassessed" for check in scoped)
+                  or any(session["structured_evidence"]["request_completeness"] == "unassessed"
+                         for session in sessions.values())))):
+            dimensions[dim] = "unassessed"
+        else:
+            dimensions[dim] = "passed"
     return {
         "run_dir": str(run_dir),
         "run_checks": run_checks,
         "sessions": sessions,
-        "verdict": "failed" if any_blocking else "needs_review" if needs_review else "passed",
+        "dimensions": dimensions,
+        "semantic_audit": "unassessed",
+        "verdict": ("failed" if "failed" in dimensions.values()
+                    else "needs_review" if "unassessed" in dimensions.values()
+                    else "passed"),
     }
 
 
