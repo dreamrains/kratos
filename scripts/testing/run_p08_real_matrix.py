@@ -1,6 +1,6 @@
 """Serve one isolated, auditable P08 real-Provider matrix batch.
 
-The browser drives M01-M06 through the normal Web UI.  This launcher only
+The frozen HTTP driver drives M01-M06 through the normal Web API. This launcher only
 creates fresh fixtures, freezes non-secret batch identity, and records each
 physical Provider admission.  It deliberately has no retry, resume, or
 scenario-selection feature.
@@ -22,8 +22,9 @@ from typing import Any
 
 DEFAULT_CALL_CAP = 120
 MATRIX_IDS = ["M01", "M02", "M03", "M04", "M05", "M06"]
-MATRIX_SCHEMA_VERSION = "p08.real_matrix.v2"
+MATRIX_SCHEMA_VERSION = "p08.real_matrix.v3"
 MATRIX_CONTRACT_PATH = Path("scripts/testing/p08_real_matrix_contract.json")
+HTTP_DRIVER_PATH = Path("scripts/testing/run_p08_http_matrix.py")
 
 
 def _frozen_matrix_contract(root: Path, port: int) -> dict[str, Any]:
@@ -37,6 +38,7 @@ def _frozen_matrix_contract(root: Path, port: int) -> dict[str, Any]:
         "path": MATRIX_CONTRACT_PATH.as_posix(),
         "sha256": _sha256(contract_path),
     }
+    contract["http_driver_digest"] = _sha256((root / HTTP_DRIVER_PATH).resolve())
     contract["operator_protocol"]["service_port"] = port
     return contract
 

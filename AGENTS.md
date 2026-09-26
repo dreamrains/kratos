@@ -4,6 +4,11 @@
 
 These instructions are mandatory for local browser acceptance, especially after context compaction. Do not improvise a different browser, upload path, or automation method while a matrix is in progress.
 
+The separate P08 real-Provider **HTTP-controlled matrix** below is an explicitly
+labelled alternative when browser automation cannot operate the upload control.
+It is not a browser-acceptance result. Do not mix its sessions or verdicts with
+an in-progress browser matrix.
+
 ### 1. Verify the rehearsal service before touching the browser
 
 - Before launching, run `git worktree list --porcelain` and verify the selected
@@ -90,3 +95,36 @@ await chooser.setFiles(paths, { timeoutMs: 10000 });
 - Record the service PID, port, run directory, session IDs, stdout/stderr paths, matrix results, and Provider initiated call count in the existing implementation/audit record.
 - Do not add a new browser test framework, model-review call, probe family, or duplicate ledger mechanism.
 - Preserve unrelated dirty or untracked user files. Stage only named files and never reset or bulk-stage the worktree.
+
+## P08 HTTP-controlled matrix when browser automation is unusable
+
+The user authorized changing the control path on 2026-09-26 after confirming
+that manual upload works while automated clicks missed the control. Do not call
+this a product upload failure. A Provider-disabled local probe of the existing
+`/api/upload` → `/api/chat` → SSE → persisted session path completed with one
+terminal event and zero Provider calls in `tmp/phase9-http-probe-20260926-r1`.
+
+- Keep the existing `run_p08_real_matrix.py` isolated service and authoritative
+  `provider-calls.jsonl` ledger. The frozen contract must identify
+  `control_route=local_http_api` and include the HTTP driver's digest. Freeze a
+  new HEAD, launcher/driver/contract, model, endpoint, fixtures, all M01–M06
+  prompts/oracles, 120-call cap and ledger path. Obtain explicit authorization
+  for that exact batch; the earlier browser-protocol r2 freeze is invalid for
+  this route. No real call may precede that authorization.
+- Use only `scripts/testing/run_p08_http_matrix.py` against the existing local
+  app endpoints. The driver posts frozen files to `/api/upload`, checks returned
+  filename and SHA256, passes those tickets to `/api/chat`, consumes SSE, checks
+  the single terminal against durable run state, and records session IDs. M04
+  uploads v1 and v2 in the frozen order within one session. M06 resumes only
+  the frozen business option. Do not retry or resume a partial batch.
+- Run the whole matrix in order. Continue ordinary scenario failures; stop for
+  event/session isolation, Provider/accounting, or whole-service failures. Keep
+  the Provider ledger separate from HTTP control evidence. At the end reconcile
+  started/dispatched/failed counts, persisted sessions, exports and actual
+  Provider calls.
+- This route tests real model behavior through the normal app/AgentLoop/tools,
+  upload ticket binding, SSE and persistence. It does **not** test whether an
+  automated or human click opens the upload picker, visual claim rendering, or
+  a browser refresh. Mark those UI oracles `unassessed`; do not report full
+  browser E4 or Phase 5–8 exit from this batch alone. The user-confirmed manual
+  upload is context, not an auditable matrix receipt.

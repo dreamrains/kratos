@@ -6,12 +6,23 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from data_agent.llm.request_policy import ONE_SHOT
 
 
 def _launcher_module():
     path = Path(__file__).parents[1] / "scripts" / "testing" / "run_p08_real_matrix.py"
     spec = importlib.util.spec_from_file_location("p08_real_matrix_launcher", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _http_driver_module():
+    path = Path(__file__).parents[1] / "scripts" / "testing" / "run_p08_http_matrix.py"
+    spec = importlib.util.spec_from_file_location("p08_http_matrix_driver", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -49,14 +60,15 @@ def test_existing_provider_ledger_records_nonstream_usage_without_content(tmp_pa
     assert events[-1]["total_tokens"] == 28
 
 
-def test_preflight_contract_freezes_complete_prompts_oracles_and_browser_protocol():
+def test_preflight_contract_freezes_complete_prompts_oracles_and_http_protocol():
     launcher = _launcher_module()
     root = Path(__file__).parents[1]
 
     contract = launcher._frozen_matrix_contract(root, 5215)
 
     assert contract["matrix"] == ["M01", "M02", "M03", "M04", "M05", "M06"]
-    assert contract["operator_protocol"]["browser"] == "Codex built-in browser / iab"
+    assert contract["operator_protocol"]["control_route"] == "local_http_api"
+    assert contract["http_driver_digest"].startswith("sha256:")
     assert contract["operator_protocol"]["service_port"] == 5215
     assert contract["matrix_plan"]["sha256"].startswith("sha256:")
     assert contract["contract_file"]["sha256"].startswith("sha256:")
@@ -111,3 +123,47 @@ def test_preflight_stdout_is_ascii_safe_without_losing_unicode_content():
 
     output.encode("ascii")
     assert json.loads(output) == {"preflight": "passed", "label": "R² 拟合情景"}
+
+
+def test_http_driver_requires_one_terminal_matching_persisted_state(monkeypatch):
+    driver = _http_driver_module()
+
+    class Response:
+        headers = {"X-Data-Agent-Session-Id": "s1"}
+
+        def __init__(self, event_lines):
+            self.event_lines = event_lines
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def raise_for_status(self):
+            return None
+
+        def iter_lines(self, **_kwargs):
+            return self.event_lines
+
+    lines = ["event: turn_start", "data: {}", "", "event: turn_end",
+             'data: {"status":"completed"}', ""]
+    monkeypatch.setattr(driver.requests, "post", lambda *_args, **_kwargs: Response(lines))
+    monkeypatch.setattr(driver, "_request_json", lambda *_args, **_kwargs: {"status": "completed"})
+    result = driver._stream("http://127.0.0.1:1", "/api/chat", {"message": "fixed"})
+    assert result["session_id"] == "s1" and result["terminal"] == "completed"
+
+    resumed = driver._stream("http://127.0.0.1:1", "/api/chat/resume", {"session_id": "s1"})
+    assert resumed["session_id"] == "s1" and resumed["terminal"] == "completed"
+
+    monkeypatch.setattr(driver.requests, "post", lambda *_args, **_kwargs: Response(lines + lines[3:]))
+    with pytest.raises(RuntimeError, match="turn_end integrity failure"):
+        driver._stream("http://127.0.0.1:1", "/api/chat", {"message": "fixed"})
+
+
+def test_http_driver_confirmation_uses_visible_option_value():
+    driver = _http_driver_module()
+    options = [{"label": "A. 仅代金券成本", "value": "voucher_only"},
+               {"label": "B. 代金券成本 + 渠道成本", "value": "voucher_and_channel"}]
+    assert driver._option_value(options, "B. 代金券成本 + 渠道成本") == "voucher_and_channel"
+    assert driver._option_value(options, "C. 无此选项") is None

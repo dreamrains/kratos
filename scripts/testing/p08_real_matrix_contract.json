@@ -4,11 +4,12 @@
     "path": "docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md"
   },
   "operator_protocol": {
-    "browser": "Codex built-in browser / iab",
+    "control_route": "local_http_api",
+    "ui_evidence": "upload button, visual rendering, and browser refresh remain unassessed in this batch",
     "service_port": null,
     "scenario_order": ["M01", "M02", "M03", "M04", "M05", "M06"],
     "session_policy": "fresh isolated session per scenario",
-    "upload_policy": "click the visible upload label, await the Browser filechooser, and upload each scenario's fixtures in one setFiles call using absolute paths; M04 alone uses two ordered upload stages in the same session, one setFiles call per stage",
+    "upload_policy": "POST each frozen fixture to the existing local /api/upload endpoint, verify its name and SHA256 receipt, and pass only returned upload tickets to /api/chat; M04 alone uses two ordered upload stages in the same session",
     "failure_policy": "record ordinary scenario failures and continue; stop only for global service unavailability, session/data isolation failure, event integrity failure, evidence escalation, or accounting failure",
     "mutation_policy": "no code, prompt, fixture, oracle, model, endpoint, budget, or ledger changes during the batch; no partial reruns",
     "confirmation_action": "M06: when the frozen cost-scope question appears, select B. 代金券成本 + 渠道成本 and resume exactly once"
