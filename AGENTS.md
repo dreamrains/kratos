@@ -1,13 +1,19 @@
 # Data Agent repository instructions
 
-## Built-in browser acceptance workflow
+## Local acceptance control routes
 
-These instructions are mandatory for local browser acceptance, especially after context compaction. Do not improvise a different browser, upload path, or automation method while a matrix is in progress.
+Choose and record the control route **before** a batch: built-in browser UI,
+existing app HTTP API, or a combined HTTP-created session plus browser visual
+inspection. A route change requires a fresh run directory and a new result
+identity; never merge sessions or call a nonvisual run a browser pass. Preserve
+the same frozen scenarios and independent oracles across routes. Ordinary
+control-tool failures must not block unrelated engine, receipt, or Provider-
+disabled work; mark the affected UI oracle `unassessed` and continue on a
+labelled route. This is an evidence-level choice, not a product upload defect.
 
-The separate P08 real-Provider **HTTP-controlled matrix** below is an explicitly
-labelled alternative when browser automation cannot operate the upload control.
-It is not a browser-acceptance result. Do not mix its sessions or verdicts with
-an in-progress browser matrix.
+The P08 real-Provider HTTP matrix below remains a separate, frozen batch with
+its own authorization and Provider ledger. The local control-route flexibility
+does not authorize a real Provider call or change formal publication defaults.
 
 ### 1. Verify the rehearsal service before touching the browser
 
@@ -35,11 +41,12 @@ an in-progress browser matrix.
 - Recheck the health endpoint before every major matrix group and immediately after any interrupted turn. If the page says the site cannot be reached or shows `Failed to fetch`, check the retained exec session/PID, listening port, health endpoint, stdout, and stderr first. Those messages mean the frontend could not reach the local service until proven otherwise; do not troubleshoot the page, upload control, fixture, or browser security policy until the service is healthy.
 - Never enable Provider transport for this rehearsal. At the end, verify `runtime.jsonl` has zero `forbidden_provider_transport` events and report actual Provider initiated calls as 0.
 
-### 2. Reuse the Codex built-in browser and existing tab
+### 2. Select an available visual control capability
 
-- Use the installed Browser/Computer Use capability with `browser: "iab"`. Do not launch Chrome, Edge, Playwright CLI, Selenium, or a native file picker.
-- After a REPL reset or context compaction, reacquire the already-open tab for `http://127.0.0.1:<port>/`; do not create a second tab merely because the previous JavaScript `tab` binding was lost.
-- In a fresh `cua_repl` session, the first call must contain exactly this one API call (replace `<port>` only):
+- Prefer the installed Browser capability for the existing Codex in-app browser
+  tab at `http://127.0.0.1:<port>/`. After a REPL reset, reacquire that tab by
+  URL before creating another. If `cua_repl` is the available interface, its
+  first call in a fresh session is:
 
   ```javascript
   let tab = await cua.getTab(
@@ -48,13 +55,31 @@ an in-progress browser matrix.
   );
   ```
 
-  The returned state must identify `Codex In-app Browser` / `iab` and the expected localhost URL. Then use `await tab.getAXState()` or the tab's Playwright locators; do not enumerate or select Edge/Chrome as a fallback.
-- Keep one persistent `tab` binding for the batch. Use accessibility state (`getAXState`) and role/name locators for observation and actions. Avoid screen coordinates and brittle exact-text waits.
-- If the browser control bridge itself is unavailable, first verify the installed Browser plugin/runtime path and restore that official binding. Do not switch automation stacks mid-batch.
+  Check the returned browser identity and URL. Use fresh accessibility/DOM
+  state and role/name locators where available. Do not substitute an unrelated
+  Chrome/Edge profile or add Playwright CLI/Selenium.
+- If this binding is unavailable, check the installed Browser plugin/runtime
+  once. The Computer Use skill prohibits operating the Codex desktop UI, so
+  it is not a fallback for the in-app browser. Mark visual oracles `unassessed`
+  and use the existing HTTP app path for nonvisual oracles. Do not infer that
+  a nearby click succeeded from pointer position alone.
+- HTTP may create/upload/chat in a session and the browser may subsequently
+  inspect that same session's visible answer, chart, export, and refresh. Such
+  a combined run assesses those visual oracles, while the upload picker remains
+  `unassessed`. Keep session IDs and control actions in one run record.
+- For a Provider-disabled HTTP-only run, use the same healthy rehearsal
+  service and its existing `/api/upload`, `/api/chat`, SSE, session, and export
+  endpoints. A bounded run-dir script may drive those endpoints; record its
+  digest, scenario inputs, upload ticket filename/SHA, session IDs, one
+  terminal per turn, persisted state, and `provider_calls=0`. This is app-path
+  evidence, not E3 visual evidence. Do not use the frozen real-Provider P08
+  driver against the rehearsal service or call the route a browser pass.
 
-### 3. Use exactly one upload procedure
+### 3. Upload and verify through the selected route
 
-Always trigger the visible upload label and handle the Browser tool's `filechooser`. Attach the rejection handler when creating the promise so a timeout cannot reset the browser kernel:
+For a browser-upload oracle, first use the visible upload control with the
+Browser tool's `filechooser`. Attach the rejection handler when creating the
+promise so a timeout cannot reset the browser kernel:
 
 ```javascript
 const chooserPromise = tab.playwright
@@ -69,10 +94,16 @@ if (chooser.error) throw new Error(chooser.error);
 await chooser.setFiles(paths, { timeoutMs: 10000 });
 ```
 
-- Resolve every fixture to an absolute local path before starting the browser action and keep those paths in the `paths` array. Never pass a guessed or relative path to `setFiles`.
-- Upload all files required by a scenario in one `setFiles` call.
-- Do not operate the hidden input directly and do not open or automate the native Windows file picker.
-- After `setFiles`, fetch fresh accessibility/DOM state and confirm every expected filename is visible before sending the prompt. If the list is incomplete, record the scenario as blocked; do not improvise a second upload mechanism.
+- Resolve fixtures to absolute paths first and attach all files for a scenario
+  together. After any upload action, fetch fresh visible state and confirm each
+  filename and the returned upload ticket before sending the prompt.
+- If the visible control click misses or the filechooser bridge fails, capture
+  fresh UI evidence once. An official Browser `setFiles` on a verified file
+  control is permitted as a **new labelled UI procedure**; verify filenames
+  and tickets afterward. Do not repeatedly click guessed coordinates or use
+  Computer Use to operate the Codex window. If Browser upload is unavailable,
+  use the existing `/api/upload` HTTP route and mark the picker oracle
+  `unassessed`; do not call the product upload broken from automation alone.
 
 ### 4. Stable chat and confirmation operations
 
@@ -86,7 +117,7 @@ await chooser.setFiles(paths, { timeoutMs: 10000 });
 - Run the whole frozen matrix in order. For ordinary scenario failures, record the session ID and evidence and continue; diagnose and repair only after the batch finishes.
 - Preserve the established multi-turn browser sequences: B04 uses its frozen initial prompt followed in the same session by `【B04】继续第2步` through `【B04】继续第13步`; B03 and CONTENT-B03 send `好的，继续。` in the same session before using the compression dialog, because a single short turn is intentionally not compressible.
 - Stop a dependent path only for session/data isolation failure, incomplete event transport, evidence-level escalation, or whole-service unavailability.
-- Do not locally rerun only a failed scenario and present it as a complete batch. After a code fix, use a fresh run directory and execute the required complete batch again.
+- Do not locally rerun only a failed scenario and present it as a complete batch. After a code fix or route change, use a fresh run directory and execute the required complete batch again.
 - At the end, inspect browser console warnings/errors, refresh the required sessions, verify exports and persisted state, check unique terminal events, and reconcile the runtime trace.
 - Local scripted-browser evidence is not real-Provider, staging, production, or deployment evidence. A real-Provider batch requires a newly frozen exact commit, model, endpoint, fixture/prompt/oracle digest, matrix, budget, ledger path, and new explicit user authorization.
 

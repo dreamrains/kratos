@@ -4262,7 +4262,7 @@ def partition_typed_trial_answer(
     text: str,
     bindings: dict[str, Any] | None,
     boundary_notes: list[str],
-) -> str:
+) -> tuple[str, list[dict[str, int | str]]]:
     """Separate host-rendered results from model prose in the opt-in trial.
 
     Keep the prose in its original order. A reference replaces each claim
@@ -4301,17 +4301,40 @@ def partition_typed_trial_answer(
     sections = []
     if verified:
         sections.append("## 已核验的回执结果\n\n" + "\n\n".join(verified))
+    pending_prose = ""
     if has_prose or boundary_notes or not verified:
         pending = ["以下保留模型原文，其解释尚未逐句完成回执核验。"]
         pending.extend(boundary_notes)
         if has_prose:
             original = "".join(prose_parts).strip()
-            pending.append("\n".join(
+            pending_prose = "\n".join(
                 "> " + line if line else ">"
                 for line in original.splitlines()
-            ))
+            )
+            pending.append(pending_prose)
         sections.append("## 待核验的分析与解释\n\n" + "\n\n".join(pending))
-    return "\n\n".join(sections)
+    partitioned = "\n\n".join(sections)
+    spans: list[dict[str, int | str]] = []
+    if pending_prose:
+        # The quoted model text is the final component of the host-created
+        # pending section. Record its position while constructing the answer;
+        # later audit code must not discover it by searching arbitrary prose.
+        pending_start = len(partitioned) - len(pending_prose)
+        cursor = 0
+        for line in pending_prose.splitlines(keepends=True):
+            content = line.rstrip("\n")
+            if content.strip(" >"):
+                spans.append({
+                    "span_id": f"prose_{len(spans) + 1:03d}",
+                    "start": pending_start + cursor,
+                    "end": pending_start + cursor + len(content),
+                })
+            cursor += len(line)
+        # A long answer remains visible as pending, but cannot silently
+        # produce a truncated set of audit targets.
+        if len(spans) > 64:
+            spans = []
+    return partitioned, spans
 
 
 def render_bound_claims_with_trace(

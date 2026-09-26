@@ -2172,10 +2172,16 @@ class AgentLoop:
                 getattr(self, "_typed_trial_enabled", False)
                 and getattr(self, "_turn_typed_trial_injected", False)
             )
+            pending_spans = []
             if trial_partition:
-                visible_text = partition_typed_trial_answer(
+                visible_text, pending_spans = partition_typed_trial_answer(
                     visible_text, bindings, boundary_notes,
                 )
+            pending_texts = [
+                visible_text[int(span["start"]):int(span["end"])]
+                for span in pending_spans
+            ]
+            pre_render_length = len(visible_text)
             try:
                 visible_text, render_entries = render_bound_claims_with_trace(
                     visible_text, packet, bindings,
@@ -2185,12 +2191,28 @@ class AgentLoop:
             accepted_text = visible_text.rstrip()
             if boundary_notes and not trial_partition:
                 accepted_text += "\n\n" + "\n".join(boundary_notes)
+            located_pending = []
+            if pending_spans:
+                offset = len(visible_text) - pre_render_length
+                for span, expected_text in zip(pending_spans, pending_texts):
+                    start, end = int(span["start"]) + offset, int(span["end"]) + offset
+                    if (not 0 <= start < end <= len(accepted_text)
+                            or accepted_text[start:end] != expected_text):
+                        return None, "[publication_render_error] 待核解释无法定位。"
+                    located_pending.append({
+                        "span_id": span["span_id"], "start": start, "end": end,
+                        "text_sha256": "sha256:" + hashlib.sha256(
+                            accepted_text[start:end].encode("utf-8")
+                        ).hexdigest(),
+                    })
             trace_body = {
                 "schema_version": "answer_render_trace.v1",
                 "packet_digest": packet.get("snapshot_digest"),
                 "answer_sha256": "sha256:" + hashlib.sha256(accepted_text.encode("utf-8")).hexdigest(),
                 "entries": render_entries,
             }
+            if trial_partition:
+                trace_body["pending_spans"] = located_pending
             trace_seed = json.dumps(
                 trace_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
             )

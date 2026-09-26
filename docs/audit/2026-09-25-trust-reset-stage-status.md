@@ -8,13 +8,28 @@
 
 | 顺序 | 剩余交付 | 当前进度和下一道实门 |
 | --- | --- | --- |
-| 5/C | 真实 Shadow 显式调度、同账本预算/故障降级、自然正反质量分母 | 协议及人工受控四例已验；自然 M03-P/N 各六个 typed。当前 Shadow 只读取原位 claim 同行邻接，**独立待核区不进审计输入**。先解决目标与现有协议的范围差，不以更多调用冒充覆盖。 |
+| 5/C | 真实 Shadow 显式调度、同账本预算/故障降级、自然正反质量分母 | 已按用户裁决在默认关闭路径为独立待核解释加最终答案 trace 并纳入现有 Shadow 输入；归档自然 M03-P/N 内容等价零调用回放可定位 27/39 行。当前 HEAD 完整 E2、自然 Shadow 语义质量和成本仍待验，不以输入 ready 冒充质量通过。 |
 | 6.A/B | R11/R16/M03/M04 可信事实、具体缺口、方法/产物/关系价值，局部受限动作 | 默认关闭 typed 与分区有 E2/局部自然证据；待核区保留正确解释及无据建议。R11 单位、R16 业务映射、M04 关系解释保持未评；不能以原位 claim 给整篇授权。 |
-| 6.C/D | 自然 Shadow 门、正式默认处置及回退 | C 依赖 5/C；D 必须在正反价值、当前 E3/E4 和用户正式策略裁决之后。正式默认未变。 |
+| 6.C/D | 自然 Shadow 门、正式默认处置及回退 | C 的自然输入定位机制已具备，语义准确率仍依赖 5/C 实际校准；D 必须在正反价值、当前 E3/E4 和用户正式策略裁决之后。正式默认未变。 |
 | 7 | 逐族清点、局部替代、删除旧散文门及镜像测试 | 7.1 函数族清点见下；7.2 尚无独立待核句的定位/处置收据，当前不能安全删门；7.3 普通路径尾注风险仍在。 |
-| 8/9 | 分层判定、同版本正反价值、当前 HEAD E3、冻结自然 E4、总计划复核 | 当前 HEAD E2 3026 passed/1 skipped；R4 M06 审计假阴性已纠正且旧批不倒填。当前工具环境未暴露根 `AGENTS.md` 指定的 `cua_repl`/IAB 入口，不以其他浏览器方法冒充 E3；新真实批须在准备完成后精确冻结并单独授权。 |
+| 8/9 | 分层判定、同版本正反价值、当前 HEAD E3、冻结自然 E4、总计划复核 | 当前改动 fresh E2 为 3029 passed/1 skipped/0 failures；`AGENTS.md` 已允许声明 HTTP/组合控制路径；当前未暴露 IAB 浏览器接口，视觉项仍未评估。新真实批须在准备完成后精确冻结并单独授权。 |
 
-**偏差核对**：总计划 §5.1—5.4 要求审阅候选答案中的因果、建议、遗漏和限制冲突；当前 `build_shadow_audit_request` 仅含 trace claim 与同一行有限邻接文本，`run_shadow_audit_once` 还要求 `same_line_untrusted` 才调度。上轮默认关闭分区使待核解释成为独立区域，不能被当前审计输入覆盖。保持 `unassessed` 是正确状态，但若不扩展现有审计契约或重新裁决退出标准，Phase 5/C、6.C 和 7.2 无法完成。这是设计取舍，不是单个失败样本的词面补丁。
+### 2026-09-27：用户裁决后的审计范围修正（实施中）
+
+用户选择扩展**现有** `publication_audit`，使独立待核解释拥有宿主定位并进入显式、默认关闭的 Shadow；正式发布默认不变。`AGENTS.md` 同时改为按批次声明 IAB、现有 HTTP 或组合控制路径及各自证据范围，官方浏览器桥不可用时不以上传按钮自动化阻断其他层级。
+
+- **RED / 原目标**：自然 M03-P/N 各六个原位 claim，但旧 `same_line_untrusted` 十二处均不可用，跨行解释零 Shadow 调度；总计划 §5.1—5.4 的因果、建议和限制审计分母为空。新测试先在生产 trace 缺 `pending_spans` 处失败（`tmp/shadow-pending-red-20260927-r1`，19 passed/1 failed）。
+- **结构化替代**：默认关闭的答案分区在最终渲染时记录待核区每一条非空行的范围与 SHA，整个 trace 受最终答案 SHA/规范历史/当前 packet 和回执约束；现有 `publication_audit_input.v2` 带用户原文、受限来源摘要、有效宿主 claim 与待核 span。模型 finding 必须使用当前 `prose_span_id`；它无 claim/evidence 权威，只能给 advisory 或一次定向修订建议，当前 `publication_effect=none`。显式 Shadow 仍一次调用、无重试、同现有 Provider 账本。
+- **退役与正反**：已删除 `local_explanation` 同行提取及其专用调度门；旧 claim-only 请求仍可离线构造，但不会触发 Shadow。定向组 `tmp/shadow-pending-focused-20260927-r2` 为 59 passed，最终历史输入调整后 `tmp/shadow-pending-final-focused-20260927-r1` 为 36 passed；新增外来 span、错误 claim 归属、伪回执引用、trace 篡改和错误删可信 claim 的防线。对归档自然 M03-P/N 做内容等价零调用重渲染：各六个 claim、27/39 个可定位待核行，Shadow 请求均 ready，输入 16042/19824 字节，未调用 Provider、未回填历史答案或正式发布。
+- **仍未完成 / 停止线**：零调用重渲染不是当前自然模型生成，也不是 Shadow 语义质量。需在新 HEAD 完整 E2 后，用同版本正反 oracle 冻结自然 Shadow 批次并单独授权；校准误删、漏检、不可评估与成本，再决定局部处置。若正确解释被错误删、无据建议未定位、输入超过边界或结论依赖模型自报事实，停止正式切换；不加词表、第二 claim 通道、planner、账本或浏览器框架。Phase 5/C、6.C/D、7.2、8/9 不因本地 GREEN 自动退出。
+
+fresh `tmp/trust-reset-pending-full-20260927-r1` 完整离线回归：**3029 passed、1 skipped、16 warnings、0 failures**，`provider_calls=forbidden`，JUnit SHA256 `CD235B9E685702833215B8022CA5D62AA4F4702FFA5AA68D138C77B8510E4B3B`。这只升级本地 E2；当前 IAB 视觉、真实 Shadow 自然准确率、正式默认和 Phase 7 退役仍 open。
+
+最终 history 输入调整后的 fresh `tmp/trust-reset-pending-full-20260927-r2` 再次完整通过 **3029 passed、1 skipped、16 warnings、0 failures**，`provider_calls=forbidden`，JUnit SHA256 `D13EB2666D8AD816F90F0E37725BEB57AD9A2BF563E95B5B62F53D96A57E4A5A`。R1 是中间版本证据，R2 是本次产品代码的最终 E2；随后只改测试执行器、文档和人工 oracle。
+
+自然校准 oracle 已在 [M03 正反目标](2026-09-27-shadow-natural-m03-oracle.json)固定：P 的正确逐来源解释、N 对用户 99%/七天/独立性错误断言的反驳为保护项；P 的方向混淆/无据置信度、N 的趋势点数措辞/九天硬门槛为必须发现项。未绑定的正确重复表单独列为复核项，不能简单把“出现 99%”判错。现有 `run_shadow_calibration.py` 已替换旧四条合成案例入口；受版本控制的 `replay_natural_m03_shadow.py` 核对旧 packet/答案/trace 再生成两份内容等价 bundle。Runner 继续复用既有 Provider ledger、one-shot 和 64K 输出上限。新真实调用必须先在 clean HEAD 完成精确冻结并获该冻结专属授权。此时仍为**零新 Provider 调用**。
+
+**偏差核对**：总计划 §5.1—5.4 要求审阅候选答案中的因果、建议、遗漏和限制冲突；旧 `build_shadow_audit_request` 仅含 trace claim 与同行邻接文字，独立待核区不在输入中。用户已裁决扩展现有契约，本轮本地实现见下；语义漏检/误删和正式处置仍没有真实校准，不得把范围修复写成 Phase 5/C、6.C 或 7.2 退出。
 
 零调用核对既有真实自然 M03-P/N 归档：两例 `build_offline_audit_view` 都为 `ready`、各六个宿主 claim；十二个 `local_explanation` 全为 `unavailable`，审计请求虽为 `ready`，`unbound_prose_status=not_audited`，显式 `enabled=True` 加一份不可能调用 Provider 的假客户端后 `run_shadow_audit_once` 两例均返回 `unavailable/call_attempted=false`。这证明现有自然 typed 分母**不是**待核解释 Shadow 的可行动分母，不能为完成 5.4 而计入“通过”或实际调用成本。
 

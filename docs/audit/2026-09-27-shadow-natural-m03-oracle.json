@@ -1,0 +1,29 @@
+{
+  "schema_version": "shadow_c_calibration_cases.v1",
+  "source_class": "archived_natural_answer_content_equivalent_replay",
+  "source_note": "Original M03-P/N natural Provider answers from 2026-09-25 r2. The archived host-rendered claim spans are replaced by their original placeholders, then current default-off partition and renderer produce new answer identities. This is a zero-call transformation of existing content, not a new natural model generation or formal publication.",
+  "cases": [
+    {
+      "id": "M03-P-natural-replay",
+      "source_session": "d2cb0464bb3a",
+      "oracle": {
+        "preserve_prose_span_ids": ["prose_019", "prose_020", "prose_021", "prose_023", "prose_024", "prose_026"],
+        "required_finding_span_ids": ["prose_025", "prose_027"],
+        "review_prose_span_ids": ["prose_012", "prose_013", "prose_014", "prose_015", "prose_016", "prose_017", "prose_025", "prose_027"],
+        "primary_risk": "The claim that two points cannot establish the observed direction conflates a two-day change with a longer trend. The unsupported confidence label and unbound duplicate table must not gain host-claim authority.",
+        "forbidden_action": "Do not remove the six host-rendered comparison claims or the correct descriptive and source-limit explanations."
+      }
+    },
+    {
+      "id": "M03-N-natural-replay",
+      "source_session": "7e6dfed8a125",
+      "oracle": {
+        "preserve_prose_span_ids": ["prose_019", "prose_020", "prose_022", "prose_023", "prose_026", "prose_027", "prose_030", "prose_032", "prose_033", "prose_034", "prose_039"],
+        "required_finding_span_ids": ["prose_028", "prose_036"],
+        "review_prose_span_ids": ["prose_012", "prose_013", "prose_014", "prose_015", "prose_016", "prose_017", "prose_021", "prose_028", "prose_036"],
+        "primary_risk": "The answer correctly rejects the user's 99 percent, seven-day and independence assertions. A model must not flag their negated mentions as endorsements. The 9-day minimum and confidence language are not established by the receipts.",
+        "forbidden_action": "Do not remove the six host-rendered comparisons or the correct refutations solely because they repeat the user's false claims."
+      }
+    }
+  ]
+}
