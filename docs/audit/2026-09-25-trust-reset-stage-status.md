@@ -91,6 +91,14 @@ HTTP 控制路径的 E2 全量回归在首次长目录运行中有一例报告�
 
 新授权的 [Phase 9 R3 真实模型矩阵](2026-09-26-trust-reset-phase9-r3-real-matrix.md) 已按 M01—M06 完整执行，90 次物理调用核算闭合，总判定 **`executed_complete / not_accepted`**。M02/M04 为产品执行阻断，M06 的选项 B 存在但测试控制文字失配；M01/M03/M05 有自然价值却均无宿主原位 claim。Phase 5/C、Phase 6 A/C/D、Phase 7 和 Phase 8 完整 E4 退出条件均未因此满足。下一动作是依据 R3 与 R11/R16/R4/R7—R21 的正反证据审查和简化阻断门、修复控制协议，再做 fresh 本地验证；新真实批次须重新冻结及授权。
 
+### 2026-09-26：R3 后 M02/M04 本地收敛（阶段状态不升格）
+
+依据 [R3 批后 RED 与正反边界](2026-09-26-trust-reset-phase9-r3-real-matrix.md#批后-m02m04-收敛后续-head本批结论不回写)，M02 的正常任务完成现在由现有 `TaskManager.update` 顺序启动同计划下一就绪任务；原证据完成路径中重复的推进段已删除。无活动计划的旧任务、其他 session 不推进；原始数据作用域拒绝门不变。M04 仅把宿主已有的 `metric_missing_in_evidence` 和同计划证据的实际测量指标写入一次修订提示，关系继续 `inconclusive`，未核验的 `refuted` 仍被拒。没有新增 planner、claim 类型、词表、账本或 Provider 调用。
+
+fresh `tmp/trust-reset-r3-followup-20260926-r1` 的 full-offline 为 **3021 passed、1 skipped、16 warnings、0 failures**；JUnit SHA256 `49AD414B41EA8ED76BE3E2FB1C781F6A96DDF0CA42AD98A7EEF75E37720BB474`，runner 显式 `provider_calls=forbidden`。完整回归后发现并补上“活动计划 ID 必须非空”的一行边界；该 RED 先失败，修复后受影响的作用域、任务、假设测试 **261 passed**。因此全量回归对应这一行补充前的版本，最终工作树的补充行由定向回归覆盖。R3 的真实账本与六例判定均不回写。
+
+Phase 5/C 自然 Shadow 调度与分母仍 open；Phase 6 A 的普通自然 typed 生产、M02 的单位与占位绑定、M03/M05 的旁侧散文、M04 的解释身份仍 open，C/D 也未退出；Phase 7 的局部替代与旧门退役、Phase 8 的完整真实/视觉验收继续 open。下一真实批次只能在新提交、冻结和精确授权后启动；本地修复不自动构成阶段退出。
+
 这张表是**实施与验收缺口清单**，不改变原计划退出要求。历史 R7—R21 的边界分类和具体源会话见 [跨历史门记录](2026-09-24-trust-reset-cross-history-gate.md)、[双轨校准](2026-09-24-trust-reset-dual-track-calibration.md)；R4 中断、R16 完整通过项和本地真实会话须共同参与正反验收。
 
 ## 更新规则与停止条件

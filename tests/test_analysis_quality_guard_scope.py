@@ -158,6 +158,27 @@ def test_relation_shape_with_conflicting_measurement_does_not_close_audit():
     assert any("host-validated hypothesis relation" in gap for gap in gaps), gaps
 
 
+def test_relation_guard_exposes_current_measurement_identity_mismatch():
+    """R3 M04 got a generic retry despite a precise rejected relation."""
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    _current_hypothesis_audit(loop)
+    hypothesis = loop.context.analysis_state.hypothesis_sets[0]["hypotheses"][0]
+    hypothesis["status"] = "inconclusive"
+    hypothesis["relation_candidates"] = [{
+        "evidence_id": "ev_1", "metric": "amount", "observed": "flat",
+        "relation": "refutes", "reason": "metric_missing_in_evidence",
+    }]
+    loop.context.analysis_state.evidence_records[0]["measurements"] = [
+        {"metric": "trend_slope", "delta": 0},
+    ]
+
+    brief = loop._current_plan_hypothesis_brief()
+
+    assert "metric_missing_in_evidence" in brief
+    assert "trend_slope" in brief
+    assert "inconclusive" in brief
+
+
 def test_executable_hypothesis_plan_task_ledger_no_longer_blocks_publication(tmp_path, monkeypatch):
     """Contract change (2026-09-21 goal realignment).
 

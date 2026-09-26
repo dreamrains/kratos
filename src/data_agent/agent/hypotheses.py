@@ -466,6 +466,29 @@ def hypotheses_prompt_brief(state: Any, hydrated: list[dict[str, Any]] | None = 
                 ][:3]
                 required = ", ".join(required_fields)
                 detail = f"；未决，需区分性证据：{required or '按假设要求补齐字段/方法'}"
+                # Give the one-shot repair round the validator's exact metric
+                # mismatch; a generic "no relation" message hid this in R3 M04.
+                for candidate in _list_items(hypothesis.get("relation_candidates"))[:2]:
+                    if candidate.get("reason") != "metric_missing_in_evidence":
+                        continue
+                    record = next((
+                        record for record in _list_attr(state, "evidence_records")
+                        if isinstance(record, dict)
+                        and _text(record.get("id")) == _text(candidate.get("evidence_id"))
+                        and _text(record.get("plan_id")) == _text(hypothesis_set.get("plan_id"))
+                        and _text(record.get("dataset")) == _text(hypothesis_set.get("dataset"))
+                    ), None)
+                    if record is None:
+                        continue
+                    measured = sorted({
+                        _text(value.get("metric"))[:80]
+                        for value in _list_items(record.get("measurements"))
+                        if _text(value.get("metric"))
+                    })[:3]
+                    detail += (
+                        f"；metric_missing_in_evidence: proposal={_text(candidate.get('metric'))[:80]}, "
+                        f"evidence_metrics={','.join(measured) or '-'}；关系仍为未决"
+                    )
             lines.append(f"  - id={hypothesis_id} [{label}|{status}] {claim}{detail}")
     if not lines:
         return ""

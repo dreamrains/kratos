@@ -234,6 +234,20 @@ class TaskManager:
                 task[key] = workflow_fields[key]
 
         self._save(task)
+        if (
+            status == "completed"
+            and self._is_stage3c0b_scoped_task(task)
+            and task.get("plan_id")
+            and task.get("plan_id") == self.get_active_plan_id(
+                str(task.get("session_id") or ""), str(task.get("project_name") or "")
+            )
+        ):
+            # Manual task_update and evidence-driven completion share this path.
+            self.start_next_ready_stage3c0b_task(
+                session_id=str(task.get("session_id") or ""),
+                project_name=str(task.get("project_name") or ""),
+                plan_id=str(task.get("plan_id") or ""),
+            )
         return task
 
     def _is_stale(self, task: dict) -> bool:
@@ -886,21 +900,6 @@ class TaskManager:
                 completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
                 if completed_task_id is not None:
                     completed.append(completed_task_id)
-            advanced_scopes = {
-                (
-                    str(task.get("session_id") or ""),
-                    str(task.get("project_name") or ""),
-                    str(task.get("plan_id") or ""),
-                )
-                for task in active_tasks
-                if task.get("id") in completed
-            }
-            for completed_session, completed_project, completed_plan in advanced_scopes:
-                self.start_next_ready_stage3c0b_task(
-                    session_id=completed_session,
-                    project_name=completed_project,
-                    plan_id=completed_plan,
-                )
             return completed
 
         evidence_text = self._evidence_text(evidence)

@@ -76,6 +76,54 @@ def test_current_execution_scope_selects_unique_in_progress_task(tmp_path):
     assert scope.dataset_contract_ids == {"contract_banner"}
 
 
+def test_manual_completion_advances_ready_task_without_releasing_scope(tmp_path):
+    """R3 M02 completed two steps in one tool round, then lost task scope."""
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = manager.create_plan(session_id="m02", source="analysis_plan")
+    common = {"session_id": "m02", "plan_id": plan["id"], "analysis_plan_id": "ap_m02"}
+    first = manager.create("Observe", step_id="s1", dataset_inputs=["retention"], **common)
+    second = manager.create("Fit", step_id="s2", dataset_inputs=["retention"], **common)
+    final = manager.create("Synthesize", step_id="s3", combination_mode="synthesis", **common)
+    manager.update(first["id"], addBlocks=[final["id"]])
+    manager.update(second["id"], addBlocks=[final["id"]])
+    manager.start_next_ready_stage3c0b_task(session_id="m02")
+
+    manager.update(first["id"], status="completed")
+    assert resolve_workspace_scope(manager, "m02").task_id == second["id"]
+    assert manager.get(final["id"])["blockedBy"] == [second["id"]]
+
+    manager.update(second["id"], status="completed")
+    scope = resolve_workspace_scope(manager, "m02")
+    assert scope.phase == "synthesis"
+    assert scope.task_id == final["id"]
+    assert scope.allowed_datasets == frozenset()
+
+
+def test_manual_completion_does_not_cross_session_or_plan(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    first = _scoped_task(manager, session_id="first")
+    other = _scoped_task(manager, session_id="other", datasets=["other_data"])
+    manager.update(first["id"], status="completed")
+
+    assert resolve_workspace_scope(manager, "first").phase == "legacy"
+    assert resolve_workspace_scope(manager, "other").task_id == other["id"]
+
+
+def test_manual_completion_does_not_advance_legacy_tasks_without_active_plan(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    first = manager.create("old step", session_id="legacy", analysis_plan_id="old", step_id="s1")
+    second = manager.create("old pending", session_id="legacy", analysis_plan_id="old", step_id="s2")
+    manager.update(first["id"], status="in_progress")
+
+    manager.update(first["id"], status="completed")
+
+    assert manager.get(second["id"])["status"] == "pending"
+
+
 def test_execution_scope_is_immutable_and_has_independent_sets():
     from data_agent.agent.execution_scope import ExecutionScope
 
