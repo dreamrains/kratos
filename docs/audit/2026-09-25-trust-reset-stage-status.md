@@ -2,6 +2,22 @@
 
 本表是 [重置总计划](../superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md)的当前状态索引；总计划与 VP、IC、CP 三份原始计划仍定义目标。本表只更新当前任务、证据和退出判断，历史运行记录不倒填。续接时先核对实际 HEAD/工作树，再逐项更新本表和相应审计记录。`本地机制就绪`、`E2`、`E3`、`E4`、`阶段退出`是不同身份。
 
+## 2026-09-27 当前执行看板
+
+本轮从 `main@65b036edc382926cbce36213acda26705585426c`、干净根工作树进入。按总计划和三份原始计划逐门推进，不把 Phase 7/8 的准备倒写成 Phase 5/6 退出。
+
+| 顺序 | 剩余交付 | 当前进度和下一道实门 |
+| --- | --- | --- |
+| 5/C | 真实 Shadow 显式调度、同账本预算/故障降级、自然正反质量分母 | 协议及人工受控四例已验；自然 M03-P/N 各六个 typed。当前 Shadow 只读取原位 claim 同行邻接，**独立待核区不进审计输入**。先解决目标与现有协议的范围差，不以更多调用冒充覆盖。 |
+| 6.A/B | R11/R16/M03/M04 可信事实、具体缺口、方法/产物/关系价值，局部受限动作 | 默认关闭 typed 与分区有 E2/局部自然证据；待核区保留正确解释及无据建议。R11 单位、R16 业务映射、M04 关系解释保持未评；不能以原位 claim 给整篇授权。 |
+| 6.C/D | 自然 Shadow 门、正式默认处置及回退 | C 依赖 5/C；D 必须在正反价值、当前 E3/E4 和用户正式策略裁决之后。正式默认未变。 |
+| 7 | 逐族清点、局部替代、删除旧散文门及镜像测试 | 7.1 函数族清点见下；7.2 尚无独立待核句的定位/处置收据，当前不能安全删门；7.3 普通路径尾注风险仍在。 |
+| 8/9 | 分层判定、同版本正反价值、当前 HEAD E3、冻结自然 E4、总计划复核 | 当前 HEAD E2 3026 passed/1 skipped；R4 M06 审计假阴性已纠正且旧批不倒填。当前工具环境未暴露根 `AGENTS.md` 指定的 `cua_repl`/IAB 入口，不以其他浏览器方法冒充 E3；新真实批须在准备完成后精确冻结并单独授权。 |
+
+**偏差核对**：总计划 §5.1—5.4 要求审阅候选答案中的因果、建议、遗漏和限制冲突；当前 `build_shadow_audit_request` 仅含 trace claim 与同一行有限邻接文本，`run_shadow_audit_once` 还要求 `same_line_untrusted` 才调度。上轮默认关闭分区使待核解释成为独立区域，不能被当前审计输入覆盖。保持 `unassessed` 是正确状态，但若不扩展现有审计契约或重新裁决退出标准，Phase 5/C、6.C 和 7.2 无法完成。这是设计取舍，不是单个失败样本的词面补丁。
+
+零调用核对既有真实自然 M03-P/N 归档：两例 `build_offline_audit_view` 都为 `ready`、各六个宿主 claim；十二个 `local_explanation` 全为 `unavailable`，审计请求虽为 `ready`，`unbound_prose_status=not_audited`，显式 `enabled=True` 加一份不可能调用 Provider 的假客户端后 `run_shadow_audit_once` 两例均返回 `unavailable/call_attempted=false`。这证明现有自然 typed 分母**不是**待核解释 Shadow 的可行动分母，不能为完成 5.4 而计入“通过”或实际调用成本。
+
 ## 2026-09-25 只读基线与已确认顺序
 
 - 起点 `main@fc9ae7ac3e23d0096cec7f549c5f5b64372a9a12`，根工作树无列出改动；根 `AGENTS.md` 已核对。三份原始计划、总计划、交接 §30—32、Phase 5/C 校准 §8—9、完整 P08 E4 报告及自然 M03-P/N 报告已重新对照。
@@ -14,11 +30,11 @@
 | --- | --- | --- | --- |
 | 5.1 | `publication_audit.v1` 版本化协议、同包/正文身份、有效 claim/evidence 归属、无效 finding 降 advisory；`publication_audit.py` | E2 已有；确定性失败不受 `overall` 覆盖 | 维持，不另建审核协议 |
 | 5.2 | 从已接受正文、原位 trace、规范历史和回执形成受限 `audit_view`；`publication_audit.py` + `publication_synthesis.py` | E2 已有；旧包和无 typed 答案返回 unavailable | 自由散文仍 `not_audited`，不得把可定位 typed 数量当整篇质量 |
-| 5.3 | 显式开启的真实 Shadow 调度、统一 Provider 账本/总预算、超时和故障降级；现有 `run_shadow_audit_once` 与 AgentLoop | 受控脚本可单次调用；普通 AgentLoop 未调度 | 先验收零调用/有调用/错误/超时机械门，默认不影响发布；真实批次另精确冻结授权 |
+| 5.3 | 显式开启的真实 Shadow 调度、统一 Provider 账本/总预算、超时和故障降级；现有 `run_shadow_audit_once` 与 AgentLoop | 受控脚本可单次调用；普通 AgentLoop 未调度 | 现有同行邻接输入无法审计独立待核区；先裁决协议范围，再验收零调用/有调用/错误/超时机械门。真实批次另精确冻结授权 |
 | 5.4 | 以自然可行动 claim 为分母，校准误删、漏检、动作、不可评估率和成本 | 受控 r4 四例可评；自然 M03-P/N 各六条 typed，但尚无同一分母的 Shadow 校准 | 不能以人工构造四例或旧归档 0 typed 宣称自然质量；Phase 5 未退出 |
 | 6.A1 | R11/M02 观测、R16 聚合、M03 六源比较的同版本 typed 生产→回执绑定→宿主原位渲染；`answer_bindings.v1` 与 AgentLoop 显式入口 | E2；M03 自然 P/N 各六块的局部 E4 | R11 原句与尺度、R16 方法/分母、M03 图表/解释、M04 关系价值尚未跨历史等价闭合；普通路径未启用 |
 | 6.A2 | 每个明确子问题的回答或宿主可证实具体缺口，保留方法、产物、条件建议 | 现有部分要求绑定、缺口和 artifact 机制 | 旧 E4 六场景 `answer_requirements=0`；无身份不能标 `answered`，模型自报缺口不算宿主证明 |
-| 6.A3 | typed 旁的独立高风险事实与正确解释分别处置 | 有效 binding 旁无据 99% 的离线 RED；自然 M03 正反样本也有未绑定汇总、解释和建议 | 不可整篇借一个 binding 获事实权威；也不能用纯核心删除全部正确解释。此项阻碍 A 退出和 Phase 7 大范围退役 |
+| 6.A3 | typed 旁的独立高风险事实与正确解释分别处置 | 默认关闭分区 E2 已保留自然 M03-P/N 正确解释与额外建议，六条 claim 均在已核验区 | 分区是可见边界，不判待核语义真伪；独立无据句仍可见且旧散文门仍在。此项阻碍 A 退出和 Phase 7 大范围退役 |
 | 6.B | 仅同快照 typed claim 的 keep/downgrade/unassessed/remove、最多一次定向修订与故障回退；`simulate_shadow_actions`、现有一次 publication recovery | 纯函数 E2、一次修订限额 E2；`publication_effect=none` | 未有正式审计处置链；引用合法不等于 finding 语义真实，不能直接执行模型建议 |
 | 6.C | Phase 5 的真实 Shadow 与校准进入受限处置前的独立门 | 见 5.3/5.4 | 自然质量未验收 |
 | 6.D | 受控正式处置、确定性复核、默认策略与回退 | 未授权默认切换 | 需要用户就保留解释/局部降级的具体方案裁决；真实自然矩阵和当前 HEAD E3 不得从旧批次借用 |
@@ -38,6 +54,26 @@
 | 时间口径与统计显著性 | `comparison` 原位数值与范围有回执；散文“同比/显著”不因表格自动获权威 | `_period_label_issues` 已软化；其余旧门保留，语义质量待受限审计。 |
 | 数据来源/性质推断 | 有源字段时可从 packet 证明；无字段时仅一次修订，旧 R14/M06 是负例 | `fc9ae7a` 的正文末尾说明只暴露未证实状态，若前文仍断言来源则违反总计划完成定义 #6；不得记为退役或修复。 |
 | 需求覆盖与邻接自由散文 | 已核验的 `answer_bindings.v1`、原位 trace 只能证明自身；M03 自然 P/N 每例六个 claim，旁侧解释/建议未经审计 | 保持 `unassessed`；不得用 claim 数、关键词或模型自述缺口签发整篇通过。 |
+
+### Phase 7.1 当前正式 validator 逐函数清点
+
+当前 `validate_final_narrative_issues` 调用的 11 个检查器如下。这里完成的是**所有者和退役前置清点**，不是 7.2 的删除验收；正反样本均按旧归档与当前 E2 的证据等级分别看待。
+
+| 旧检查器 | 正反历史与结构所有者 | 当前处置 |
+| --- | --- | --- |
+| `_curve_interpretation_issues` | R11/R4 M02 需保留正确拟合边界，不能凭曲线推 ROI、零值成因或预测适用性；当前 `descriptive_fit` 仅核验原位结果 | 开放语义仍由散文门负责；未有局部语义审计收据，不退役 |
+| `_extrapolation_issues` | R11 正确 D7 观察/不预测 D30 与 R4 错误外推并列；`scenario_extrapolation` 可宿主复算原位情景，独立 D30 散文仍无身份 | 保留未绑定散文门；历史误拒也不能靠放宽整篇解决 |
+| `_significance_issues` | M01 常量样本可描述，未执行检验却说“不显著”是负例；工具回执有 `inference_performed` | 仍需限制独立检验断言；不把描述值升为显著性结论 |
+| `_currency_unit_issues` | R16/M05 的 12/120 单位未确认；同版单位确认仅授权对应 typed 显示 | 独立散文“元”仍需旧门；不从列名或数值猜单位 |
+| `_future_window_issues` | R7—R21 的窗口误述与 M03 已观察两日；`publication_scope.observation_window` 提供日期 | 日期范围可封闭复核，散文所指窗口仍需定位；保留 |
+| `_period_label_issues` | “同比例”历史误拒与真正跨年同比缺回执是正反；`compare_periods` 有结构日期 | 现为一次修订后 advisory，未证明自由散文已绑定周期；不当作硬门退役完成 |
+| `_arithmetic_issues` | R7—R21 CV/乘法错误、R4 M02 比值错误；显式局部算式可复算 | 保留封闭算术门，不纳入待删散文硬门 |
+| `_unsupported_data_semantics_issues` | R4-new M01 的“非业务数据”猜测与 R14/M06 来源误推断；仅来源字段可授权性质 | 一次修订后 advisory 与末尾说明仍可能矛盾；保留并列为 7.3 风险 |
+| `_missing_value_zero_issues` | M06 成本缺失不能当 0；宿主缺口状态可区分未计算/零 | 现有代词散文尚未绑定 typed gap；保留 |
+| `_answer_coverage_issues` | R11/R16 旧 `answer_requirements=[]`；宿主核验 binding 才可 `checked` | 保留局部要求约束，空要求不得推定整篇覆盖 |
+| `_binding_numeric_issues` | 同版本派生量显示与证据偏离必须拒绝；typed renderer/receipt 是权威 | 保留封闭一致性检查，不列入词面退役目标 |
+
+横切缺口：有效 typed 旁独立无据 `99%` 或任意建议并不必然命中上述旧门；分区只标待核，不能把“旧门仍在”说成这些句子已被拦截。7.2 的退出必须先让这类句子有可定位、可复核的局部动作，并证明正确解释/方法/产物仍保留，再逐族删对应旧门与镜像测试。
 
 只有对某族同时证明**正确解释/方法/产物保留**和**独立无据断言被局部处置**，才能删除该族散文硬门及其专属测试。若做不到，应记录未退役及原因，不以行数减少换取误放。`fc9ae7a` 的尾注问题是当前已知设计风险，进入 Phase 9 前必须显式列为未闭合项或用正反证据完成局部替代。
 
