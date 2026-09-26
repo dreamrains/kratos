@@ -278,16 +278,36 @@ class TestRulerCalibrationGaps:
 
     def test_m06_cost_scope_question_is_authorized_but_data_nature_question_is_not(self, tmp_path):
         cost_scope = {"records": {"c1": {
-            "operation": "direct_user_question", "answer_mode": "single_select",
-            "question": "计算「促销净收益」时，成本口径采用哪一种？"}}}
+            "source": "ask_user_question", "operation": "direct_user_question",
+            "answer_mode": "single_select", "status": "resolved",
+            "question": "促销净收益的\"成本\"口径请确认：净收益应扣哪一类成本？",
+            "resolution_params": {
+                "confirmation_type": "metric_definition",
+                "decision_kind": "metric_definition",
+            },
+            "options": [{"value": "A. 代金券成本"},
+                        {"value": "B. 代金券成本 + 渠道成本"}],
+            "response": "B. 代金券成本 + 渠道成本",
+        }}}
         data_nature = {"records": {"c1": {
             "operation": "direct_user_question", "answer_mode": "single_select",
             "question": "这份 M01-sales 数据的性质是？"}}}
+        wrong_metric = {"records": {"c1": {
+            "source": "ask_user_question", "operation": "direct_user_question",
+            "answer_mode": "single_select", "status": "resolved",
+            "question": "请确认数据性质？",
+            "resolution_params": {"confirmation_type": "metric_definition",
+                                  "decision_kind": "metric_definition"},
+            "options": [{"value": "A"}], "response": "A",
+        }}}
         m06 = _make_session(tmp_path, "s_m6", summary="请分析名为 missing_orders", confirmations=cost_scope)
+        m06_wrong = _make_session(tmp_path, "s_m6_wrong", summary="请分析名为 missing_orders", confirmations=wrong_metric)
         m01 = _make_session(tmp_path, "s_m1c", summary=M01_SUMMARY, confirmations=data_nature)
         v6 = audit_session(m06, scenario="M06", actions=[])
+        v6_wrong = audit_session(m06_wrong, scenario="M06", actions=[])
         v1 = audit_session(m01, scenario="M01", actions=[])
         assert all(c["passed"] for c in v6["checks"] if c["check"] == "confirmations_authorized")
+        assert not any(c["passed"] for c in v6_wrong["checks"] if c["check"] == "confirmations_authorized")
         failed = [c["check"] for c in v1["checks"] if c["blocking"] and not c["passed"]]
         assert "confirmations_authorized" in failed
 

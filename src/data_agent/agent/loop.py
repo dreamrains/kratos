@@ -2105,6 +2105,7 @@ class AgentLoop:
         try:
             from data_agent.agent.publication_synthesis import (
                 parse_answer_bindings,
+                partition_typed_trial_answer,
                 render_bound_claims_with_trace,
                 render_verified_partial_answer,
                 validate_final_narrative,
@@ -2146,17 +2147,9 @@ class AgentLoop:
                             turn_state.pending_fallback_resolution = False
                         return partial, None
                 return None, error
-            # The free prose has passed its existing checks. A typed claim's
-            # placeholder is now replaced at its own position by receipt-only
-            # content; this is not a post-hoc disclaimer for incorrect prose.
+            # The free prose has passed its existing checks. In the opt-in
+            # trial only, separate host-rendered results from model prose.
             candidate_text = visible_text
-            try:
-                visible_text, render_entries = render_bound_claims_with_trace(
-                    visible_text, packet, bindings,
-                )
-            except Exception as exc:
-                return None, f"[invalid_scenario_binding] 宿主无法复算或渲染绑定情景：{exc}"
-            accepted_text = visible_text.rstrip()
             boundary_notes = []
             if packet.get("provenance_unverified"):
                 boundary_notes.append(
@@ -2175,7 +2168,22 @@ class AgentLoop:
                     "上述观测区间外数值仅为拟合参数下的情景；"
                     "未做留出验证、回测或外部验证，不是已验证预测。"
                 )
-            if boundary_notes:
+            trial_partition = (
+                getattr(self, "_typed_trial_enabled", False)
+                and getattr(self, "_turn_typed_trial_injected", False)
+            )
+            if trial_partition:
+                visible_text = partition_typed_trial_answer(
+                    visible_text, bindings, boundary_notes,
+                )
+            try:
+                visible_text, render_entries = render_bound_claims_with_trace(
+                    visible_text, packet, bindings,
+                )
+            except Exception as exc:
+                return None, f"[invalid_scenario_binding] 宿主无法复算或渲染绑定情景：{exc}"
+            accepted_text = visible_text.rstrip()
+            if boundary_notes and not trial_partition:
                 accepted_text += "\n\n" + "\n".join(boundary_notes)
             trace_body = {
                 "schema_version": "answer_render_trace.v1",

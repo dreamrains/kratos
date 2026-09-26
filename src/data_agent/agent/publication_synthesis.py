@@ -4258,6 +4258,62 @@ def produce_m02_receipt_claim_candidate(
     )
 
 
+def partition_typed_trial_answer(
+    text: str,
+    bindings: dict[str, Any] | None,
+    boundary_notes: list[str],
+) -> str:
+    """Separate host-rendered results from model prose in the opt-in trial.
+
+    Keep the prose in its original order. A reference replaces each claim
+    placeholder there; the only renderable copy moves to the verified section.
+    The caller still applies the existing narrative checks to the original
+    text and renders the result through the existing claim renderer.
+    """
+    value = str(text or "")
+    positioned = sorted((
+        (
+            value.index(block["exact_text"]), block
+        )
+        for block in (bindings or {}).get("blocks", [])
+        if isinstance(block, dict)
+        and block.get("claim_type") in {
+            "observed_fact", "derived_metric", "comparison", "descriptive_fit",
+            "scenario_extrapolation",
+        }
+        and isinstance(block.get("exact_text"), str)
+        and value.count(block["exact_text"]) == 1
+    ), key=lambda item: item[0])
+    verified = []
+    prose_parts = []
+    cursor = 0
+    has_prose = False
+    for number, (start, block) in enumerate(positioned, 1):
+        segment = value[cursor:start]
+        has_prose = has_prose or bool(segment.strip())
+        prose_parts.extend((segment, f"（见已核验结果 {number}）"))
+        verified.append(f"### 已核验结果 {number}\n\n{block['exact_text']}")
+        cursor = start + len(block["exact_text"])
+    tail = value[cursor:]
+    has_prose = has_prose or bool(tail.strip())
+    prose_parts.append(tail)
+
+    sections = []
+    if verified:
+        sections.append("## 已核验的回执结果\n\n" + "\n\n".join(verified))
+    if has_prose or boundary_notes or not verified:
+        pending = ["以下保留模型原文，其解释尚未逐句完成回执核验。"]
+        pending.extend(boundary_notes)
+        if has_prose:
+            original = "".join(prose_parts).strip()
+            pending.append("\n".join(
+                "> " + line if line else ">"
+                for line in original.splitlines()
+            ))
+        sections.append("## 待核验的分析与解释\n\n" + "\n\n".join(pending))
+    return "\n\n".join(sections)
+
+
 def render_bound_claims_with_trace(
     text: str, packet: dict[str, Any], bindings: dict[str, Any] | None,
 ) -> tuple[str, list[dict[str, Any]]]:

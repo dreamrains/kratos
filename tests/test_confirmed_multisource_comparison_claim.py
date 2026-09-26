@@ -1,5 +1,6 @@
 """Executed six-source comparisons can render per-source typed values offline."""
 
+import hashlib
 import json
 from copy import deepcopy
 from types import SimpleNamespace
@@ -129,3 +130,86 @@ def test_opt_in_loop_exposes_only_bounded_typed_candidate_to_finalization():
     candidate = produce_offline_comparison_claim_candidate(final_packet, ids)
     rendered, error = loop._render_finalized_publication(candidate)
     assert error is None and "source_6" in rendered
+
+
+def test_opt_in_answer_separates_host_results_from_original_explanation():
+    state, workspace, ids = _case()
+    packet = _packet(state, workspace, ids)
+    candidate = produce_offline_comparison_claim_candidate(packet, ids)
+    candidate = candidate.replace(
+        "\n\n```answer-bindings\n",
+        "\n\n## 结论\n\n六个来源都比前一天高；这可能与业务活动有关，仍需进一步核对。"
+        "\n\n```answer-bindings\n",
+    )
+    loop = SimpleNamespace(
+        _turn_publication_packet=packet, _turn_origin_revision_issued=False,
+        _typed_trial_enabled=True, _turn_typed_trial_injected=True,
+        context=SimpleNamespace(turn_state=None),
+    )
+    rendered, error = AgentLoop._render_finalized_publication(loop, candidate)
+    assert error is None and rendered
+    verified, pending = rendered.split("## 待核验的分析与解释", 1)
+    assert verified.startswith("## 已核验的回执结果")
+    assert "业务活动" not in verified
+    assert "六个来源都比前一天高" in pending
+    assert "业务活动" in pending
+    assert "\n> ## 结论" in pending
+    assert "\n## 结论" not in pending
+    assert "[[claim:" not in rendered
+    trace = packet["answer_render_trace"]
+    assert trace["answer_sha256"] == "sha256:" + hashlib.sha256(rendered.encode()).hexdigest()
+    assert len(trace["entries"]) == 6
+    assert all(entry["end"] <= len(verified) for entry in trace["entries"])
+    assert all(
+        hashlib.sha256(rendered[entry["start"]:entry["end"]].encode()).hexdigest()
+        == entry["text_sha256"].removeprefix("sha256:")
+        for entry in trace["entries"]
+    )
+
+
+def test_ordinary_answer_keeps_existing_layout():
+    state, workspace, ids = _case()
+    packet = _packet(state, workspace, ids)
+    candidate = produce_offline_comparison_claim_candidate(packet, ids)
+    loop = SimpleNamespace(
+        _turn_publication_packet=packet, _turn_origin_revision_issued=False,
+        context=SimpleNamespace(turn_state=None),
+    )
+    rendered, error = AgentLoop._render_finalized_publication(loop, candidate)
+    assert error is None and rendered
+    assert "## 已核验的回执结果" not in rendered
+
+
+def test_opt_in_answer_without_bindings_is_only_pending_explanation():
+    state, workspace, ids = _case()
+    packet = _packet(state, workspace, ids)
+    loop = SimpleNamespace(
+        _turn_publication_packet=packet, _turn_origin_revision_issued=False,
+        _typed_trial_enabled=True, _turn_typed_trial_injected=True,
+        context=SimpleNamespace(turn_state=None),
+    )
+    rendered, error = AgentLoop._render_finalized_publication(
+        loop, "六个来源看起来都在上升，原因还需要核对。",
+    )
+    assert error is None and rendered
+    assert rendered.startswith("## 待核验的分析与解释")
+    assert "## 已核验的回执结果" not in rendered
+    assert packet["answer_render_trace"]["entries"] == []
+
+
+def test_opt_in_partition_does_not_launder_invalid_bindings():
+    state, workspace, ids = _case()
+    packet = _packet(state, workspace, ids)
+    candidate = produce_offline_comparison_claim_candidate(packet, ids)
+    payload = json.loads(candidate.split("```answer-bindings\n", 1)[1].split("\n```", 1)[0])
+    payload["blocks"][0]["fact_refs"] = ["foreign_receipt_fact"]
+    forged = candidate.split("```answer-bindings\n", 1)[0]
+    forged += "```answer-bindings\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
+    loop = SimpleNamespace(
+        _turn_publication_packet=packet, _turn_origin_revision_issued=False,
+        _typed_trial_enabled=True, _turn_typed_trial_injected=True,
+        context=SimpleNamespace(turn_state=None),
+    )
+    rendered, error = AgentLoop._render_finalized_publication(loop, forged)
+    assert rendered is None and "unresolved_answer_binding" in error
+    assert "answer_render_trace" not in packet

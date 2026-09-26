@@ -9,6 +9,8 @@
 - 现有审计 `scenario-audit.json` SHA256 `00A5FA8B6401183137DC6FEC3C84BCC25069EF9B94831429597EF5AC9B32567A`：`verdict=failed`；execution/transfer failed，evidence/value unassessed，declaration passed。每例 `host_rendered_claims=0`。这是真实模型经应用 HTTP 上传/API/SSE/持久化的系统证据；浏览器点击、视觉原位渲染、刷新均 **unassessed**，不能称完整浏览器 E4。
 - R4 授权和调用预算已消费。后续代码变化不能倒填此结果；新的真实调用须再冻结和取得对应授权。
 
+**后续配置核对**：本批普通 AgentLoop 没有开启默认关闭的 `typed_trial`，因此不会注入已有宿主候选。普通提示仍允许模型自行写 binding；M02/M04 曾尝试，但均未形成有效原位 claim。六例零不能单独证明已有 opt-in 生产者失效。此前自然 M03-P/N opt-in 各六块已成功，仍未解决邻接自由散文安全。因而不得为了让普通 R4 的数字变成非零而绕过 Phase 6/D 的默认策略裁决，详见[收敛图](2026-09-26-trust-reset-convergence-map.md)。
+
 ## 2. 六场景正反结果及原始目标
 
 | 场景 | 本批可取的价值 | 本批问题与不可升格之处 |
@@ -44,3 +46,5 @@
 5. **停止条件。** 若下一改动只是接受更多 fence/字段别名、增加关键词、软化回执/版本/单位、模型自报 `answered`、借尾注遮盖正文、重复 planner/账本/浏览器框架，或仅用新 E4 发现可离线复现问题，停止实现并回到这张矩阵。下一真实批次必须在修复收敛、本地完整验证和新冻结/授权之后；本批不局部重跑。
 
 批后曾草拟 parser 别名与 M06 审计测试补丁；经本次总计划核对，它们均未提交且已撤回。R4 原始账本、会话和判定文件保持不变。
+
+**本地只读审计纠偏**：随后以真实 R4 M06 确认记录形状新增正反 RED；旧审计器将其报为 unauthorized。现审计器读取 `resolution_params.confirmation_type` 并核对 M06 固定业务目标、直接单选和来源；21 个审计测试通过。对原 R4 目录只读回放，只有 M06 的 `confirmations_authorized` 从 false 变 true，总判定及五维仍不变。原 `scenario-audit.json` 不回写；此处是 Phase 8 判定器修复，不是产品确认新 E4。

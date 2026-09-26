@@ -41,13 +41,8 @@ DEFAULT_ACTIONS = {
 
 # Only M06 is authorized to suspend on a real business-scope confirmation
 # (frozen operator protocol; IC principle 2: business ambiguity is specific).
-AUTHORIZED_CONFIRMATION_TYPES = {
-    "M01": set(),
-    "M02": set(),
-    "M03": set(),
-    "M04": set(),
-    "M05": set(),
-    "M06": {"metric_definition", "business_scope", "cost_scope", "decision"},
+AUTHORIZED_M06_CONFIRMATION_TYPES = {
+    "metric_definition", "business_scope", "cost_scope", "decision",
 }
 
 HOST_DEADLINE_SECONDS = 120.0
@@ -195,15 +190,22 @@ def _detect_scenario_from(sdir: Path) -> str | None:
 def _confirmation_is_authorized(record: dict, scenario: str) -> bool:
     """Closed-class authorization: only M06's frozen cost-scope question may suspend.
 
-    Real records carry no ``confirmation_type`` field; the discriminator is the
-    frozen operator protocol itself: M06's authorized question is the cost-scope
-    single-select defined in the frozen prompt (成本口径). Any other question in
-    any scenario is an unauthorized suspension (IC principle 1/2).
+    Read the persisted decision type, which direct questions store under
+    resolution_params. The question still has to address this frozen scenario's
+    business target; a method approval or unrelated metric choice is invalid.
     """
-    if scenario == "M06" and "成本口径" in str(record.get("question") or ""):
-        return True
-    ctype = str(record.get("confirmation_type") or "")
-    return ctype in AUTHORIZED_CONFIRMATION_TYPES.get(scenario, set())
+    if scenario != "M06":
+        return False
+    params = record.get("resolution_params")
+    if not isinstance(params, dict):
+        params = {}
+    ctype = str(params.get("confirmation_type") or record.get("confirmation_type") or "")
+    question = str(record.get("question") or "")
+    return (ctype in AUTHORIZED_M06_CONFIRMATION_TYPES
+            and record.get("operation") == "direct_user_question"
+            and record.get("answer_mode") == "single_select"
+            and record.get("source") in {None, "ask_user_question"}
+            and "促销净收益" in question and "成本" in question)
 
 
 def _check(passed: bool, check_id: str, detail: str, blocking: bool, dim: str, principle: str) -> dict:
