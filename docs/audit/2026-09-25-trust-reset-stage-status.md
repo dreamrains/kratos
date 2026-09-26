@@ -89,6 +89,8 @@ Phase 5 的普通路径 Shadow 调度与自然 claim 分母校准仍 open；Phas
 
 HTTP 控制路径的 E2 全量回归在首次长目录运行中有一例报告写文件失败；同例在短目录单独通过。随后在 fresh `tmp/p9h2` 重跑全量为 **3017 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `D84F72BE48130E53D06834B4E9881D870DCCC9131957B09980476589920BE8ED`，Provider 仍为 0。复核服务端 `/api/chat/resume` 实际发送 `turn_start` 后修正 HTTP 驱动的对应校验，定向上传与 launcher 测试 **24 passed**。这些只证明本地代码和控制协议，不能替代下一冻结批次的真实自然模型结果。
 
+新授权的 [Phase 9 R3 真实模型矩阵](2026-09-26-trust-reset-phase9-r3-real-matrix.md) 已按 M01—M06 完整执行，90 次物理调用核算闭合，总判定 **`executed_complete / not_accepted`**。M02/M04 为产品执行阻断，M06 的选项 B 存在但测试控制文字失配；M01/M03/M05 有自然价值却均无宿主原位 claim。Phase 5/C、Phase 6 A/C/D、Phase 7 和 Phase 8 完整 E4 退出条件均未因此满足。下一动作是依据 R3 与 R11/R16/R4/R7—R21 的正反证据审查和简化阻断门、修复控制协议，再做 fresh 本地验证；新真实批次须重新冻结及授权。
+
 这张表是**实施与验收缺口清单**，不改变原计划退出要求。历史 R7—R21 的边界分类和具体源会话见 [跨历史门记录](2026-09-24-trust-reset-cross-history-gate.md)、[双轨校准](2026-09-24-trust-reset-dual-track-calibration.md)；R4 中断、R16 完整通过项和本地真实会话须共同参与正反验收。
 
 ## 更新规则与停止条件

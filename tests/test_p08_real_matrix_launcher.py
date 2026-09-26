@@ -167,3 +167,13 @@ def test_http_driver_confirmation_uses_visible_option_value():
                {"label": "B. 代金券成本 + 渠道成本", "value": "voucher_and_channel"}]
     assert driver._option_value(options, "B. 代金券成本 + 渠道成本") == "voucher_and_channel"
     assert driver._option_value(options, "C. 无此选项") is None
+
+
+def test_http_driver_accepts_frozen_b_cost_scope_with_natural_option_label():
+    driver = _http_driver_module()
+    options = [
+        {"label": "口径A：净收益 = 促销收入 − 代金券成本", "value": "voucher_only"},
+        {"label": "口径B：净收益 = 促销收入 − 代金券成本 − 渠道成本",
+         "value": "voucher_and_channel"},
+    ]
+    assert driver._option_value(options, "B. 代金券成本 + 渠道成本") == "voucher_and_channel"

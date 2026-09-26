@@ -83,6 +83,17 @@ def _option_value(options: list[Any], label: str) -> str | None:
     for option in options:
         if isinstance(option, dict) and label in str(option.get("label") or ""):
             return str(option.get("value") or option["label"])
+    if label == "B. 代金券成本 + 渠道成本":
+        matches = [
+            option for option in options
+            if isinstance(option, dict)
+            and ("口径B" in str(option.get("label") or "")
+                 or str(option.get("label") or "").startswith("B."))
+            and "代金券成本" in str(option.get("label") or "")
+            and "渠道成本" in str(option.get("label") or "")
+        ]
+        if len(matches) == 1:
+            return str(matches[0].get("value") or matches[0]["label"])
     return None
 
 
