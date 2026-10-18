@@ -45,6 +45,6 @@ C原S4 full3、m09 HTTP47组/90轮零失败、六链52/52、生命周期13/13、
 
 当前实存D/tmp另存artifacts/mt05/current-D-tmp.zip，共162799文件、原2050128258字节，每一归档文件回读SHA一致，原件未删除。ZIP SHA256 508d6762bea4ece32e36534212e3042dec206ca5f31692df5c96c0acfa08a865；完整清单及archive-verification.json同目录。这是本轮结束时实物保全，D历史永久清理缺口保持。
 
-原180仍118完整/62局部/0待审，不是完成率；F5缺原件ddb9daa/71e23d0、45项自然内容/语义、2项自然方法、Windows符号链接能力、整体自然门及51分钟性能问题保持，A/B/C未批准未实施。main现有launcher clean-source检查已通过，原C p04只保留历史不可执行身份；模型/端点/上下文与输出能力、新物理预算、精确新批次及授权均未批准，预算0、无自然Provider ledger启动。
+原180仍118完整/62局部/0待审，不是完成率；F5缺原件ddb9daa/71e23d0、45项自然内容/语义、2项自然方法、Windows符号链接能力、整体自然门及51分钟性能问题保持，A/B/C未批准未实施。main现有launcher clean-source检查已通过，原C p04只保留历史不可执行身份；用户现已提供deepseek-flash接入、官方容量及400次暂定总上限；本批进程配置、精确freeze与启动授权仍待确认，实际授权调用0、无自然Provider ledger启动。
 
-当前及后续实施根为D/main。最终清洁提交与零调用身份见artifacts/mt06/main-identity-final.json，保全核对见artifacts/mt06/final-verification.json。C原件尚未全部独立封存，C工作树与分支继续保留；移除工作树前须完成可恢复保全和证据引用核验。本轮未授权或执行C删除、不推送、不进入S5、不继承旧授权。
+当前及后续实施根为D/main。2026-10-19后续已完成C全部文件/目录和Git状态的D独立归档及恢复、历史引用交接和C读取拒绝下21项既有用例核验；当前冻结身份下C具备受控移除条件，本轮未删除。最新收据见[交接及S5准备审核](2026-10-19-c-retirement-and-s5-readiness.md)、artifacts/mt08/final-D-handoff-verification.json；mt06为此前主线接管身份的历史收据。旧控制脚本中C路径保持原文，后续验证使用mt08的D独立入口。原具名缺口和失败保留，不推送、不进入S5、不继承授权。
