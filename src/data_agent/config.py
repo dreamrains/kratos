@@ -18,6 +18,18 @@ class AgentConfig(BaseSettings):
     api_key: Optional[str] = Field(alias="API_KEY", default=None)
     max_tokens: Optional[int] = Field(alias="MAX_TOKENS", default=None)
     quality_judge_model: Optional[str] = Field(alias="QUALITY_JUDGE_MODEL", default=None)
+    # Endpoint overrides take precedence over local model metadata. Unknown
+    # capacity must be configured before dispatch, never guessed from a name.
+    model_context_tokens: Optional[int] = Field(alias="MODEL_CONTEXT_TOKENS", default=None, gt=0)
+    model_max_input_tokens: Optional[int] = Field(alias="MODEL_MAX_INPUT_TOKENS", default=None, gt=0)
+    model_max_output_tokens: Optional[int] = Field(alias="MODEL_MAX_OUTPUT_TOKENS", default=None, gt=0)
+    model_tokenizer: Optional[str] = Field(alias="MODEL_TOKENIZER", default=None)
+    publication_soft_tokens: int = Field(alias="PUBLICATION_SOFT_TOKENS", default=65536, gt=0)
+    input_cost_per_million: Optional[float] = Field(alias="INPUT_COST_PER_MILLION", default=None, ge=0, allow_inf_nan=False)
+    cached_input_cost_per_million: Optional[float] = Field(alias="CACHED_INPUT_COST_PER_MILLION", default=None, ge=0, allow_inf_nan=False)
+    output_cost_per_million: Optional[float] = Field(alias="OUTPUT_COST_PER_MILLION", default=None, ge=0, allow_inf_nan=False)
+    cost_currency: Optional[str] = Field(alias="COST_CURRENCY", default=None)
+
 
     # Paths
     workspace_dir: Path = Field(alias="WORKSPACE_DIR", default=Path("./workspace"))

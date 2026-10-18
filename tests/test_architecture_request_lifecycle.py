@@ -121,10 +121,12 @@ def test_sandbox_timeout_leaves_no_running_child():
 def test_sandbox_process_can_only_read_its_dataset_snapshot():
     import pandas as pd
     from data_agent.tools.sandbox import _execute_isolated
-    out, result = _execute_isolated("get_dataset('own')['value'].sum()", 15, {"own": pd.DataFrame({"value": [2, 3]})})
+    out, result, typed, status, reads = _execute_isolated("get_dataset('own')['value'].sum()", 15, {"own": pd.DataFrame({"value": [2, 3]})})
     assert result == "5"
-    _, rejected = _execute_isolated("get_dataset('other')", 15, {"own": pd.DataFrame({"value": [2, 3]})})
+    assert (typed, status, reads) == (5, "available", ["own"])
+    _, rejected, _, _, rejected_reads = _execute_isolated("get_dataset('other')", 15, {"own": pd.DataFrame({"value": [2, 3]})})
     assert "dataset_outside_current_task_scope" in rejected
+    assert rejected_reads == []
 
 
 def test_curve_chart_uses_receipted_values_and_rejects_modified_details(tmp_path, monkeypatch):

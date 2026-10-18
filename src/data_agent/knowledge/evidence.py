@@ -7,7 +7,7 @@ from typing import Any
 
 from data_agent.config import get_config
 from data_agent.knowledge.models import EvidenceKind, EvidenceRecord
-from data_agent.knowledge.sqlite_store import KnowledgeDatabase, row_to_dict, rows_to_dicts
+from data_agent.knowledge.sqlite_store import KnowledgeDatabase, row_to_dict, rows_to_dicts, search_limit
 
 
 def _now() -> str:
@@ -68,7 +68,8 @@ class EvidenceStore:
         return inserted
 
     def search(self, query: str, project_id: str = "", limit: int = 10) -> list[EvidenceRecord]:
-        if limit <= 0:
+        limit = search_limit(limit)
+        if not limit:
             return []
         terms = [term.lower() for term in query.split() if term.strip()]
         if not terms:

@@ -49,7 +49,8 @@ class TestTurnIntentDataclass:
         expected = {
             "intent_type", "clarity", "data_state",
             "analysis_stage", "recommended_action", "execution_readiness",
-            "reason", "ambiguities",
+            "reason", "ambiguities", "requested_outputs", "continuation_of_plan_id",
+            "upload_bindings", "measurement_mappings",
         }
         actual = {f.name for f in fields(TurnIntent)}
         assert actual == expected
@@ -688,6 +689,78 @@ class TestDataStatePropagation:
 # ══════════════════════════════════════════════════════════════
 
 class TestLLMFallback:
+    @patch("data_agent.agent.intent._try_llm_classify")
+    def test_followup_keeps_source_bound_requested_output(self, mock_llm):
+        prompt = "这个结论请给出有条件行动建议。"
+        mock_llm.return_value = (
+            "result_followup", [], "",
+            [{"exact_span": "有条件行动建议", "kind": "conditional_action"}],
+        )
+        result = plan_turn_intent(
+            prompt, DATA_LOADED_CTX, llm_client=object(),
+            enrich_requested_outputs=True,
+        )
+        assert result.intent_type == "result_followup"
+        assert result.requested_outputs == [
+            {"exact_span": "有条件行动建议", "kind": "conditional_action"},
+        ]
+        mock_llm.assert_called_once()
+
+    @patch("data_agent.agent.intent._try_llm_classify")
+    def test_clear_analysis_keeps_route_and_enriches_outputs_only_when_requested(self, mock_llm):
+        prompt = "请计算订单记录数和 amount 总额，并给出有条件行动建议。"
+        mock_llm.return_value = (
+            "simple_response", [], "",  # Semantic output cannot replace the clear route.
+            [{"exact_span": "有条件行动建议", "kind": "conditional_action"}],
+        )
+        ordinary = plan_turn_intent(prompt, DATA_LOADED_CTX, llm_client=object())
+        assert ordinary.intent_type == "data_operation"
+        assert ordinary.requested_outputs == []
+        mock_llm.assert_not_called()
+        enriched = plan_turn_intent(
+            prompt, DATA_LOADED_CTX, llm_client=object(),
+            enrich_requested_outputs=True,
+        )
+        assert enriched.intent_type == ordinary.intent_type
+        assert enriched.requested_outputs == [
+            {"exact_span": "有条件行动建议", "kind": "conditional_action"},
+        ]
+        mock_llm.assert_called_once()
+
+    @patch("data_agent.agent.intent._try_llm_classify")
+    def test_multiclause_business_decision_does_not_become_pure_operation(self, mock_llm):
+        mock_llm.return_value = ("directed_analysis", [], "")
+        prompt = (
+            "请评估促销净收益。净收益可只扣代金券成本，也可同时扣渠道成本；"
+            "该业务选择会改变结果，请先确认，随后把已算、未算和缺少证据分开。"
+        )
+        intent = plan_turn_intent(prompt, NO_DATA_CTX)
+        assert intent.intent_type == "directed_analysis"
+        mock_llm.assert_called_once()
+
+    @patch("data_agent.agent.intent._try_fast_path", return_value=None)
+    @patch("data_agent.agent.intent._try_llm_classify")
+    def test_semantic_requested_output_keeps_original_case(self, mock_llm, _fast_path):
+        original = "Please evaluate Net Revenue; explain missing inputs."
+        mock_llm.return_value = (
+            "directed_analysis", [], "", [{"exact_span": "Net Revenue", "kind": "result"}],
+        )
+        result = plan_turn_intent(original, NO_DATA_CTX)
+        assert result.requested_outputs == [{"exact_span": "Net Revenue", "kind": "result"}]
+        assert mock_llm.call_args.args[0] == original
+
+
+    @patch("data_agent.agent.intent._try_llm_classify")
+    def test_continuation_requires_exact_current_plan_identity(self, mock_llm):
+        mock_llm.return_value = ("directed_analysis", [], "spec_current")
+        continuation = plan_turn_intent(
+            "继续当前分析步骤", DATA_LOADED_CTX, current_plan_id="spec_current",
+        )
+        mismatch = plan_turn_intent(
+            "继续当前分析步骤", DATA_LOADED_CTX, current_plan_id="spec_other",
+        )
+        assert continuation.continuation_of_plan_id == "spec_current"
+        assert mismatch.continuation_of_plan_id == ""
 
     @patch("data_agent.agent.intent._try_llm_classify")
     def test_llm_returns_intent(self, mock_llm):

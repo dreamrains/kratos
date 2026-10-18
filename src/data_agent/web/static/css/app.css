@@ -320,6 +320,24 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
     border-left-color: rgba(45, 212, 191, 0.06);
     color: #d6d3d1;
 }
+/* The existing panel becomes a modal drawer only below the desktop breakpoint. */
+@media (max-width: 1279.98px) {
+    .workbench-panel.is-drawer-open {
+        display: flex;
+        position: fixed;
+        inset: 0 0 0 auto;
+        width: min(22rem, calc(100vw - 1rem));
+        height: 100%;
+        z-index: 45;
+        box-shadow: -12px 0 32px rgba(0, 0, 0, 0.15);
+    }
+    .workbench-drawer-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        background: rgba(0, 0, 0, 0.3);
+    }
+}
 .session-side-tabs {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -398,7 +416,7 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
     margin-top: 0.25rem;
     overflow: auto;
     overflow-wrap: anywhere;
-    white-space: pre-wrap;
+    white-space: normal;
 }
 .dark .workbench-conclusion-details { color: #a8a29e; }
 .dark .workbench-conclusion-details summary { color: #5eead4; }

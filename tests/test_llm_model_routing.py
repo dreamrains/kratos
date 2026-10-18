@@ -34,7 +34,11 @@ def test_context_window_falls_back_across_equivalent_model_forms():
     assert model_context_window("deepseek-chat") == 131072
 
 
-def test_context_window_is_none_when_no_form_has_metadata():
+def test_context_window_is_none_when_no_form_has_metadata(monkeypatch):
+    def unavailable(_model_id):
+        raise ValueError("no model metadata")
+
+    monkeypatch.setattr(litellm, "get_model_info", unavailable)
     assert model_context_window("openai/deepseek-v4-flash") is None
 
 

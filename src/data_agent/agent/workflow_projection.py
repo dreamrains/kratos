@@ -3,8 +3,9 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
+from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION, validate_analysis_plan_contract
 from data_agent.session.task_manager import TaskManager
+from data_agent.agent.publication.deliveries import OPEN_KINDS
 
 
 def _text(value: Any) -> str:
@@ -89,7 +90,14 @@ def project_plan_to_workflow_tasks(
             "error": "invalid_method_plan_step",
         }
 
-    plan_id = _text(plan.get("id")) or f"plan_{uuid.uuid4().hex[:10]}"
+    validation = validate_analysis_plan_contract(plan)
+    if not validation.ok:
+        return {"created": 0, "reused": 0, "task_ids": [], "error": validation.error_type}
+    plan = validation.plan
+    method_plan = [step for step in plan["method_plan"] if any(d["kind"] not in OPEN_KINDS for d in step["required_deliveries"])]
+    if not method_plan:
+        return {"created":0,"reused":0,"task_ids":[],"reason":"answer_obligations_only"}
+    plan_id = plan["id"]
     workflow_id = _text(plan.get("workflow_id")) or f"wf_{uuid.uuid4().hex[:8]}"
     analysis_spec_id = _text(plan.get("id"))
 
@@ -100,7 +108,7 @@ def project_plan_to_workflow_tasks(
     matching_active = [
         task for task in active_tasks
         if task.get("plan_id")
-        and task.get("task_kind") == "plan_task"
+        and task.get("task_kind") == "plan_task" and task.get("status")!="closed_by_publication"
         if _matches_existing_projection(
             task,
             analysis_plan_id=plan_id,
@@ -152,8 +160,10 @@ def project_plan_to_workflow_tasks(
                 analysis_spec_id=analysis_spec_id,
             )
         if duplicate:
+            appended=sorted(duplicate.get("required_delivery_ids",[]))!=sorted(d["id"] for d in step["required_deliveries"] if d["kind"] not in OPEN_KINDS)
             updated = manager.update(
                 duplicate["id"],
+                **({"status":"pending"} if appended and duplicate.get("status")=="completed" else {}),
                 description=_text(step.get("expected_output")),
                 workflow_id=workflow_id,
                 project_name=project_name,
@@ -162,6 +172,9 @@ def project_plan_to_workflow_tasks(
                 analysis_spec_id=analysis_spec_id,
                 analysis_plan_id=plan_id,
                 step_id=step_id,
+                plan_sha256=plan.get("plan_sha256", ""),
+                requirement_ids=list(step.get("requirement_ids") or []),
+                required_delivery_ids=[d["id"] for d in step.get("required_deliveries", []) if d["kind"] not in OPEN_KINDS],
                 dataset_inputs=list(step.get("dataset_inputs") or []),
                 dataset_contract_ids=list(step.get("dataset_contract_ids") or []),
                 combination_mode=_text(step.get("combination_mode")),
@@ -187,6 +200,9 @@ def project_plan_to_workflow_tasks(
             analysis_spec_id=analysis_spec_id,
             analysis_plan_id=plan_id,
             step_id=step_id,
+            plan_sha256=plan.get("plan_sha256", ""),
+            requirement_ids=list(step.get("requirement_ids") or []),
+            required_delivery_ids=[d["id"] for d in step.get("required_deliveries", []) if d["kind"] not in OPEN_KINDS],
             dataset_inputs=list(step.get("dataset_inputs") or []),
             dataset_contract_ids=list(step.get("dataset_contract_ids") or []),
             combination_mode=_text(step.get("combination_mode")),
@@ -222,6 +238,7 @@ def project_plan_to_workflow_tasks(
         project_name=project_name,
         plan_id=plan_record["id"],
     )
+    started_task = manager.get(started_task_id) if started_task_id else None
 
     return {
         "workflow_id": workflow_id,
@@ -231,4 +248,9 @@ def project_plan_to_workflow_tasks(
         "reused": len(reused),
         "task_ids": [task["id"] for task in created + reused],
         "started_task_id": started_task_id,
+        "current_step": ({
+            "step_id": started_task.get("step_id"),
+            "dataset_inputs": list(started_task.get("dataset_inputs") or []),
+            "combination_mode": started_task.get("combination_mode"),
+        } if isinstance(started_task, dict) else None),
     }

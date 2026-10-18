@@ -43,6 +43,39 @@ def _project_name() -> str:
     return ""
 
 
+def _scoped_task(task_id):
+    return task_manager.get_for_scope(task_id, _session_id(), _project_name())
+
+
+def _scope_error() -> str:
+    # Do not reveal whether a foreign task exists, its content, or its owner.
+    return json.dumps({"error": "Task not found in current scope", "error_type": "task_scope_not_found"})
+
+
+def _foreign_creation_scope(fields: dict) -> bool:
+    return bool(
+        (_session_id() and fields.get("session_id", _session_id()) != _session_id())
+        or (_context() is not None and fields.get("project_name", _project_name()) != _project_name())
+    )
+
+
+def _update_scope_error(update: dict) -> str | None:
+    current = _scoped_task(update.get("task_id", 0))
+    if current is None:
+        return _scope_error()
+    if any(key in update and update[key] != current.get(key, "") for key in ("session_id", "project_name")):
+        return _scope_error()
+    for key in ("addBlocks", "addBlockedBy"):
+        value = _json_or_value(update.get(key))
+        if value is None:
+            continue
+        if not isinstance(value, list) or any(type(tid) is not int or tid <= 0 for tid in value):
+            return json.dumps({"error": key + " must be a JSON array of positive task IDs"})
+        if any(_scoped_task(tid) is None for tid in value):
+            return _scope_error()
+    return None
+
+
 def _current_analysis_spec() -> dict:
     ctx = _context()
     state = getattr(ctx, "analysis_state", None) if ctx is not None else None
@@ -199,6 +232,11 @@ def _ensure_llm_plan_for_batch(task_list_data: list, current_spec: dict, active_
 
 def create_workflow_tasks_from_spec(spec: dict) -> dict:
     from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
+    ctx=_context()
+    if spec.get("contract_version")=="stage3c0b.v2":
+        current=getattr(getattr(ctx,"analysis_state",None),"analysis_plan",{}) or {}
+        if not current.get("plan_sha256") or spec!=current:
+            return {"created":0,"task_ids":[],"error":"validated_analysis_plan_required"}
 
     return project_plan_to_workflow_tasks(
         task_manager,
@@ -238,6 +276,9 @@ def task_create(
     evidence_requirements: str = "",
     confirmation_policy: str = "",
 ) -> str:
+    if project_name and _foreign_creation_scope({"project_name": project_name}):
+        return _scope_error()
+
     if analysis_spec_json:
         try:
             spec = json.loads(analysis_spec_json)
@@ -261,7 +302,7 @@ def task_create(
         return json.dumps({
             "error": (
                 "当前存在未完成的结构化分析计划（record_analysis_plan 已投影任务）。"
-                "请勿手动创建重复任务：按步骤用 record_evidence_record 记录证据，"
+                "请勿手动创建重复任务：按步骤执行工具形成真实回执，"
                 "或重新提交修订后的 record_analysis_plan。"
             ),
             "error_type": "active_stage_plan_task_create_refused",
@@ -296,6 +337,13 @@ def task_create(
         if not isinstance(task_list_data, list):
             return json.dumps({"error": "tasks 必须是 JSON 数组"}, ensure_ascii=False)
 
+        # Check the entire batch before plan supersession or the first write.
+        if any(isinstance(t, dict) and _foreign_creation_scope(t) for t in task_list_data):
+            return _scope_error()
+
+        owned={"analysis_plan_id","step_id","plan_sha256","requirement_ids","required_delivery_ids","dataset_inputs","dataset_contract_ids","combination_mode","required_evidence_step_ids"}
+        if any(isinstance(t,dict) and owned.intersection(t) for t in task_list_data):
+            return json.dumps({"error":"Analysis bindings require record_analysis_plan"})
         llm_plan = _ensure_llm_plan_for_batch(task_list_data, current_spec, active_plan_id, active_tasks)
         if llm_plan.get("id"):
             common_fields["plan_id"] = llm_plan["id"]
@@ -370,6 +418,20 @@ def task_update(
         if not isinstance(update_list, list):
             return json.dumps({"error": "updates 必须是 JSON 数组"}, ensure_ascii=False)
 
+        # Foreign IDs and dependency endpoints must fail before any batch write.
+        for update in update_list:
+            if isinstance(update, dict):
+                error = _update_scope_error(update)
+                if error:
+                    return error
+
+        # A model may annotate or explicitly fail a scoped step. The plan's
+        # identity, dataset bindings and dependencies are host-owned.
+        protected = {"analysis_plan_id","plan_id","plan_sha256","step_id","requirement_ids","required_delivery_ids","dataset_inputs","dataset_contract_ids","combination_mode","required_evidence_step_ids","addBlocks","addBlockedBy"}
+        for u in update_list:
+            current=_scoped_task(u.get("task_id",0)) if isinstance(u,dict) else None
+            if current and (task_manager._is_stage3c0b_scoped_task(current) and protected.intersection(u) or {"analysis_plan_id","step_id","plan_sha256","requirement_ids","required_delivery_ids","dataset_inputs","dataset_contract_ids","combination_mode","required_evidence_step_ids"}.intersection(u)):
+                return json.dumps({"error":"Scoped task bindings are owned by the validated analysis plan"})
         results = []
         for u in update_list:
             if not isinstance(u, dict):
@@ -392,6 +454,12 @@ def task_update(
     if not task_id:
         return json.dumps({"error": "task_id 不能为空"}, ensure_ascii=False)
 
+    error = _update_scope_error({"task_id": task_id, "addBlocks": addBlocks, "addBlockedBy": addBlockedBy})
+    if error:
+        return error
+    current = _scoped_task(task_id)
+    if current and task_manager._is_stage3c0b_scoped_task(current) and (addBlocks or addBlockedBy):
+        return json.dumps({"error":"Scoped dependencies are owned by the validated analysis plan"})
     fields = {
         "result_summary": result_summary or None,
         "evidence_ids": _json_or_value(evidence_ids) if evidence_ids else None,
@@ -423,9 +491,9 @@ def task_update(
     description="获取指定任务的详情。",
 )
 def task_get(task_id: int) -> str:
-    task = task_manager.get(task_id)
+    task = _scoped_task(task_id)
     if task is None:
-        return json.dumps({"error": f"Task {task_id} not found"}, ensure_ascii=False)
+        return _scope_error()
     return json.dumps(task, ensure_ascii=False, indent=2)
 
 

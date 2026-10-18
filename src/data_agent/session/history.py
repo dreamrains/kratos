@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import hashlib
 import logging
 import uuid
@@ -150,6 +151,9 @@ def load_canonical_history(session_id: str) -> CanonicalHistorySnapshot:
 
 
 def _write_json_atomic(path: Path, value: Any) -> None:
+    if os.name == "nt" and len(str(path.resolve())) > 210:
+        absolute = str(path.resolve())
+        path = Path("\\\\?\\UNC\\" + absolute[2:] if absolute.startswith("\\\\") else "\\\\?\\" + absolute)
     temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
@@ -295,7 +299,7 @@ def save_session(
     if merge_protect:
         messages = _merge_protect_messages(sdir, messages)
 
-    from data_agent.session.public_messages import assign_reply_ids
+    from data_agent.session.public_messages import assign_reply_ids, public_messages
     assign_reply_ids(messages)
     conv = _serialize_messages(messages)
     next_sha256 = _history_sha256(conv)
@@ -303,7 +307,7 @@ def save_session(
     next_revision = current.revision + (1 if next_sha256 != recorded_sha256 else 0)
 
     # 提取会话摘要：第一条非命令用户消息的前 100 字符
-    summary = _extract_summary(messages)
+    summary = _extract_summary(public_messages(messages, session_id))
 
     # meta.json
     meta = {
@@ -317,6 +321,12 @@ def save_session(
         "summary": summary,
         "project_name": None,
     }
+    previous_meta = _read_meta_file(sdir)
+    # History edits must retain the protocol identity established by the owner.
+    # Otherwise rewind silently turns a current session into a legacy read-only one.
+    for key in ("forked_from", "branch_name", "publication_schema"):
+        if key in previous_meta:
+            meta[key] = previous_meta[key]
     if extra_meta:
         extra = dict(extra_meta)
         project_name = extra.pop("project_name", None)
@@ -362,9 +372,12 @@ def load_session(session_id: str) -> Optional[dict]:
             pass
 
     snapshot = load_canonical_history(session_id)
-    messages = _sanitize_messages(list(snapshot.messages))
+    messages = list(snapshot.messages) if meta.get("publication_schema") == "answer_bindings.v2" else _sanitize_messages(list(snapshot.messages))
     result = {
         "session_id": session_id,
+        "publication_schema": meta.get("publication_schema", ""),
+        "forked_from": meta.get("forked_from", ""),
+        "branch_name": meta.get("branch_name", ""),
         "saved_at": meta.get("saved_at", ""),
         "tag": meta.get("tag", ""),
         "data_file": meta.get("data_file", ""),
@@ -528,52 +541,80 @@ def unbind_session_from_object(session_id: str) -> dict:
     result["from_object"] = result.get("from_project")
     return result
 
+def read_canonical_transcript(session_id: str, reference: dict) -> tuple[bytes, list[dict]]:
+    """Read one host byte-bound archive for history, requirements and branches."""
+    root = (_sessions_dir() / session_id / "transcripts").resolve()
+    name = reference["filename"]
+    path = root / name
+    if Path(name).name != name or path.suffix != ".jsonl" or path.is_symlink() or not path.resolve().is_relative_to(root):
+        raise ValueError("Canonical transcript scope is invalid")
+    raw = path.read_bytes()
+    if len(raw) > 8_000_000 or "sha256:" + hashlib.sha256(raw).hexdigest() != reference["sha256"]:
+        raise ValueError("Canonical transcript digest mismatch")
+    records = [json.loads(line) for line in raw.decode("utf-8").splitlines()]
+    if any(not isinstance(m, dict) for m in records):
+        raise ValueError("Canonical transcript messages are invalid")
+    return raw, records
+
+
+@_history_synchronized
 def branch_session(parent_id: str, branch_name: str = "") -> dict:
-    """从父会话分叉出一个新会话，继承消息和上下文。不修改父会话。"""
+    """Inherit chat only; analysis authority belongs to the new session."""
+    from copy import deepcopy
     parent_data = load_session(parent_id)
     if parent_data is None:
         return {"success": False, "message": f"Session {parent_id} not found"}
-
+    conv = deepcopy(parent_data["messages"])
+    current = parent_data.get("publication_schema") == "answer_bindings.v2"
+    archives = {}
+    try:
+        if current:
+            from data_agent.agent.publication.runtime import read_answer
+            for message in conv:
+                if message.get("answer_ref"):
+                    answer = read_answer(parent_id, message["answer_ref"])
+                    if answer["body"] != message.get("content"):
+                        raise ValueError("Parent accepted body mismatch")
+                    message["inherited_answer_ref"] = dict(message["answer_ref"], session_id=parent_id)
+                    for key in ("answer_ref", "answer_id", "answer_sha256"):
+                        message.pop(key, None)
+                message.setdefault("inherited_from", parent_id)
+            # Canonical chat archives are copied byte-for-byte. No result,
+            # dataset, confirmation, evidence, run state or accepted object is copied.
+            queue = [m["canonical_transcript"] for m in conv if m.get("canonical_transcript")]
+            while queue:
+                ref = queue.pop()
+                name = ref["filename"]
+                if name in archives:
+                    if "sha256:" + hashlib.sha256(archives[name]).hexdigest() != ref["sha256"]:
+                        raise ValueError("Conflicting parent transcript identity")
+                    continue
+                if len(archives) >= 32:
+                    raise ValueError("Parent transcript budget exceeded")
+                raw, records = read_canonical_transcript(parent_id, ref)
+                archives[name] = raw
+                queue.extend(m["canonical_transcript"] for m in records if m.get("canonical_transcript"))
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        return {"success": False, "error_type": "branch_source_unavailable", "message": str(exc)}
     new_id = uuid.uuid4().hex[:12]
     sdir = _session_dir(new_id)
-
-    # 复制消息
-    conv = _serialize_messages(parent_data["messages"])
-    (sdir / "conversation.json").write_text(
-        json.dumps(conv, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-    # 创建 meta，记录分支溯源
-    meta = {
-        "session_id": new_id,
-        "saved_at": _now_str(),
-        "tag": branch_name or f"branch-{new_id[:6]}",
-        "data_file": parent_data.get("data_file", ""),
-        "message_count": len(parent_data["messages"]),
-        "summary": parent_data.get("summary", ""),
-        "project_name": parent_data.get("project_name"),
-        "forked_from": parent_id,
-        "branch_name": branch_name,
-    }
-    (sdir / "meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-    # 复制对象绑定
+    if archives:
+        (sdir / "transcripts").mkdir()
+        for name, raw in archives.items():
+            (sdir / "transcripts" / name).write_bytes(raw)
+    extra = {"forked_from": parent_id, "branch_name": branch_name,
+             "project_name": parent_data.get("project_name")}
+    if current:
+        extra["publication_schema"] = "answer_bindings.v2"
+    save_session(conv, new_id, tag=branch_name or f"branch-{new_id[:6]}",
+                 data_file="", extra_meta=extra, merge_protect=False)
     if parent_data.get("project_name"):
         try:
             from data_agent.project_manager import get_project_manager
-            mgr = get_project_manager()
-            mgr.bind_session(parent_data["project_name"], new_id)
+            get_project_manager().bind_session(parent_data["project_name"], new_id)
         except Exception:
-            pass
-
-    return {
-        "success": True,
-        "session_id": new_id,
-        "parent_id": parent_id,
-        "message_count": len(parent_data["messages"]),
-    }
+            logger.debug("Branch project binding unavailable", exc_info=True)
+    return {"success": True, "session_id": new_id, "parent_id": parent_id, "message_count": len(conv)}
 
 
 def list_branches(session_id: str) -> list[dict]:
@@ -616,14 +657,22 @@ def _register_artifact_locked(session_id: str, path: str, artifact_type: str, de
     else:
         manifest = []
 
+    full=Path(path)
+    if not full.is_absolute():
+        parts=Path(path.replace("\\","/")).parts
+        full=sdir.joinpath(*parts[2:]) if len(parts)>2 and parts[:2]==("sessions",session_id) else _sessions_dir().parent/path
+    full=full.resolve()
+    identity="sha256:"+hashlib.sha256(full.read_bytes()).hexdigest() if full.is_file() and full.is_relative_to(sdir.resolve()) else ""
     entry = {
+        "id":"artifact_"+hashlib.sha256((path+identity).encode()).hexdigest()[:24],
+        "sha256":identity,
         "path": path,
         "type": artifact_type,
         "description": description,
         "registered_at": _now_str(),
     }
     if any(item.get("path") == path and item.get("type") == artifact_type
-           and item.get("description") == description for item in manifest):
+           and item.get("description") == description and item.get("sha256") == identity for item in manifest):
         return path
     manifest.append(entry)
     from data_agent.utils.atomic_files import write_text_atomic
@@ -866,3 +915,51 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
 
     return merged
 
+
+
+@_history_synchronized
+def commit_accepted_answer(session_id, messages, assistant_msg, state, answer, expected_history, metadata):
+    """CAS commit through the existing history/state files, with rollback."""
+    with _artifact_manifest_lock:
+        import copy
+        from data_agent.agent.publication.contracts import digest, encode, SCHEMA
+        sdir=_session_dir(session_id)
+        current=_read_canonical_snapshot(sdir)
+        if (current.revision,current.sha256)!=(expected_history.revision,expected_history.sha256):
+            raise CanonicalHistoryConflict("History changed before accepted answer commit")
+        if answer["schema"]!=SCHEMA or answer["session_id"]!=session_id or digest(answer["body"])!=answer["content_sha256"]:
+            raise ValueError("Invalid accepted answer identity")
+        old_refs=copy.deepcopy(state.accepted_answers)
+        old_files={name:(sdir/name).read_bytes() if (sdir/name).exists() else None for name in ("conversation.json","conversation.jsonl","meta.json","analysis_state.json","artifacts.json")}
+        path=sdir/"analyses"/("answer_"+answer["answer_id"][-24:]+".json")
+        if path.exists():
+            previous = json.loads(path.read_text(encoding="utf-8"))
+            if previous.get("answer_id") != answer["answer_id"]:
+                raise ValueError("Accepted answer filename identity collision")
+        existing = [m for m in current.messages if m.get("answer_id") == answer["answer_id"]]
+        if existing:
+            if len(existing) != 1 or existing[0].get("content") != answer["body"]:
+                raise ValueError("Conflicting accepted answer replay")
+            return copy.deepcopy(current.messages)
+        _write_json_atomic(path,answer)
+        reference={"answer_id":answer["answer_id"],"path":path.relative_to(sdir).as_posix(),"sha256":"sha256:"+hashlib.sha256(path.read_bytes()).hexdigest(),"snapshot_digest":answer["snapshot_digest"],"content_sha256":answer["content_sha256"]}
+        message=copy.deepcopy(assistant_msg)
+        message.update(content=answer["body"],answer_id=answer["answer_id"],answer_ref=reference,answer_sha256=answer["content_sha256"])
+        committed=copy.deepcopy(messages)+[message]
+        try:
+            state.accepted_answers=[r for r in old_refs if r["answer_id"]!=reference["answer_id"]]+[reference]
+            state.save()
+            register_artifact(session_id,"sessions/"+session_id+"/"+path.relative_to(sdir).as_posix(),"accepted_answer","当前接受答案与事实引用")
+            save_session(committed,session_id,extra_meta=metadata,merge_protect=False,
+                expected_history_revision=current.revision,expected_history_sha256=current.sha256)
+        except Exception:
+            state.accepted_answers=old_refs
+            # Same existing lock holds: no other history mutation can be discarded.
+            for name,raw in old_files.items():
+                target=sdir/name
+                if raw is None: target.unlink(missing_ok=True)
+                else:
+                    temporary=target.with_name("."+name+"."+uuid.uuid4().hex+".tmp")
+                    temporary.write_bytes(raw);temporary.replace(target)
+            raise
+        return committed

@@ -114,6 +114,7 @@ class QuestionCandidate:
     skippable: bool
     resolution_action: str
     resolution_params: Mapping[str, Any] = field(default_factory=dict)
+    continuation_context: Mapping[str, Any] = field(default_factory=dict)
     data_version: str = ""
     spec_version: str = ""
     safe_default: str = ""
@@ -145,6 +146,7 @@ class QuestionCandidate:
         object.__setattr__(self, "operation", str(self.operation or "").strip())
         object.__setattr__(self, "resolution_action", str(self.resolution_action or "").strip())
         object.__setattr__(self, "resolution_params", _mapping(self.resolution_params))
+        object.__setattr__(self, "continuation_context", _mapping(self.continuation_context))
         object.__setattr__(self, "data_version", str(self.data_version or "").strip())
         object.__setattr__(self, "spec_version", str(self.spec_version or "").strip())
         object.__setattr__(self, "safe_default", str(self.safe_default or "").strip())
@@ -166,6 +168,7 @@ class ConfirmationRequest:
     skippable: bool
     resolution_action: str
     resolution_params: Mapping[str, Any] = field(default_factory=dict)
+    continuation_context: Mapping[str, Any] = field(default_factory=dict)
     data_version: str = ""
     spec_version: str = ""
     safe_default: str = ""
@@ -204,6 +207,7 @@ class ConfirmationRequest:
             _tuple_of_text(self.blocking_surfaces, "blocking_surfaces"),
         )
         object.__setattr__(self, "resolution_params", _mapping(self.resolution_params))
+        object.__setattr__(self, "continuation_context", _mapping(self.continuation_context))
         object.__setattr__(self, "data_version", str(self.data_version or "").strip())
         object.__setattr__(self, "spec_version", str(self.spec_version or "").strip())
         object.__setattr__(self, "safe_default", str(self.safe_default or "").strip())
@@ -224,6 +228,7 @@ class ConfirmationRequest:
             "skippable": self.skippable,
             "resolution_action": self.resolution_action,
             "resolution_params": dict(self.resolution_params),
+            **({"continuation_context":dict(self.continuation_context)} if self.continuation_context else {}),
             "data_version": self.data_version,
             "spec_version": self.spec_version,
             "safe_default": self.safe_default,
@@ -246,6 +251,7 @@ class ConfirmationRequest:
             skippable=candidate.skippable,
             resolution_action=candidate.resolution_action,
             resolution_params=candidate.resolution_params,
+            continuation_context=candidate.continuation_context,
             data_version=candidate.data_version,
             spec_version=candidate.spec_version,
             safe_default=candidate.safe_default,

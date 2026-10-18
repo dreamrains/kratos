@@ -59,6 +59,30 @@ def test_injected_playbook_client_is_called_once_before_deterministic_fallback()
     assert selection.primary_playbook_id == "data_understanding"
 
 
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_exact_plan_continuation_keeps_prior_goal_and_scope():
+    state = AnalysisSessionState(session_id="same_goal", data_state="data_loaded")
+    intent = TurnIntent(
+        intent_type="directed_analysis", clarity="clear", data_state="data_loaded",
+        analysis_stage="execute", recommended_action="run_analysis", execution_readiness="ready",
+    )
+    first = choose_playbook("分析订单趋势", intent, has_data=True)
+    apply_selection_to_state(state, first)
+    first_id = state.analysis_spec["id"]
+    first_goal = state.analysis_spec["goal"]
+    first_paths = state.last_recommended_paths
+
+    next_candidate = choose_playbook("继续当前目标的下一步", intent, has_data=True)
+    assert next_candidate.analysis_spec["id"] != first_id
+    apply_selection_to_state(state, next_candidate, continuation_of_plan_id=first_id)
+    assert state.analysis_spec["id"] == first_id
+    assert state.analysis_spec["goal"] == first_goal
+    assert state.last_recommended_paths == first_paths
+
+    apply_selection_to_state(state, next_candidate, continuation_of_plan_id="spec_wrong")
+    assert state.analysis_spec["id"] == next_candidate.analysis_spec["id"]
+
+
 def test_method_playbooks_are_complete():
     expected = {
         "data_understanding",
@@ -352,6 +376,19 @@ def test_selector_handles_no_data_business_question_as_requirement():
         assert term in text
 
 
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_directed_analysis_keeps_goal_identity_while_data_is_pending():
+    prompt = "请评估促销净收益，并在确认成本口径后继续分析。"
+    intent = TurnIntent(
+        intent_type="directed_analysis", clarity="clear", data_state="no_data",
+        analysis_stage="scope", recommended_action="request_data",
+    )
+    selection = select_playbooks(prompt, intent, AnalysisSessionState(session_id="pending_goal"), "")
+    assert selection.analysis_spec is not None
+    assert selection.analysis_spec["goal"] == prompt
+    assert selection.analysis_spec["id"]
+
+
 def test_controller_writes_playbook_selection_to_state_and_activates_capability():
     state = AnalysisSessionState(session_id="controller_playbook", project_name=None)
     intent = plan_turn_intent("why did revenue decline", _loaded_context())
@@ -419,6 +456,34 @@ def test_controller_keeps_generated_legacy_spec_display_only(tmp_path):
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_independent_operation_after_analysis_gets_its_own_current_plan(tmp_path):
+    state = AnalysisSessionState(session_id="operation_after_analysis")
+    controller = AnalysisFlowController(state.session_id)
+    analysis = TurnIntent(
+        intent_type="directed_analysis", clarity="clear", data_state="data_loaded",
+        analysis_stage="execute", recommended_action="run_analysis",
+        execution_readiness="ready", reason="test",
+    )
+    operation = TurnIntent(
+        intent_type="data_operation", clarity="clear", data_state="data_loaded",
+        analysis_stage="execute", recommended_action="execute_operation",
+        execution_readiness="ready", reason="test",
+    )
+    with patch("data_agent.agent.analysis_state._state_path", return_value=tmp_path / "analysis_state.json"):
+        controller.prepare_turn(state, analysis, user_input="why did revenue decline",
+                                dataset_profile=_loaded_context())
+        old_plan = state.analysis_spec["id"]
+        state.add_evidence_record({"claim": "old conclusion", "plan_id": old_plan})
+        controller.prepare_turn(state, operation,
+                                user_input="Calculate order count and amount total for sales data",
+                                dataset_profile=_loaded_context("order_id, amount, channel"))
+    assert state.analysis_spec["id"] != old_plan
+    assert state.analysis_plan is None
+    assert state.analysis_spec["goal"] == "Calculate order count and amount total for sales data"
+    assert state.evidence_records[0]["plan_id"] == old_plan
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)

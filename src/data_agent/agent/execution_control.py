@@ -11,7 +11,15 @@ from typing import Any
 
 
 class BudgetExceeded(RuntimeError):
-    """Raised when a turn should stop or avoid a tool call."""
+    """Typed policy rejection; capacity exhaustion closes further tools."""
+
+    def __init__(self, message: str, *, code: str = "execution_guard"):
+        self.code = code
+        super().__init__(message)
+
+    @property
+    def closes_tools(self) -> bool:
+        return self.code in {"tool_calls", "elapsed_time", "fallback_calls", "repeated_nonblocking_permission"}
 
 
 # Meta tools: record intermediate analysis artifacts, manage tasks, interact with user.
@@ -39,21 +47,18 @@ class ToolExecutionBudget:
     max_elapsed_seconds: float | None = None
     soft_ratio: float = 0.75
     restrict_ratio: float = 0.85
-    token_budget: int | None = None
 
     def __post_init__(self) -> None:
         defaults = {
-            "interactive": (50, 3, 30_000),
-            "analysis": (130, 8, 70_000),
-            "deep": (200, 15, 100_000),
+            "interactive": (50, 3),
+            "analysis": (130, 8),
+            "deep": (200, 15),
         }
-        tool_calls, fallback_calls, token_budget = defaults.get(self.profile, defaults["analysis"])
+        tool_calls, fallback_calls = defaults.get(self.profile, defaults["analysis"])
         if self.max_tool_calls is None:
             self.max_tool_calls = tool_calls
         if self.max_fallback_calls is None:
             self.max_fallback_calls = fallback_calls
-        if self.token_budget is None:
-            self.token_budget = token_budget
 
 
 @dataclass
@@ -71,7 +76,6 @@ class TurnExecutionState:
     _last_call_key: str = ""
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
     pending_fallback_resolution: bool = False
-    estimated_tokens_used: int = 0
     tool_receipt_ids: list[str] = field(default_factory=list)
     _call_order: list = field(default_factory=list)
 
@@ -102,16 +106,15 @@ class TurnExecutionState:
     def record_llm_round(self) -> None:
         self.llm_rounds += 1
 
-    def record_token_usage(self, delta: int) -> None:
-        self.estimated_tokens_used += delta
-
-    def ensure_can_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
+    def ensure_can_call(
+        self, tool_name: str, args: dict[str, Any] | None = None, *, source_version: str = "",
+    ) -> None:
         args = args or {}
         is_meta = tool_name in _META_TOOLS
 
         # --- Time budget applies to all tools ---
         if self.budget.max_elapsed_seconds is not None and self.elapsed_seconds >= self.budget.max_elapsed_seconds:
-            raise BudgetExceeded("Time budget reached; summarize current evidence and stop calling tools.")
+            raise BudgetExceeded("Time budget reached; summarize current evidence and stop calling tools.", code="elapsed_time")
 
         # Meta tools: only error safety checks remain (bypass budget, fallback, resolution)
         if is_meta:
@@ -122,14 +125,17 @@ class TurnExecutionState:
 
         # --- Budget checks (non-meta tools) ---
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
-            raise BudgetExceeded("Tool call budget reached; summarize current evidence and stop calling tools.")
+            raise BudgetExceeded("Tool call budget reached; summarize current evidence and stop calling tools.", code="tool_calls")
         if tool_name == "run_python" and self.fallback_calls >= (self.budget.max_fallback_calls or 0):
-            raise BudgetExceeded("Fallback Python budget reached; use structured tools or ask for clarification.")
-        if self.pending_fallback_resolution and tool_name not in self._fallback_resolution_tools():
+            raise BudgetExceeded("Fallback Python budget reached; use structured tools or ask for clarification.", code="fallback_calls")
+        if (self.pending_fallback_resolution
+                and tool_name not in self._fallback_resolution_tools()
+                and tool_name not in self._fallback_verification_tools()):
             raise BudgetExceeded(
-                "Fallback Python result must be resolved into evidence, limitations, task state, or user confirmation before more exploration."
+                "Fallback Python result must be resolved into source-bound tools, evidence, limitations, task state, or user confirmation before more exploration.",
+                code="fallback_resolution"
             )
-        if self._is_low_value_duplicate(tool_name, args):
+        if self._is_low_value_duplicate(tool_name, args, source_version=source_version):
             raise BudgetExceeded(f"Low-value duplicate tool call for {tool_name}; reuse existing evidence or change the analysis angle.")
 
         # --- Error safety (non-meta tools) ---
@@ -141,23 +147,26 @@ class TurnExecutionState:
             if python_errors >= self.budget.max_repeated_tool_errors:
                 raise BudgetExceeded("Repeated run_python failure; use structured tools or ask the user.")
 
-    def record_tool_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
+    def record_tool_call(
+        self, tool_name: str, args: dict[str, Any] | None = None, *, source_version: str = "",
+    ) -> None:
         if tool_name not in _META_TOOLS:
             self.tool_calls += 1
         key = self._error_key(tool_name, args or {})
-        self._last_call_key = key
+        self._last_call_key = self._success_key(tool_name, args or {}, source_version)
         self.seen_calls[key] = self.seen_calls.get(key, 0) + 1
         self._call_order.append(tool_name)
         if tool_name == "create_chart":
             self.chart_calls += 1
         if tool_name == "run_python":
             self.fallback_calls += 1
-            self.pending_fallback_resolution = True
 
     def record_tool_success(self) -> None:
         self.consecutive_errors = 0
         if self._last_call_key:
             self.successful_calls.add(self._last_call_key)
+        if self._call_order and self._call_order[-1] == "run_python":
+            self.pending_fallback_resolution = True
         if self._call_order and self._call_order[-1] in self._fallback_resolution_tools():
             self.pending_fallback_resolution = False
 
@@ -171,6 +180,13 @@ class TurnExecutionState:
             "arguments_hash": self._args_hash(args or {}),
             "retry_count": self.repeated_errors[key],
         })
+
+    def record_nonblocking_permission(self, host_scope: dict[str, Any]) -> bool:
+        """Use the existing invalid-call allowance after host adjudication."""
+        key = self._error_key("ask_user_question", host_scope)
+        self.record_tool_error("ask_user_question", host_scope,
+                               "Host-adjudicated nonblocking method permission;no business decision.")
+        return self.repeated_errors[key] >= self.budget.max_repeated_tool_errors
 
     def prompt_hint(self) -> str:
         hints = []
@@ -194,7 +210,9 @@ class TurnExecutionState:
     def _error_key(self, tool_name: str, args: dict[str, Any]) -> str:
         return f"{tool_name}:{self._args_hash(args)}"
 
-    def _is_low_value_duplicate(self, tool_name: str, args: dict[str, Any]) -> bool:
+    def _is_low_value_duplicate(
+        self, tool_name: str, args: dict[str, Any], *, source_version: str = "",
+    ) -> bool:
         low_value_tools = {
             "create_chart",
             "preview_data",
@@ -206,7 +224,15 @@ class TurnExecutionState:
         }
         if tool_name not in low_value_tools:
             return False
-        return self._error_key(tool_name, args) in self.successful_calls
+        return self._success_key(tool_name, args, source_version) in self.successful_calls
+
+    def _success_key(self, tool_name: str, args: dict[str, Any], source_version: str) -> str:
+        key = self._error_key(tool_name, args)
+        # New source versions or newly predeclared products are new work.
+        # Error retries and the total tool budget retain their original keys.
+        if source_version:
+            return f"{key}|source_version:{source_version}"
+        return key
 
     @staticmethod
     def _fallback_resolution_tools() -> set[str]:
@@ -218,6 +244,14 @@ class TurnExecutionState:
             "task_update",
             "ask_user_question",
         }
+
+    @staticmethod
+    def _fallback_verification_tools() -> set[str]:
+        # These existing tools produce independently versioned calculation
+        # receipts. Allow them after exploratory Python so a same-round
+        # native computation is not blocked; they do not validate or clear
+        # the Python result itself.
+        return {"synthesize_time_series", "compare_periods", "transform_data"}
 
     @staticmethod
     def _args_hash(args: dict[str, Any]) -> str:

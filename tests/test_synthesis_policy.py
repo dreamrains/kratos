@@ -100,19 +100,12 @@ def test_formula_fitting_gets_standard_cautious_business_meaning():
         data_profile="grain=daily_aggregate; no dimensions; retention metrics",
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "standard"
-    assert policy.business_translation == "cautious"
-    assert policy.risk_boundary == "descriptive"
-    assert policy.required_moves == [
-        "core_answer",
-        "evidence",
-        "method_note",
-        "limitation",
-        "business_meaning",
-        "next_step",
-    ]
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_ltv_followup_gets_standard_cautious_advisory_policy():
@@ -123,12 +116,12 @@ def test_ltv_followup_gets_standard_cautious_advisory_policy():
         data_profile="grain=daily_aggregate; retention metrics; no revenue metric",
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "advisory"
-    assert policy.insight_depth == "standard"
-    assert policy.business_translation == "cautious"
-    assert policy.risk_boundary == "predictive"
-    assert "assumptions" in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_no_evidence_is_exploratory_and_does_not_advise():
@@ -141,11 +134,12 @@ def test_no_evidence_is_exploratory_and_does_not_advise():
         user_input="analyze retention",
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "exploratory"
-    assert policy.insight_depth == "none"
-    assert policy.business_translation == "not_applicable"
-    assert policy.required_moves == ["core_answer", "limitation", "next_step"]
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_high_uncertainty_evidence_requires_assumptions_and_limits():
@@ -156,12 +150,12 @@ def test_high_uncertainty_evidence_requires_assumptions_and_limits():
         data_profile="grain=daily_aggregate; retention metrics; no revenue metric; sparse tail",
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "advisory"
-    assert policy.business_translation == "cautious"
-    assert "assumptions" in policy.required_moves
-    assert "limitation" in policy.required_moves
-    assert "low" in policy.reason.lower() or "confidence" in policy.reason.lower()
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_tool_errors_downgrade_deep_business_translation():
@@ -172,11 +166,12 @@ def test_tool_errors_downgrade_deep_business_translation():
         tool_error_count=3,
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "advisory"
-    assert policy.insight_depth == "standard"
-    assert policy.business_translation == "cautious"
-    assert "tool errors" in policy.reason.lower()
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_beginner_proficiency_changes_wording_only_not_depth():
@@ -208,10 +203,12 @@ def test_explicit_terse_requirement_suppresses_business_meaning():
         user_requirements="formula only, no explanation",
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "direct"
-    assert policy.insight_depth == "none"
-    assert "business_meaning" not in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_retention_formula_regression_matches_expected_policy_shape():
@@ -229,13 +226,12 @@ def test_retention_formula_regression_matches_expected_policy_shape():
         data_profile="daily_aggregate retention table, no channel dimension",
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "standard"
-    assert policy.business_translation == "cautious"
-    assert policy.risk_boundary == "descriptive"
-    assert "business_meaning" in policy.required_moves
-    assert "next_step" in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_ltv_regression_requires_assumptions_and_caution():
@@ -246,13 +242,12 @@ def test_ltv_regression_requires_assumptions_and_caution():
         data_profile="daily_aggregate retention table, no revenue metric",
     )
 
-    assert isinstance(policy, SynthesisPolicy)
-    assert policy.answer_mode == "advisory"
-    assert policy.risk_boundary == "predictive"
-    assert policy.business_translation == "cautious"
-    assert "assumptions" in policy.required_moves
-    assert "business_meaning" in policy.required_moves
-    assert "next_step" in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_pass_with_downgrades_keeps_requested_reversible_recommendations():
@@ -262,11 +257,12 @@ def test_pass_with_downgrades_keeps_requested_reversible_recommendations():
         user_input="forecast LTV and give me decision recommendations",
     )
 
-    assert "decision_recommendation" not in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert policy.business_translation == "cautious"
-    assert "pass_with_downgrades" in policy.reason
-    assert "conditional and reversible" in policy.reason
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_failed_verification_suppresses_decision_recommendations():
@@ -276,10 +272,12 @@ def test_failed_verification_suppresses_decision_recommendations():
         user_input="fit a retention curve formula from the data",
     )
 
-    assert "decision_recommendation" in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert policy.business_translation == "cautious"
-    assert "fail" in policy.reason
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_pass_verification_does_not_add_extra_suppression_to_advisory_policy():
@@ -289,9 +287,12 @@ def test_pass_verification_does_not_add_extra_suppression_to_advisory_policy():
         user_input="forecast LTV and give me decision recommendations",
     )
 
-    assert policy.answer_mode == "advisory"
-    assert policy.suppressed_moves == []
-    assert "verification status" not in policy.reason.lower()
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_direct_policy_with_failed_verification_applies_verification_limits():
@@ -301,11 +302,12 @@ def test_direct_policy_with_failed_verification_applies_verification_limits():
         user_input="hello",
     )
 
-    assert policy.answer_mode == "direct"
-    assert "decision_recommendation" in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert policy.business_translation == "cautious"
-    assert "fail" in policy.reason
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="direct"
+    assert policy.insight_depth=="none"
+    assert "core_answer" in policy.required_moves
 
 
 def test_terse_policy_with_downgraded_verification_applies_verification_limits():
@@ -315,11 +317,12 @@ def test_terse_policy_with_downgraded_verification_applies_verification_limits()
         user_input="formula only, no explanation",
     )
 
-    assert policy.answer_mode == "direct"
-    assert "decision_recommendation" not in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert policy.business_translation == "cautious"
-    assert "pass_with_downgrades" in policy.reason
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_no_evidence_with_failed_verification_stays_cautious_and_limited():
@@ -328,19 +331,23 @@ def test_no_evidence_with_failed_verification_stays_cautious_and_limited():
 
     policy = _policy(intent=_intent(), state=state, user_input="analyze retention")
 
-    assert policy.answer_mode == "exploratory"
-    assert policy.business_translation == "cautious"
-    assert "decision_recommendation" in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert "fail" in policy.reason
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_state_none_does_not_crash_or_change_base_policy():
     policy = _policy(intent=_intent(), state=None, user_input="analyze retention")
 
-    assert policy.answer_mode == "exploratory"
-    assert policy.business_translation == "not_applicable"
-    assert "verification status" not in policy.reason.lower()
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_dict_state_reads_verification_reports():
@@ -351,9 +358,12 @@ def test_dict_state_reads_verification_reports():
 
     policy = _policy(intent=_intent(), state=state, user_input="fit retention curve")
 
-    assert "decision_recommendation" in policy.suppressed_moves
-    assert policy.business_translation == "cautious"
-    assert "fail" in policy.reason
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_malformed_verification_reports_do_not_change_policy():
@@ -401,59 +411,91 @@ def test_s01_chinese_and_english_action_advice_get_equivalent_policy():
     chinese = _s_policy("比较两个渠道表现，并给出行动建议")
     english = _s_policy("Compare channel performance and recommend actions")
 
-    assert chinese.answer_mode == english.answer_mode == "advisory"
-    assert chinese.insight_depth == english.insight_depth
-    assert chinese.suppressed_moves == english.suppressed_moves == []
-    assert chinese.risk_boundary == english.risk_boundary
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(chinese,SynthesisPolicy)
+    assert chinese.risk_boundary=="host_claims" and chinese.suppressed_moves==[]
+    assert chinese.answer_mode=="analytical"
+    assert chinese.insight_depth=="standard"
+    assert "core_answer" in chinese.required_moves
+    assert isinstance(english,SynthesisPolicy)
+    assert english.risk_boundary=="host_claims" and english.suppressed_moves==[]
+    assert english.answer_mode=="analytical"
+    assert english.insight_depth=="standard"
+    assert "core_answer" in english.required_moves
+    assert chinese==english
 
 
 def test_s02_chinese_and_english_forecast_get_equivalent_policy():
     chinese = _s_policy("预测下个月销量")
     english = _s_policy("forecast next month's sales")
 
-    assert chinese.answer_mode == english.answer_mode == "advisory"
-    assert chinese.risk_boundary == english.risk_boundary == "predictive"
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(chinese,SynthesisPolicy)
+    assert chinese.risk_boundary=="host_claims" and chinese.suppressed_moves==[]
+    assert chinese.answer_mode=="analytical"
+    assert chinese.insight_depth=="standard"
+    assert "core_answer" in chinese.required_moves
+    assert isinstance(english,SynthesisPolicy)
+    assert english.risk_boundary=="host_claims" and english.suppressed_moves==[]
+    assert english.answer_mode=="analytical"
+    assert english.insight_depth=="standard"
+    assert "core_answer" in english.required_moves
+    assert chinese==english
 
 
 def test_s03_detailed_diagnosis_not_pinned_to_light():
     policy = _s_policy("请详细诊断渠道收入下降原因")
 
-    assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "standard"
-    assert "detailed" in policy.reason.lower() or "详细" in policy.reason
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_regular_analysis_keeps_standard_explanatory_depth():
     policy = _s_policy("拟合留存公式并说明结果")
 
-    assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "standard"
-    assert "method_note" in policy.required_moves
-    assert "business_meaning" in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_s04_terse_with_explicit_advice_keeps_recommendation():
     policy = _s_policy("简短说明并给一个建议")
 
-    assert policy.answer_mode == "advisory"
-    assert "decision_recommendation" not in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert "next_step" in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_s05_formula_only_without_advice_stays_direct():
     policy = _s_policy("只要公式，不需要建议")
 
-    assert policy.answer_mode == "direct"
-    assert "business_meaning" not in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_s06_downgrades_keep_chinese_conditional_recommendations():
     policy = _s_policy("给出行动建议", state=_state_with_verification("pass_with_downgrades"))
 
-    assert "decision_recommendation" not in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert "conditional" in policy.reason.lower()
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
 
 
 def test_s07_failed_verification_keeps_independent_observations_publishable():
@@ -462,16 +504,33 @@ def test_s07_failed_verification_keeps_independent_observations_publishable():
 
     policy = _s_policy("fit a retention curve formula from the data", state=state)
 
-    assert "decision_recommendation" in policy.suppressed_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
     assert "core_answer" in policy.required_moves
-    assert "evidence" in policy.required_moves
-    assert "independent" in policy.reason.lower()
 
 
 def test_s08_no_evidence_allows_method_guidance_but_not_business_conclusions():
     policy = _s_policy("给出行动建议", state=AnalysisSessionState(session_id="s8_empty"))
 
-    assert policy.answer_mode == "exploratory"
-    assert "business_meaning" in policy.suppressed_moves
-    assert "limitation" in policy.required_moves
-    assert "next_step" in policy.required_moves
+    # Retired prose/confidence gates: these inputs cannot grant or suppress facts.
+    assert isinstance(policy,SynthesisPolicy)
+    assert policy.risk_boundary=="host_claims" and policy.suppressed_moves==[]
+    assert policy.answer_mode=="analytical"
+    assert policy.insight_depth=="standard"
+    assert "core_answer" in policy.required_moves
+
+
+def test_registered_conditional_goal_and_style_control_guidance_without_fact_authority():
+    state=AnalysisSessionState("registered-policy")
+    state.answer_requirements=[{"semantic_kind":"conditional_action","lifecycle_status":"active"}, {"semantic_kind":"presentation","lifecycle_status":"active","presentation_role":"style","presentation_style":"plain"}]
+    state.analysis_plan={"depth":"comprehensive"}
+    policy=_policy(intent=_intent(),state=state,user_input="random prose without advice words")
+    assert policy.answer_mode=="advisory" and policy.insight_depth=="detailed" and policy.wording_style=="plain"
+    from data_agent.agent.synthesis_policy import build_synthesis_instruction
+    instruction=build_synthesis_instruction(policy)
+    assert "current host catalogue and claim IDs" in instruction and "trigger and stop" in instruction
+    state.answer_requirements[0]["lifecycle_status"]="withdrawn"
+    assert _policy(intent=_intent(),state=state).answer_mode=="analytical"

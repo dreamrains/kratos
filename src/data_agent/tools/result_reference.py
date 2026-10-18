@@ -22,7 +22,7 @@ def load_result_reference(reference, *, expected_receipt_id=None):
         ).replace("\\", "/")
         if receipt_reference:
             return normalised_reference == receipt_reference
-        return path.name == sanitize_filename(receipt.get("tool_call_id", "")) + "_detail.json"
+        return False
 
     matches = [
         receipt
@@ -42,7 +42,49 @@ def load_result_reference(reference, *, expected_receipt_id=None):
     receipt = matches[-1]
     identities = receipt.get("data_identities", {})
     for name, identity in identities.items():
-        if context.workspace.get_data_identity(name) != identity:
+        # Comparing an existing host receipt does not expose raw data. A
+        # narrower task or synthesis scope must not turn unchanged storage
+        # into a false stale-version finding.
+        if not context.workspace._receipt_identity_matches(name, identity):
             raise ValueError("Result belongs to an earlier data version; choose the matching result/version")
-    return payload, {"receipt_id": receipt["id"], "result_ref": reference,
+    catalog=receipt.get("catalog_binding")
+    if receipt.get("tool_name")=="list_data":
+        from data_agent.agent.publication.contracts import encode
+        if not isinstance(catalog,dict) or catalog.get("scope_fingerprint")!=receipt.get("scope_fingerprint"):
+            raise ValueError("目录缺少执行前授权范围绑定")
+        actual=context.workspace._publication_catalog_result(catalog)
+        if actual["binding"]!=catalog or actual["data_identities"]!=identities or encode(actual["result"])!=encode(payload):
+            raise ValueError("目录快照或当前授权可见对象已变化")
+    elif catalog is not None:
+        raise ValueError("Only list_data can bind directory metadata")
+    file_binding=receipt.get("file_binding")
+    if receipt.get("tool_name") in {"read_file","list_files"}:
+        from data_agent.tools.file_ops import _verify_file_binding
+        _verify_file_binding(context,receipt,payload)
+    elif file_binding is not None:raise ValueError("Only file excerpt/catalogue tools can bind file ranges")
+    skills_binding=receipt.get("skills_binding")
+    if receipt.get("tool_name")=="list_skills":
+        from data_agent.tools.skill_tools import _verify_skills_binding
+        _verify_skills_binding(context,receipt,payload)
+    elif skills_binding is not None:raise ValueError("Only list_skills can bind Skills catalogue metadata")
+    mcp_binding=receipt.get("mcp_binding")
+    if receipt.get("tool_name")=="list_mcp_servers":
+        from data_agent.tools.mcp_tools import _verify_mcp_catalog_binding
+        _verify_mcp_catalog_binding(context,receipt,payload)
+    elif mcp_binding is not None:raise ValueError("Only list_mcp_servers can bind MCP catalogue metadata")
+    return payload, {**({"mcp_binding":mcp_binding} if mcp_binding is not None else {}),**({"skills_binding":skills_binding} if skills_binding is not None else {}),**({"file_binding":file_binding} if file_binding is not None else {}),**({"catalog_binding":catalog} if catalog is not None else {}),"receipt_id": receipt["id"], "result_ref": reference,
                      "result_sha256": digest, "data_identities": identities}
+
+def load_chart_result_reference(reference, *, dataset=""):
+    """Resolve one actual chart source; data is only an identity assertion."""
+    payload, binding = load_result_reference(reference)
+    identities = binding.get("data_identities", {})
+    if len(identities) != 1:
+        raise ValueError("Chart result_ref requires exactly one receipt dataset source")
+    name = next(iter(identities))
+    if dataset and dataset != name:
+        raise ValueError(f"Explicit chart data '{dataset}' does not match result_ref source '{name}'")
+    if not isinstance(payload, dict) or not isinstance(payload.get("chart_data"), list):
+        raise ValueError("Result has no chart_data array")
+    return payload, binding, name
+

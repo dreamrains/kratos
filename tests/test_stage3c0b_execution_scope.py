@@ -76,7 +76,7 @@ def test_current_execution_scope_selects_unique_in_progress_task(tmp_path):
     assert scope.dataset_contract_ids == {"contract_banner"}
 
 
-def test_manual_completion_advances_ready_task_without_releasing_scope(tmp_path):
+def test_failed_computation_advances_only_independent_tasks_without_forging_success(tmp_path):
     """R3 M02 completed two steps in one tool round, then lost task scope."""
     from data_agent.agent.execution_scope import resolve_workspace_scope
 
@@ -90,15 +90,18 @@ def test_manual_completion_advances_ready_task_without_releasing_scope(tmp_path)
     manager.update(second["id"], addBlocks=[final["id"]])
     manager.start_next_ready_stage3c0b_task(session_id="m02")
 
-    manager.update(first["id"], status="completed")
+    assert manager.update(first["id"], status="completed") is None
+    assert resolve_workspace_scope(manager, "m02").task_id == first["id"]
+    manager.update(first["id"], status="failed")
     assert resolve_workspace_scope(manager, "m02").task_id == second["id"]
-    assert manager.get(final["id"])["blockedBy"] == [second["id"]]
+    assert manager.get(final["id"])["blockedBy"] == [first["id"],second["id"]]
 
-    manager.update(second["id"], status="completed")
+    assert manager.update(second["id"], status="completed") is None
+    manager.update(second["id"], status="failed")
     scope = resolve_workspace_scope(manager, "m02")
-    assert scope.phase == "synthesis"
-    assert scope.task_id == final["id"]
-    assert scope.allowed_datasets == frozenset()
+    assert scope.phase == "error"
+    assert manager.get(final["id"])["status"] == "pending"
+    assert manager.get(final["id"])["blockedBy"] == [first["id"],second["id"]]
 
 
 def test_manual_completion_does_not_cross_session_or_plan(tmp_path):
@@ -107,9 +110,10 @@ def test_manual_completion_does_not_cross_session_or_plan(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     first = _scoped_task(manager, session_id="first")
     other = _scoped_task(manager, session_id="other", datasets=["other_data"])
-    manager.update(first["id"], status="completed")
+    assert manager.update(first["id"], status="completed") is None
+    manager.update(first["id"], status="failed")
 
-    assert resolve_workspace_scope(manager, "first").phase == "legacy"
+    assert resolve_workspace_scope(manager, "first").phase == "synthesis"
     assert resolve_workspace_scope(manager, "other").task_id == other["id"]
 
 
@@ -265,7 +269,11 @@ def test_run_python_get_dataset_keeps_allowed_and_inactive_reads_working(tmp_pat
         inactive = json.loads(sandbox.run_python("get_dataset('iap')['value'].iloc[0]"))
 
     assert allowed["result"] == "42"
+    assert allowed["result_data"] == 42
+    assert allowed["dataset_reads"] == ["banner"]
+    assert allowed["dataset_read_identities"]["banner"]["version_id"]
     assert inactive["result"] == "84"
+    assert inactive["dataset_reads"] == ["iap"]
     assert "list_datasets" not in sandbox._build_safe_globals()
     assert "get_metadata" not in sandbox._build_safe_globals()
 
@@ -766,3 +774,17 @@ def test_snapshot_tool_guard_is_pure_and_does_not_resolve_manager_or_workspace(m
     )
 
     assert result.allowed is True
+
+
+def test_dataset_argument_format_is_tool_declared_and_each_source_is_guarded(tmp_path, monkeypatch):
+    from data_agent.agent.execution_scope import dataset_arguments_for_tool, ensure_dataset_allowed_for_current_task
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["a", "b"], mode="independent")
+    capability = ToolCapability("analysis.multi", input_contract={"dataset_argument_separators": {"datasets": ","}})
+    _install_tool(monkeypatch, "declared_multi", lambda datasets: "unused",
+        {"type": "object", "properties": {"datasets": {"type": "string"}}}, capability)
+    names = dataset_arguments_for_tool(registry, "declared_multi", {"datasets": "a, b, foreign"})
+    assert names == ["a", "b", "foreign"]
+    assert [ensure_dataset_allowed_for_current_task(manager, "s1", dataset=n).allowed for n in names] == [True, True, False]
+    capability.input_contract = {}
+    assert dataset_arguments_for_tool(registry, "declared_multi", {"datasets": "a,b"}) == ["a,b"]

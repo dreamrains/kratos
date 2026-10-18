@@ -47,7 +47,8 @@ def persist_detail(session_id: str, tool_call_id: str, data: dict) -> Path:
     detail_dir = cfg.sessions_resolved / session_id / "tool_outputs"
     detail_dir.mkdir(parents=True, exist_ok=True)
     path = detail_dir / f"{sanitize_filename(tool_call_id)}_detail.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    from data_agent.utils.atomic_files import write_text_atomic
+    write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2, default=str))
     return path
 
 
@@ -399,3 +400,16 @@ def compare_period_structures(
         "warnings": warnings,
         "daily_avg_recommended": not lengths_equal,
     }
+
+
+def finite_pairwise_correlation(frame, method="pearson"):
+    """Existing pandas estimator on common finite observations, with unknown degeneracy."""
+    clean = frame.replace([np.inf, -np.inf], np.nan)
+    matrix = clean.corr(method=method)
+    available = clean.notna().astype("int64")
+    counts = available.T @ available
+    matrix = matrix.where(np.isfinite(matrix) & (counts >= 2))
+    for column in matrix.columns:
+        if clean[column].nunique(dropna=True) < 2:
+            matrix.loc[column, column] = np.nan
+    return clean, matrix, counts.to_dict()

@@ -11,6 +11,7 @@ function chatApp() {
             return s ? (s.summary || s.session_id) : this.currentSessionId;
         },
         currentSessionId: null,
+        sessionReadOnly: false,
         inputText: '',
         isUploading: false,
         uploadedFiles: [],
@@ -73,6 +74,7 @@ function chatApp() {
         capabilities: null,
         analysisState: null,
         trustInspectorCollapsed: false,
+        workbenchDrawerOpen: false,
         sessionSidePanelTab: 'current',
         trustHelpOpen: '',
         expandedListCounts: {},
@@ -946,6 +948,7 @@ function chatApp() {
             if (this.isLoading && !confirm('任务正在运行，确认新建会话？')) return;
             this._saveCurrentState();
             this.currentSessionId = null;
+            this.sessionReadOnly = false;
             this._trustRequestGeneration += 1;
             this.activeProjectName = '';
             this.analysisState = null;
@@ -1010,6 +1013,7 @@ function chatApp() {
             try {
                 const confirmationRes = await fetch(`/api/sessions/${sessionId}`);
                 const data = await confirmationRes.json();
+                this.sessionReadOnly = data.read_only === true;
                 this._applyRunState(sessionId, state, data.run_state || {});
                 if (state.isLoading) this._watchRunState(sessionId, state);
                 const activeConfirmation = this._confirmationFromPayload(data.active_confirmation);
@@ -1274,6 +1278,32 @@ function chatApp() {
             return sessionId === this.currentSessionId;
         },
 
+        openWorkbenchDrawer() {
+            this.trustInspectorCollapsed = false;
+            this.workbenchDrawerOpen = true;
+            this.$nextTick(() => this.$refs.workbenchClose.focus());
+        },
+
+        closeWorkbenchDrawer(restoreFocus = true) {
+            this.workbenchDrawerOpen = false;
+            if (restoreFocus) this.$nextTick(() => this.$refs.workbenchOpener.focus());
+        },
+
+        trapWorkbenchFocus(event) {
+            if (!this.workbenchDrawerOpen) return;
+            const controls = Array.from(this.$refs.workbenchPanel.querySelectorAll(
+                'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+            )).filter(el => el.getClientRects().length);
+            const first = controls[0], last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        },
+
         verifiedConclusions() {
             return this.trustView?.workbench?.verified_conclusions || [];
         },
@@ -1345,7 +1375,7 @@ function chatApp() {
         formatWorkbenchText(value, category = '') {
             const text = String(value || '');
             const labels = {
-                confidence: { high: '高置信度', medium: '中等置信度', low: '低置信度' },
+                confidence: { host_verified: '回执已核实' },
                 route: {
                     trend: '趋势分析',
                     period_compare: '周期对比',
@@ -1739,12 +1769,13 @@ function chatApp() {
 
         _submitMultiQuestionStep(confirmation, confirmationState, question) {
             const stepAnswer = {
+                question_id: question.question_id,
                 question: question.question,
                 answer: '',
                 is_free_input: false,
             };
             if (confirmationState.selectedOptions.length > 0) {
-                stepAnswer.answer = confirmationState.selectedOptions.join(', ');
+                stepAnswer.answer = question.multi_select ? [...confirmationState.selectedOptions] : confirmationState.selectedOptions[0];
                 stepAnswer.is_free_input = false;
             } else if (confirmationState.freeText.trim()) {
                 stepAnswer.answer = confirmationState.freeText.trim();
@@ -1759,8 +1790,7 @@ function chatApp() {
         },
 
         _multiQuestionComplete(confirmation, confirmationState) {
-            const parts = confirmationState.answers.map((a, i) => `Q${i+1}: ${a.question} → ${a.answer}`);
-            return parts.join('; ');
+            return JSON.stringify(confirmationState.answers);
         },
 
         async resumeConfirmation(userResponse, confirmation = null) {
@@ -1883,6 +1913,7 @@ function chatApp() {
         },
 
         _submitConfirmation(turn) {
+            if (this.sessionReadOnly) return;
             const c = turn.confirmation;
             if (!c) return;
             const st = c._state;
@@ -1913,7 +1944,7 @@ function chatApp() {
             if (isMulti) {
                 const st = c._state;
                 const questions = this._parseMultiQuestions(c);
-                st.answers.push({ question: questions[st.currentStep].question, answer: 'skipped', is_free_input: false });
+                st.answers.push({ question_id: questions[st.currentStep].question_id, question: questions[st.currentStep].question, answer: 'skipped', is_free_input: false });
                 st.currentStep++;
                 st.selectedOptions = [];
                 st.freeText = '';
@@ -2024,6 +2055,7 @@ function chatApp() {
         },
 
         async uploadFile(event) {
+            if (this.sessionReadOnly) { event.target.value = ""; return; }
             const files = event.target.files;
             if (!files || !files.length) return;
             this.isUploading = true;
@@ -2107,12 +2139,14 @@ function chatApp() {
             return String(content || '').replace(/［［\s*chart\s*：\s*([^］\n]+)］］/gi, '[[chart:$1]]');
         },
 
-        _artifactKeys(art) {
+        _artifactKeys(art, includeDescription = true) {
             const path = art && art.path ? String(art.path) : '';
             const file = path.split('/').pop() || '';
             const stem = file.replace(/\.html$/i, '');
             const desc = art && art.description ? String(art.description) : '';
-            return [path, file, stem, desc].filter(Boolean);
+            const prefix = `sessions/${this.currentSessionId}/`;
+            const relativePath = path.startsWith(prefix) ? path.slice(prefix.length) : '';
+            return [path, relativePath, file, stem, ...(includeDescription ? [desc] : [])].filter(Boolean);
         },
 
         _stripChartHash(value) {
@@ -2122,13 +2156,14 @@ function chatApp() {
         _chartArtifactMatches(art, ref) {
             const normalized = String(ref || '').trim();
             if (!normalized) return { exact: false, fuzzy: false };
+            const identityBound = /[\\/]|\.html$/i.test(normalized) || /_[a-f0-9]{6}$/i.test(normalized);
             const normalizedBase = this._stripChartHash(normalized);
             let exact = false;
             let fuzzy = false;
-            for (const key of this._artifactKeys(art)) {
+            for (const key of this._artifactKeys(art, !identityBound)) {
                 const keyBase = this._stripChartHash(key);
-                if (key === normalized || key.endsWith(normalized)) exact = true;
-                if (normalizedBase.length >= 4 && keyBase.startsWith(normalizedBase)) fuzzy = true;
+                if (key === normalized || (!identityBound && key.endsWith(normalized))) exact = true;
+                if (!identityBound && normalizedBase.length >= 4 && keyBase.startsWith(normalizedBase)) fuzzy = true;
             }
             return { exact, fuzzy };
         },
@@ -2199,8 +2234,27 @@ function chatApp() {
 </div>`;
         },
 
+        _renderAcceptedChartLinks(text, turn) {
+            const paths = new Set();
+            const html = String(text || '').replace(/\[((?:\\.|[^\]\\])*)\]\((\/api\/files\/[^)\s]+)\)/g, (link, label, href) => {
+                let path;
+                try { path = decodeURIComponent(href.slice('/api/files/'.length)); }
+                catch { return link; }
+                // Current accepted reply artifacts own these host-produced links.
+                // A same-name session artifact or a document URL cannot grant a chart.
+                const matches = ((turn && turn.artifacts) || []).filter(art =>
+                    art.type === 'chart' && art.path === path &&
+                    this._artifactBelongsToSession(art, this.currentSessionId));
+                if (matches.length !== 1) return link;
+                paths.add(path);
+                return this._chartArtifactHtml(matches[0]);
+            });
+            return { html, paths };
+        },
+
         _replaceChartReferences(text, turn) {
             if (!turn || !text) return text;
+            text = this._renderAcceptedChartLinks(text, turn).html;
             return text.replace(/\[\[chart:([^\]\n]*)\]\]/g, (match, rawRef) => {
                 const result = this._findChartArtifact(turn, rawRef.trim());
                 if (result.status === 'ambiguous') {
@@ -2217,27 +2271,40 @@ function chatApp() {
             const artifacts = (turn && turn.artifacts) || [];
             if (!artifacts.length) return [];
             const refs = this._chartRefsFromContent(this._normalizeChartWrappers(turn.content || ''));
-            return artifacts.filter(art => !refs.some(ref => this._artifactMatchesChartRef(art, ref)));
+            const accepted = this._renderAcceptedChartLinks(turn.content || '', turn).paths;
+            return artifacts.filter(art => !accepted.has(art.path) && !refs.some(ref => this._artifactMatchesChartRef(art, ref)));
         },
 
-        renderMarkdown(text, turn = null) {
+        renderMarkdown(text, turn = null, allowArtifacts = true) {
             if (!text) return '';
             // Pre-process: extract Plotly JSON outside code blocks
-            text = this._normalizeChartWrappers(text);
-            text = this._replaceChartReferences(text, turn);
-            text = this._extractPlotlyJson(text);
+            if (allowArtifacts) {
+                text = this._normalizeChartWrappers(text);
+                text = this._replaceChartReferences(text, turn);
+                text = this._extractPlotlyJson(text);
+            }
             // Extract math before markdown parsing
             const mathResult = this._extractMath(text);
             try {
                 if (!this._markedReady) this._setupMarked();
-                let html = marked.parse(mathResult.text);
+                // Workbench details are exact accepted text fragments, with no
+                // turn artifact authority. Tables/math share the body renderer;
+                // links, images, raw HTML and chart code remain inert text.
+                let renderer;
+                if (!allowArtifacts) {
+                    renderer = new marked.Renderer();
+                    for (const kind of ['html', 'link', 'image']) {
+                        renderer[kind] = token => this._escapeHtml(token.raw || token.text || '');
+                    }
+                }
+                let html = marked.parse(mathResult.text, renderer ? { renderer } : undefined);
                 // Restore math placeholders with KaTeX output
                 html = this._restoreMath(html, mathResult.mathBlocks);
                 // Fix file links generated by LLM: /files/ → /api/files/
                 html = html.replace(/<table>/g, '<div class="markdown-table-scroll" tabindex="0" aria-label="Scrollable data table"><table>')
                     .replace(/<\/table>/g, '</table></div>');
                 return html.replace(/(href=["'])\/files\//g, '$1/api/files/');
-            } catch { return text; }
+            } catch { return allowArtifacts ? text : this._escapeHtml(text); }
         },
 
         _extractMath(text) {
@@ -2828,6 +2895,11 @@ function chatApp() {
                         isConfirmationResponse: confirmationAnswer !== null,
                     });
                 } else if (msg.role === 'assistant') {
+                    if (currentAssistant && msg.reply_id && currentAssistant.replyId
+                        && msg.reply_id !== currentAssistant.replyId) {
+                        turns.push(currentAssistant);
+                        currentAssistant = null;
+                    }
                     const newContent = msg.content || '';
                     if (currentAssistant) {
                         // Merge consecutive assistant messages within same round

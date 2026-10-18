@@ -157,6 +157,21 @@ def test_vague_goal_with_multiple_routes_requires_route_question():
     assert [option["value"] for option in gate["options"]] == ["trend", "period_compare"]
 
 
+def test_source_bound_result_does_not_become_a_technical_route_question():
+    request = "请评估实验的净贡献及成本，并说明还缺什么证据。"
+    vague = _intent(
+        "intent_negotiation", clarity="vague", analysis_stage="discover",
+        recommended_action="guide_analysis",
+        requested_outputs=[{"exact_span": "评估实验的净贡献及成本", "kind": "result"}],
+    )
+    assert detect_question_need(request, vague, _state())["question_type"] != "route_selection"
+
+    vague.requested_outputs = [{"exact_span": "别的请求", "kind": "result"}]
+    assert detect_question_need(request, vague, _state())["question_type"] == "route_selection"
+    vague.requested_outputs = [{"exact_span": "说明还缺什么证据", "kind": "presentation"}]
+    assert detect_question_need(request, vague, _state())["question_type"] == "route_selection"
+
+
 def test_duplicate_material_file_reference_requires_scope_selection_first():
     gate = detect_question_need("analyze sales.csv", _intent(), _duplicate_file_state())
 
@@ -598,3 +613,89 @@ def test_relationship_diagnostics_do_not_trigger_questions(confirmation_type):
     gate = detect_question_need("show revenue trend by date", _intent(), state)
 
     assert gate["status"] == "clear"
+
+
+# Decision 96: actual compact producer records must cross every host entry.
+from tests.test_trusted_publication_semantics import engine
+
+
+@pytest.mark.parametrize("interface", ["detector", "analysis_entry", "route_capabilities"])
+@pytest.mark.parametrize("fault", ["current", "changed_source", "other_session", "missing_original", "tampered_original", "no_original_binding", "revoked_permission", "inline_self_report", "dataset_self_report"])
+def test_actual_cleaning_producer_current_original_boundary(engine, monkeypatch, interface, fault):
+    from pathlib import Path
+    from copy import deepcopy
+    from contextlib import nullcontext
+    import json
+    from data_agent.tools.data_io import _record_trust_workflow
+    from data_agent.agent.analysis_entry import decide_analysis_entry
+    from data_agent.agent.route_capabilities import build_route_capabilities
+    loop, cfg = engine
+    state = loop.context.analysis_state
+    ws = loop.context.workspace
+    state.set_active_dataset("orders")
+    state.active_scope["active_mode"] = "data_loaded"
+    _record_trust_workflow(session_id=loop.session_id, state=state, dataset="orders", df=ws.get("orders"),
+        applied=[], needs_confirm=[{"column":"amount", "action":"ambiguous_numeric", "requires_confirmation":True,
+        "reason":"The amount scale needs a business choice."}], quality={"quality_score":90},
+        interpretation_data={"columns_classified":{"time_columns":["day"], "key_metrics":["amount"]}}, detail_path="")
+    log = state.cleaning_logs[0]
+    denied = None
+    if fault == "changed_source":
+        ws.add("orders", ws.get("orders").assign(amount=999))
+    elif fault == "other_session":
+        original = Path(log["artifact_path"])
+        denied = cfg.sessions_resolved / "foreign_owner" / "tool_outputs" / "cleaning.json"
+        denied.parent.mkdir(parents=True)
+        denied.write_bytes(original.read_bytes())
+        log["artifact_path"] = str(denied)
+    elif fault == "missing_original":
+        log["artifact_path"] = str(cfg.sessions_resolved / loop.session_id / "tool_outputs" / "missing.json")
+    elif fault == "tampered_original":
+        original = Path(log["artifact_path"])
+        payload = json.loads(original.read_text(encoding="utf-8"))
+        payload["decisions"] = []
+        original.write_text(json.dumps(payload), encoding="utf-8")
+    elif fault == "no_original_binding":
+        for refs in [state.dataset_contracts, state.route_proposals, state.cleaning_logs]:
+            for ref in refs: ref.pop("source_binding", None)
+    if fault == "inline_self_report":
+        for name in ["dataset_contracts", "route_proposals", "cleaning_logs"]:
+            setattr(state, name, [json.loads(Path(ref["artifact_path"]).read_text(encoding="utf-8"))
+                                 for ref in getattr(state, name)])
+    if fault == "dataset_self_report":
+        log["dataset"] = "another_object"
+    before = deepcopy(state.to_dict())
+    originals = {Path(ref["artifact_path"]):Path(ref["artifact_path"]).read_bytes()
+        for refs in [state.dataset_contracts, state.route_proposals, state.cleaning_logs]
+        for ref in refs if ref.get("artifact_path") and Path(ref["artifact_path"]).is_file()}
+    reads = []
+    old_text, old_bytes = Path.read_text, Path.read_bytes
+    def observed_text(p, *args, **kwargs):
+        if denied is not None and p.resolve() == denied.resolve(): reads.append(str(p))
+        return old_text(p, *args, **kwargs)
+    def observed_bytes(p, *args, **kwargs):
+        if denied is not None and p.resolve() == denied.resolve(): reads.append(str(p))
+        return old_bytes(p, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", observed_text)
+    monkeypatch.setattr(Path, "read_bytes", observed_bytes)
+    boundary = loop.context.planning_workspace_scope(["other"]) if fault == "revoked_permission" else nullcontext()
+    with boundary:
+        if interface == "detector":
+            result = detect_question_need("Analyze the amount trend.", _intent(), state)
+            risks = result.get("risk_fields", [])
+        elif interface == "analysis_entry":
+            result = decide_analysis_entry("Analyze the amount trend.", _intent(), state)
+            risks = result.get("risk_fields", [])
+        else:
+            result = build_route_capabilities(state)
+            risks = result.get("confirmation_gate", {}).get("risk_fields", [])
+    assert not reads, "Foreign-session original was read before authorization."
+    assert state.to_dict() == before
+    assert all(old_bytes(path) == raw for path, raw in originals.items())
+    if fault == "current":
+        assert risks == ["amount"], "The real compact producer's material decision was omitted."
+    else:
+        assert risks == [], "Old, unowned or unverified fields cannot become a current business question."
+        if interface == "detector": assert result["status"] == "unassessed", result
+        elif interface == "analysis_entry": assert result["decision"] == "blocked", result
+        else: assert result["executable"] == [] and result.get("evidence_status") == "unassessed", result

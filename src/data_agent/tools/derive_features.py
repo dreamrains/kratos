@@ -13,6 +13,8 @@ from data_agent.tools.registry import registry
 
 @registry.register(
     name="derive_features",
+    capability={"capability_id":"data.derive_features","category":"data_transform"},
+    output_contract={"version":"native_operation_effect.v1","adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation"]},
     description=(
         "从原始数据自动派生新特征。feature_type 可选: "
         "time_features（从日期列提取年/月/日/周几/季度/是否周末），"
@@ -43,14 +45,20 @@ def derive_features(
         available = list(workspace.list_datasets().keys())
         return json.dumps({"error": f"数据集 '{name}' 不存在。可用: {available}"}, ensure_ascii=False)
 
+    source_identity=workspace.get_data_identity(name)
     df = df.copy()
+    original_columns=list(df.columns)
 
     try:
         p = json.loads(params) if params else {}
-    except json.JSONDecodeError:
-        return json.dumps({"error": "params 必须是有效的 JSON"}, ensure_ascii=False)
+    except (json.JSONDecodeError,TypeError):
+        return json.dumps({"error": "params 必须是有效的 JSON对象"}, ensure_ascii=False)
+    if not isinstance(p,dict):
+        return json.dumps({"error":"params 必须是JSON对象"},ensure_ascii=False)
 
     target_cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else list(df.columns)
+    if any(c not in df.columns for c in target_cols):
+        return json.dumps({"error":"显式目标列不存在"},ensure_ascii=False)
     new_cols = []
 
     try:
@@ -58,17 +66,16 @@ def derive_features(
             for col in target_cols:
                 if col not in df.columns:
                     continue
-                if not pd.api.types.is_datetime64_any_dtype(df[col]):
-                    try:
-                        df[col] = pd.to_datetime(df[col])
-                    except Exception:
-                        continue
-                df[f"{col}_year"] = df[col].dt.year
-                df[f"{col}_month"] = df[col].dt.month
-                df[f"{col}_day"] = df[col].dt.day
-                df[f"{col}_dayofweek"] = df[col].dt.dayofweek
-                df[f"{col}_quarter"] = df[col].dt.quarter
-                df[f"{col}_is_weekend"] = df[col].dt.dayofweek.isin([5, 6]).astype(int)
+                try:
+                    dates=pd.to_datetime(df[col])
+                except (ValueError,TypeError):
+                    continue
+                df[f"{col}_year"] = dates.dt.year
+                df[f"{col}_month"] = dates.dt.month
+                df[f"{col}_day"] = dates.dt.day
+                df[f"{col}_dayofweek"] = dates.dt.dayofweek
+                df[f"{col}_quarter"] = dates.dt.quarter
+                df[f"{col}_is_weekend"] = dates.dt.dayofweek.isin([5, 6]).astype(int)
                 new_cols.extend([f"{col}_year", f"{col}_month", f"{col}_day",
                                  f"{col}_dayofweek", f"{col}_quarter", f"{col}_is_weekend"])
 
@@ -76,6 +83,10 @@ def derive_features(
             lag_periods = p.get("lag_periods", "1")
             if isinstance(lag_periods, str):
                 lag_periods = [int(x.strip()) for x in lag_periods.split(",")]
+            if type(lag_periods) is int:lag_periods=[lag_periods]
+            if not isinstance(lag_periods,list) or not lag_periods or any(type(lag) is not int or lag<1 for lag in lag_periods):
+                return json.dumps({"error":"lag_periods必须为正整数或非空正整数列表"},ensure_ascii=False)
+            lag_periods=list(dict.fromkeys(lag_periods))
             for col in target_cols:
                 if col not in df.columns or not pd.api.types.is_numeric_dtype(df[col]):
                     continue
@@ -85,8 +96,13 @@ def derive_features(
                     new_cols.append(lag_col)
 
         elif feature_type == "rolling_features":
-            window = int(p.get("window", 7))
+            raw_window=p.get("window",7)
+            window=int(raw_window)
+            if isinstance(raw_window,bool) or window<1 or str(window)!=str(raw_window):
+                return json.dumps({"error":"window必须为正整数"},ensure_ascii=False)
             agg = p.get("agg", "mean")
+            if agg not in {"mean","std","min","max"}:
+                return json.dumps({"error":"不支持的滚动聚合方法；不会创建虚假列"},ensure_ascii=False)
             for col in target_cols:
                 if col not in df.columns or not pd.api.types.is_numeric_dtype(df[col]):
                     continue
@@ -122,11 +138,14 @@ def derive_features(
                 if col not in df.columns or not pd.api.types.is_numeric_dtype(df[col]):
                     continue
                 bin_col = f"{col}_binned"
-                df[bin_col] = pd.cut(df[col], bins=bins)
+                df[bin_col] = pd.cut(df[col], bins=bins,labels=p.get("labels"))
                 new_cols.append(bin_col)
 
         elif feature_type == "onehot_encoding":
-            drop_first = p.get("drop_first", "true").lower() == "true"
+            drop_first=p.get("drop_first",True)
+            if isinstance(drop_first,str) and drop_first.lower() in {"true","false"}:drop_first=drop_first.lower()=="true"
+            if type(drop_first) is not bool:
+                return json.dumps({"error":"drop_first必须为布尔值"},ensure_ascii=False)
             for col in target_cols:
                 if col not in df.columns:
                     continue
@@ -140,12 +159,18 @@ def derive_features(
     except Exception as e:
         return json.dumps({"error": f"特征派生失败: {e}"}, ensure_ascii=False)
 
+    if not new_cols:
+        return json.dumps({"error":"没有符合当前类型的目标列，未创建派生数据集"},ensure_ascii=False)
+    if len(set(new_cols))!=len(new_cols) or any(col in original_columns for col in new_cols) or df.columns.duplicated().any():
+        return json.dumps({"error":"派生列与已有列或其他派生列重名，未覆盖原列"},ensure_ascii=False)
+    if any(col not in df.columns for col in new_cols):
+        return json.dumps({"error":"派生结果缺少声明的新列"},ensure_ascii=False)
     target_name = save_as or workspace.next_analysis_name(name, "features")
     derive_result = workspace.derive(
         name,
         target_name,
         df,
-        expression=f"feature_type={feature_type}; columns={columns or 'all'}",
+        expression=json.dumps({"feature_type":feature_type,"columns":target_cols,"parameters":p,"row_order":"existing_dataset_order"},ensure_ascii=False),
     )
     if derive_result.startswith("Error:"):
         return json.dumps({"error": derive_result}, ensure_ascii=False)
@@ -154,6 +179,11 @@ def derive_features(
         "dataset": target_name,
         "source_dataset": name,
         "feature_type": feature_type,
+        "parameters": p,
+        "source_data_identity": source_identity,
+        "data_identity": workspace.get_data_identity(target_name),
+        "row_order": "existing_dataset_order",
+        "limitations": ["滞后和滚动使用数据集现有行序，未按日期或业务单位重新排序/分组；不证明时间预测有效。","比率零分母保持缺失，不解释缺失业务含义。"],
         "new_columns": new_cols,
         "total_columns": len(df.columns),
         "rows": len(df),

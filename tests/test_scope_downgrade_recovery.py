@@ -95,6 +95,23 @@ def test_task_create_during_active_stage_plan_is_refused_without_supersede(scope
         assert getattr(loop.context.workspace_scope, "phase", None) != "error"
 
 
+def test_last_completed_stage_task_keeps_scope_until_publication(scoped_loop):
+    loop, plan = scoped_loop
+    with use_agent_context(loop.context):
+        tasks = [task for task in task_manager.list_all(include_stale=True)
+                 if task.get("plan_id") == plan["id"]]
+        for task in sorted(tasks, key=lambda item: item["id"]):
+            stored=task_manager._load(task["id"]);stored["status"]="completed";task_manager._save(stored)  # Reader-only terminal fixture.
+        # Install the complete terminal reader fixture atomically. A partial
+        # manual mutation (no in-progress task but pending siblings) is invalid.
+        loop._current_task_scope_guard("task_update", {"task_id": tasks[-1]["id"]})
+        scope = loop.context.workspace_scope
+        assert scope.phase == "synthesis"
+        assert scope.plan_id == plan["id"]
+        assert scope.error_type == ""
+        assert task_manager.get_active_plan_id("scope-death", "") == plan["id"]
+
+
 def test_create_plan_refuses_to_supersede_active_stage_plan(scoped_loop):
     _loop, plan = scoped_loop
     with pytest.raises(RuntimeError, match="active structured plan"):

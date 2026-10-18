@@ -740,7 +740,8 @@ class TestAnalysisFlowTools:
             "quality_status": "ready",
         })
         plan = json.dumps({
-            "contract_version": "stage3c0b.v1",
+            "contract_version": "stage3c0b.v2",
+            "requirement_revision": 0,
             "goal": "省钱卡效果评估",
             "method_plan": [{
                 "step_id": "step_arpu",
@@ -749,10 +750,15 @@ class TestAnalysisFlowTools:
                 "combination_mode": "independent",
                 "expected_output": "ARPU 变化 EvidenceRecord",
                 "evidence_requirements": ["ARPU change", "sample size", "limitations"],
+                "required_deliveries": [
+                    {"requirement_id": "rq_plan_fixture", "kind": "measurement", "label": "省钱卡 ARPU 变化", "scope": {"datasets": ['main'], "quantity": "rows"}},
+                    {"requirement_id": "rq_plan_fixture", "kind": "limitation", "label": "样本与方法限制", "scope": {}},
+                ],
             }],
-            "visualization_strategy": "对比图",
+            "visualization_strategy": ["对比图"],
         })
-        r3 = record_analysis_plan(plan)
+        from tests.support.plan_inputs import bind_plan_fixture
+        r3 = record_analysis_plan(bind_plan_fixture(ctx.analysis_state, json.loads(plan)))
         assert "saved" in r3 or "error" not in r3.lower()
         plan_id = json.loads(r3)["analysis_plan_id"]
 
@@ -789,7 +795,7 @@ class TestAnalysisFlowTools:
         assert "saved" in str(parsed)
         # 应自动生成"无对照组"局限性
         auto_lim = parsed.get("auto_generated_limitations", [])
-        assert any("对照" in l for l in auto_lim), f"应有自动局限性: {auto_lim}"
+        assert auto_lim==[]  # Preserve structured method limitations; do not guess from method prose.
 
     def test_get_analysis_summary(self, env):
         from data_agent.tools.analysis_flow import get_analysis_summary

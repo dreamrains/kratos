@@ -8,10 +8,9 @@ capability_admin_bp = Blueprint("capability_admin", __name__)
 
 
 def _skill_loader():
-    from data_agent.config_resolver import resolve_skills_dirs
-    from data_agent.skills.loader import SkillLoader
+    from data_agent.agent.loop import get_global_skill_loader
 
-    loader = SkillLoader(resolve_skills_dirs())
+    loader = get_global_skill_loader()
     loader.discover()
     return loader
 
@@ -59,11 +58,15 @@ def delete_skill(name: str):
 
 @capability_admin_bp.get("/mcp/servers")
 def list_mcp_servers():
-    from data_agent.config import get_config
-    from data_agent.mcp.config import load_mcp_config
+    from data_agent.tools.mcp_tools import _mcp_catalog_snapshot
+    return jsonify(_mcp_catalog_snapshot()[0]["servers"])
 
-    config = load_mcp_config(get_config().global_mcp_config_path)
-    return jsonify([server.model_dump(exclude_none=True) for server in config.servers])
+
+def _mcp_operation_response(result):
+    failure = getattr(result, "data", None) or {}
+    if failure.get("error_type"):
+        return jsonify(failure), 400
+    return jsonify({"message": str(result)})
 
 
 @capability_admin_bp.post("/mcp/servers")
@@ -87,25 +90,25 @@ def add_mcp_server():
         )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"message": message})
+    return _mcp_operation_response(message)
 
 
 @capability_admin_bp.post("/mcp/servers/<path:name>/enable")
 def enable_mcp_server(name: str):
     from data_agent.tools.mcp_tools import enable_mcp_server as enable_server
 
-    return jsonify({"message": enable_server(name)})
+    return _mcp_operation_response(enable_server(name))
 
 
 @capability_admin_bp.post("/mcp/servers/<path:name>/disable")
 def disable_mcp_server(name: str):
     from data_agent.tools.mcp_tools import disable_mcp_server as disable_server
 
-    return jsonify({"message": disable_server(name)})
+    return _mcp_operation_response(disable_server(name))
 
 
 @capability_admin_bp.delete("/mcp/servers/<path:name>")
 def delete_mcp_server(name: str):
     from data_agent.tools.mcp_tools import delete_mcp_server as delete_server
 
-    return jsonify({"message": delete_server(name)})
+    return _mcp_operation_response(delete_server(name))

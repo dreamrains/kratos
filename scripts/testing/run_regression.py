@@ -11,7 +11,18 @@ import uuid
 
 QUICK_TESTS = (
     "tests/test_execution_control.py",
-    "tests/test_publication_synthesis.py",
+    "tests/test_trusted_publication_pipeline.py",
+    "tests/test_trusted_publication_facts.py",
+    "tests/test_trusted_publication_semantics.py",
+    "tests/test_trusted_publication_runtime.py::test_actual_sync_stream_terminal_owns_same_saved_answer_and_export",
+    "tests/test_trusted_publication_runtime.py::test_old_session_is_readonly_at_api_manager_and_direct_loop",
+    "tests/test_publication_runtime_sessions.py::test_s3_normal_q12_mixed_mapping_r09_concurrent_card_resume_actual_answer",
+    "tests/test_confirmation_policy.py",
+    "tests/test_confirmation_service.py",
+    "tests/test_confirmation_runtime.py",
+    "tests/test_confirmation_continuation.py",
+    "tests/test_confirmation_session_api.py",
+    "tests/test_trusted_publication_native_families.py",
     "tests/test_synthesis_policy.py",
     "tests/test_tool_recovery.py",
     "tests/test_web_overhaul.py",
@@ -60,7 +71,8 @@ def main() -> None:
     root = Path(__file__).resolve().parents[2]
     run = _new_run_dir(root, args.run_dir)
     paths = _suite_paths(args.suite, args.paths)
-    resolved_paths = [(root / path).resolve() for path in paths]
+    # Named nodes keep the quick suite bounded; full-offline still collects all tests.
+    resolved_paths = [(root / path.split("::", 1)[0]).resolve() for path in paths]
     tests_root = (root / "tests").resolve()
     if any(not path.is_relative_to(tests_root) or not path.exists() for path in resolved_paths):
         raise SystemExit("every test path must exist below tests/")
@@ -79,12 +91,15 @@ def main() -> None:
 
     import pytest
 
-    print(f"suite={args.suite} tests={len(paths)} run_dir={run.relative_to(root)} provider_calls=forbidden")
+    # Legacy capture helpers use this basename as their evidence partition.
+    # Each complete run needs a fresh partition as well as a fresh parent.
+    basetemp = run / uuid.uuid4().hex[:8]
+    print(f"suite={args.suite} tests={len(paths)} run_dir={run.relative_to(root)} basetemp={basetemp.relative_to(root)} provider_calls=forbidden")
     raise SystemExit(pytest.main([
         *paths,
         "-q",
         "-p", "no:cacheprovider",
-        "--basetemp=" + str(run / "pytest"),
+        "--basetemp=" + str(basetemp),
         "--junitxml=" + str(run / "junit.xml"),
     ]))
 

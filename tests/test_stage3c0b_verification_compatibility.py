@@ -174,10 +174,11 @@ def test_verify_analysis_claims_accepts_compatible_compare_evidence_ids():
     )
 
     check = report["claim_checks"][0]
-    assert report["overall_status"] == "pass"
-    assert check["status"] == "passed"
+    assert report["overall_status"] == "pass_with_downgrades"
+    assert check["status"] == "downgraded"
     assert check["evidence_id"] == "ev_current"
-    assert check["issues"] == []
+    assert check["strength"] == "unassessed"
+    assert any("diagnostic only" in issue for issue in check["issues"])
 
 
 def test_verify_analysis_claims_rejects_compare_evidence_ids_with_malformed_measurements():

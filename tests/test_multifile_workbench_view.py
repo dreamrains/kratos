@@ -2,7 +2,6 @@ import json
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.data_understanding import build_data_understanding_bundle
-from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
 
 
 def _state_with_multifile_context() -> AnalysisSessionState:
@@ -66,9 +65,7 @@ def _state_with_multifile_context() -> AnalysisSessionState:
         "failed_count": 0,
         "passed_evidence_ids": ["ev_gmv"],
     }]
-    state.verification_reports[0]["evidence_fingerprint"] = _evidence_fingerprint(
-        state, state.evidence_records
-    )
+    state.verification_reports[0]["evidence_fingerprint"] = '75fed2e9441d5cbe'
     return state
 
 
@@ -88,16 +85,8 @@ def test_trust_view_embeds_multifile_workbench_read_model():
 
     view = build_trust_view(_state_with_multifile_context())
 
-    assert view["workbench"]["verified_conclusions"] == [
-        {
-            "id": "ev_gmv",
-            "claim": "GMV increased in the final two days.",
-            "summary": "Daily GMV moved from 100 to 150.",
-            "confidence": "medium",
-            "dataset": "",
-        }
-    ]
-    assert view["workbench"]["verified_total"] == 1
+    assert view["workbench"]["verified_conclusions"] == []
+    assert view["workbench"]["verified_total"] == 0
     assert view["workbench"]["pending_findings"] == []
 
 

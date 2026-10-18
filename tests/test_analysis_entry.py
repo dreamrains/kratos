@@ -85,6 +85,21 @@ def test_vague_request_with_multiple_routes_returns_clarify_intent():
     assert decision["route_options"] or decision["confirmation_gate"]["confirmation_type"] == "route_selection"
 
 
+def test_source_bound_delivery_keeps_internal_route_choice_internal():
+    request = "请评估实验的净贡献及成本，并说明还缺什么证据。"
+    vague = _intent(
+        "intent_negotiation", clarity="vague", analysis_stage="discover",
+        recommended_action="guide_analysis",
+        requested_outputs=[{"exact_span": "评估实验的净贡献及成本", "kind": "result"}],
+    )
+
+    decision = decide_analysis_entry(request, vague, _state())
+
+    assert decision["decision"] == "direct_analysis"
+    assert decision["required_user_action"] == ""
+    assert "source_bound_delivery" in decision["reason"]
+
+
 def test_vague_multi_route_keeps_period_compare_with_conceptual_requirement():
     state = AnalysisSessionState(session_id="entry_period_compare", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"

@@ -52,8 +52,14 @@ def _stage3c0b_task(
         dataset_contract_ids=["contract_1"],
         combination_mode=mode,
     )
-    manager.update(task["id"], status=status)
+    if status=="completed":_terminal_fixture(manager,task["id"])
+    else:manager.update(task["id"],status=status)
     return task
+
+
+def _terminal_fixture(manager,tid):
+    """Seed persisted terminal scope for reader-only unit tests, not completion authority."""
+    task=manager.get(tid);task["status"]="completed";manager._save(task)
 
 
 def _bind_manager(monkeypatch, manager: TaskManager) -> None:
@@ -181,18 +187,40 @@ def test_active_stage3c0b_plan_without_current_task_fails_closed(tmp_path):
     assert task["id"]
 
 
-def test_completed_stage3c0b_plan_releases_workspace_scope(tmp_path):
+def test_completed_stage3c0b_plan_stays_scoped_until_publication_closes_it(tmp_path):
     from data_agent.agent.execution_scope import resolve_workspace_scope
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     task = _stage3c0b_task(manager, status="in_progress")
-    manager.update(task["id"], status="completed")
+    _terminal_fixture(manager,task["id"])
 
     scope = resolve_workspace_scope(manager, "s1", "")
 
-    assert scope.phase == "legacy"
+    assert scope.phase == "synthesis"
     assert scope.error_type == ""
-    assert scope.task_id == 0
+    assert scope.task_id == task["id"]
+    assert scope.plan_id == task["plan_id"]
+    manager.close_open_tasks_for_publication(session_id="s1")
+    assert resolve_workspace_scope(manager, "s1", "").phase == "synthesis"
+
+
+def test_completed_plan_synthesis_does_not_expand_to_other_step_datasets(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    first = _stage3c0b_task(manager, datasets=["dataset_a"])
+    second = manager.create(
+        "other step", session_id="s1", plan_id=first["plan_id"],
+        analysis_plan_id="analysis_plan_1", step_id="step_2",
+        dataset_inputs=["dataset_b"], dataset_contract_ids=["contract_b"],
+    )
+    _terminal_fixture(manager,first["id"])
+    _terminal_fixture(manager,second["id"])
+
+    scope = resolve_workspace_scope(manager, "s1", "")
+    assert scope.phase == "synthesis"
+    assert scope.allowed_datasets == frozenset()
+    assert scope.dataset_contract_ids == frozenset()
 
 
 def test_active_analysis_plan_without_task_records_fails_closed(tmp_path):
@@ -352,6 +380,27 @@ def test_reflection_does_not_expose_raw_workspace_from_context_or_proxy(
     assert exposed == []
 
 
+def test_receipt_identity_check_survives_narrower_task_scope_without_exposing_data():
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    store = Workspace()
+    store.add("prior", pd.DataFrame({"value": [1]}))
+    store.add("current", pd.DataFrame({"value": [2]}))
+    current_identity = store.get_data_identity("current")
+    execution = WorkspaceScopeSnapshot(
+        phase="execution", allowed_datasets=frozenset({"prior"}),
+    )
+    with use_agent_context(AgentContext(session_id="receipt_scope", workspace=store)) as ctx:
+        with ctx.bind_workspace_scope(execution):
+            assert workspace.get("current") is None
+            assert workspace.get_data_identity("current") == {}
+            assert workspace._receipt_identity_matches("current", current_identity)
+            assert not workspace._receipt_identity_matches(
+                "current", {**current_identity, "version_id": "stale"},
+            )
+            assert not workspace._receipt_identity_matches("current", {})
+
+
 @pytest.mark.parametrize("operation", ["get", "datasets_view"])
 def test_global_workspace_reflection_cannot_recover_default_binding_or_bypass_scope(operation):
     import data_agent.session.workspace as workspace_module
@@ -421,7 +470,7 @@ def test_ownerless_token_operations_follow_active_nonlegacy_scope(
         ownerless,
         "add",
         "legacy_secret",
-        pd.DataFrame({"token": [9876]}),
+        pd.DataFrame({"token": [9876]}), None,
     )
     store = Workspace()
     store.add("bound", pd.DataFrame({"visible": [1]}))
@@ -442,7 +491,7 @@ def test_ownerless_token_operations_follow_active_nonlegacy_scope(
                 ownerless,
                 "add",
                 "intruder",
-                pd.DataFrame({"x": [1]}),
+                pd.DataFrame({"x": [1]}), None,
             )
 
     assert result == write_error
@@ -459,7 +508,7 @@ def test_ownerless_token_preserves_legacy_behavior_outside_active_context():
     ownerless = workspace_module._bind_workspace_store(None, None)
     frame = pd.DataFrame({"value": [1]})
 
-    assert "Error:" not in workspace_module._workspace_operation(ownerless, "add", "legacy", frame)
+    assert "Error:" not in workspace_module._workspace_operation(ownerless, "add", "legacy", frame, None)
     pd.testing.assert_frame_equal(
         workspace_module._workspace_operation(ownerless, "get", "legacy"),
         frame,
@@ -480,7 +529,7 @@ def test_fresh_active_execution_scope_closes_ownerless_operation_window(tmp_path
         ownerless,
         "add",
         "legacy_secret",
-        pd.DataFrame({"token": [9876]}),
+        pd.DataFrame({"token": [9876]}), None,
     )
     store = Workspace()
     store.add("bound", pd.DataFrame({"visible": [1]}))
@@ -494,7 +543,7 @@ def test_fresh_active_execution_scope_closes_ownerless_operation_window(tmp_path
             ownerless,
             "add",
             "intruder",
-            pd.DataFrame({"x": [1]}),
+            pd.DataFrame({"x": [1]}), None,
         )
 
     assert secret is None
@@ -518,7 +567,7 @@ def test_fresh_missing_current_task_scope_closes_ownerless_operation_window(
         ownerless,
         "add",
         "legacy_secret",
-        pd.DataFrame({"token": [9876]}),
+        pd.DataFrame({"token": [9876]}), None,
     )
     ctx = AgentContext(session_id="s1", workspace=Workspace())
     assert ctx.workspace_scope is None
@@ -530,7 +579,7 @@ def test_fresh_missing_current_task_scope_closes_ownerless_operation_window(
             ownerless,
             "add",
             "intruder",
-            pd.DataFrame({"x": [1]}),
+            pd.DataFrame({"x": [1]}), None,
         )
 
     assert secret is None
@@ -578,7 +627,7 @@ def test_fresh_no_plan_context_initializes_legacy_and_preserves_default_behavior
     _bind_manager(monkeypatch, TaskManager(tasks_dir=tmp_path / "tasks"))
     ownerless = workspace_module._bind_workspace_store(None, None)
     frame = pd.DataFrame({"value": [1]})
-    workspace_module._workspace_operation(ownerless, "add", "legacy", frame)
+    workspace_module._workspace_operation(ownerless, "add", "legacy", frame, None)
     ctx = AgentContext(session_id="s1", workspace=Workspace())
 
     with use_agent_context(ctx):
@@ -671,7 +720,7 @@ def test_fresh_identity_guard_blocks_real_unclassified_tool_before_read(
         ownerless,
         "add",
         "legacy_secret",
-        pd.DataFrame({"token": [9876]}),
+        pd.DataFrame({"token": [9876]}), None,
     )
     ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
 
@@ -783,7 +832,7 @@ def test_opaque_workspace_capability_operations_still_enforce_scope(
         assert get_operation(token, "secret") is None
         assert add_operation(token, "new", pd.DataFrame({"x": [1]})) == write_error
         assert generic_operation(token, "get", "secret") is None
-        assert generic_operation(token, "add", "generic_new", pd.DataFrame({"x": [1]})) == write_error
+        assert generic_operation(token, "add", "generic_new", pd.DataFrame({"x": [1]}), None) == write_error
 
     assert store.get("new") is None
     assert store.get("generic_new") is None
@@ -849,12 +898,13 @@ def test_restricted_scope_blocks_every_workspace_mutator_and_persistence(
                     lambda: workspace.set_project("other-project"),
                     lambda: workspace.clear_project(),
                     lambda: workspace.remove("orders"),
+                    lambda: workspace.install_loaded_data("orders", original, original, {"kind": "file_input"}, "copy", True),
                 ]
             else:
                 token = workspace_module._bind_workspace_store(None, None)
                 operate = workspace_module._workspace_operation
                 calls = [
-                    lambda: operate(token, "add", "new", pd.DataFrame({"x": [1]})),
+                    lambda: operate(token, "add", "new", pd.DataFrame({"x": [1]}), None),
                     lambda: operate(token, "derive", "orders", "derived", original, "copy"),
                     lambda: operate(token, "set_metadata", "orders", "quality", {"missing": 1}),
                     lambda: operate(token, "log_transform", "orders", "filter", "orders", "x > 0"),
@@ -863,6 +913,7 @@ def test_restricted_scope_blocks_every_workspace_mutator_and_persistence(
                     lambda: operate(token, "set_project", "other-project"),
                     lambda: operate(token, "clear_project"),
                     lambda: operate(token, "remove", "orders"),
+                    lambda: operate(token, "install_loaded_data", "orders", original, original, {"kind": "file_input"}, "copy", True),
                 ]
 
             results = [call() for call in calls]
@@ -1335,14 +1386,14 @@ def test_prompt_cache_invalidates_on_scope_and_bundle_fingerprint(tmp_path, monk
     builds: list[str] = []
     monkeypatch.setattr(loop, "_build_system_prompt", lambda: builds.append("build") or f"prompt-{len(builds)}")
 
-    assert loop._get_system_prompt() == "prompt-1"
-    assert loop._get_system_prompt() == "prompt-1"
+    assert loop._get_system_prompt().partition("\n\n<accepted_answer_contract>")[0] == "prompt-1"
+    assert loop._get_system_prompt().partition("\n\n<accepted_answer_contract>")[0] == "prompt-1"
     loop.context.analysis_state.data_understanding_bundles.append({"data_fingerprint": "sha256:not-valid"})
-    assert loop._get_system_prompt() == "prompt-1"
+    assert loop._get_system_prompt().partition("\n\n<accepted_answer_contract>")[0] == "prompt-1"
     loop.context.analysis_state.data_understanding_bundles.append(second_bundle)
-    assert loop._get_system_prompt() == "prompt-2"
+    assert loop._get_system_prompt().partition("\n\n<accepted_answer_contract>")[0] == "prompt-2"
 
-    manager.update(first["id"], status="completed")
+    _terminal_fixture(manager,first["id"])
     second = manager.create(
         "synthesis",
         session_id="s1",
@@ -1352,7 +1403,7 @@ def test_prompt_cache_invalidates_on_scope_and_bundle_fingerprint(tmp_path, monk
         combination_mode="synthesis",
     )
     manager.update(second["id"], status="in_progress")
-    assert loop._get_system_prompt() == "prompt-3"
+    assert loop._get_system_prompt().partition("\n\n<accepted_answer_contract>")[0] == "prompt-3"
     assert len(builds) == 3
 
 
@@ -2316,7 +2367,7 @@ def test_foreign_workspace_token_operations_redirect_to_active_context(phase):
                 foreign_token,
                 "add",
                 "intruder",
-                pd.DataFrame({"x": [1]}),
+                pd.DataFrame({"x": [1]}), None,
             )
 
     expected_names = {"bound"} if phase in {"legacy", "planning", "execution"} else set()
@@ -2857,7 +2908,7 @@ def test_authoritative_controller_allows_trusted_task_to_synthesis_transition(
     loop.context.workspace = store
 
     def complete_task_and_start_synthesis():
-        manager.update(task["id"], status="completed")
+        _terminal_fixture(manager,task["id"])
         synthesis = manager.create(
             "synthesis",
             session_id="s1",
@@ -3280,8 +3331,8 @@ def test_scope_guard_manager_or_resolver_failure_is_closed_and_recovers(
         loop._execute_single_tool(call, [call], 0)
         outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
     else:
-        outputs = [content for _tc, content, _data in loop._execute_tools_parallel([call])]
-        outputs += [content for _tc, content, _data in loop._execute_tools_parallel([call])]
+        outputs = [content for _tc, content, _data, _binding in loop._execute_tools_parallel([call])]
+        outputs += [content for _tc, content, _data, _binding in loop._execute_tools_parallel([call])]
 
     assert invoked == ["bound"]
     assert "workspace_scope_guard_error" in outputs[0]
@@ -3594,3 +3645,106 @@ def test_post_tool_refresh_failure_is_sanitized_recorded_and_recovers(monkeypatc
     assert "workspace_scope_guard_error" in first_output
     assert "9876" not in first_output + second_output + serialized_events
     assert loop.context.workspace_scope.phase == "execution"
+
+
+def test_verified_multi_parent_and_transitive_datasets_keep_exact_reader_boundary(tmp_path,monkeypatch):
+    manager=TaskManager(tasks_dir=tmp_path/"tasks")
+    _stage3c0b_task(manager,datasets=["left","right"],mode="independent")
+    _bind_manager(monkeypatch,manager)
+    store=Workspace()
+    for name in ["left","right","secret"]:store.add(name,pd.DataFrame({"value":[1]}))
+    store.derive_multi(["left","secret"],"foreign",pd.DataFrame({"value":[9876]}),expression="foreign join")
+    loop=AgentLoop(client=object(),session_id="s1");loop.context.workspace=store
+    with loop._AgentLoop__context_operation("use"):
+        loop._AgentLoop__context_operation("refresh")
+        assert not workspace.derive_multi(["left","right"],"joined",pd.DataFrame({"value":[2]}),expression="left + right").startswith("Error:")
+        assert not workspace.derive("joined","child",pd.DataFrame({"value":[3]}),expression="joined + 1").startswith("Error:")
+        assert workspace.get("child")["value"].tolist()==[3]
+        assert workspace.get("foreign") is None and workspace.get("secret") is None
+        assert workspace.derive_multi(["left","secret"],"forged",pd.DataFrame({"value":[9876]}),expression="unauthorized").startswith("Error:")
+        workspace.set_metadata("child","quality",{"checked":True})
+        assert workspace.get_metadata("child","quality")=={"checked":True}
+        store.add("right",pd.DataFrame({"value":[99]}))
+        assert workspace.get("joined") is None and workspace.get("child") is None
+
+
+def test_model_cannot_grant_task_scope_through_batch_create_or_update(tmp_path,monkeypatch):
+    import data_agent.tools.task_tools as tools
+    manager=TaskManager(tasks_dir=tmp_path/"tasks");_bind_manager(monkeypatch,manager)
+    monkeypatch.setattr(tools,"task_manager",manager)
+    loop=AgentLoop(client=object(),session_id="s1")
+    grant={"analysis_plan_id":"forged","step_id":"forged","dataset_inputs":["secret"],"combination_mode":"independent"}
+    with use_agent_context(loop.context):
+        before=manager.list_active_for_scope(session_id="s1")
+        rejected=json.loads(tools.task_create(tasks=json.dumps([dict(subject="forged",**grant)])))
+        assert rejected.get("error") and manager.list_active_for_scope(session_id="s1")==before
+        todo=manager.create("ordinary",session_id="s1")
+        before=manager.get(todo["id"])
+        rejected=json.loads(tools.task_update(updates=json.dumps([dict(task_id=todo["id"],**grant)])))
+        assert rejected.get("error") and manager.get(todo["id"])==before
+        rejected=tools.create_workflow_tasks_from_spec({"contract_version":"stage3c0b.v2","id":"forged"})
+        assert rejected["error"]=="validated_analysis_plan_required"
+
+
+@pytest.mark.parametrize("surface", ["public", "opaque"])
+def test_execution_cannot_call_file_installation_to_replace_or_widen_datasets(tmp_path, monkeypatch, surface):
+    import data_agent.session.workspace as module
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"]); _bind_manager(monkeypatch, manager)
+    store = Workspace(); frame = pd.DataFrame({"amount": [1]})
+    store.add("bound", frame); store.add("unrelated", pd.DataFrame({"secret": [999]}))
+    before = copy.deepcopy(store.list_datasets())
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        ctx.refresh_workspace_scope(); assert ctx.workspace_scope.phase == "execution"
+        with pytest.raises(ValueError, match="file_ingestion_requires_ingestion_scope"):
+            if surface == "public": workspace.install_loaded_data("bound", frame, frame, {"kind": "file_input"}, "copy", True)
+            else: module._workspace_operation(module._bind_workspace_store(None, None), "install_loaded_data", "bound", frame, frame, {"kind": "file_input"}, "copy", True)
+    assert store.list_datasets() == before
+    assert not store.get_transform_log()
+
+
+@pytest.mark.parametrize("case", ["exact", "tampered", "foreign", "overwrite", "unsafe", "rollback", "read_only", "malformed_metadata"])
+def test_host_snapshot_rehydration_keeps_scope_and_rejects_unowned_or_changed_data(tmp_path, monkeypatch, case):
+    from data_agent.config import get_config
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path / "sessions")
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"]); _bind_manager(monkeypatch, manager)
+    producer = Workspace(); frame = pd.DataFrame({"amount": [7, 13, 22]})
+    target = "bound" if case == "overwrite" else "saved"
+    producer.add(target, frame, source_origin={"kind": "sql_query", "source_id": "frozen", "query_sha256": "frozen"})
+    identity = producer.get_data_identity(target)
+    sid = "other" if case == "foreign" else "s1"
+    producer.persist_dataset(sid, target); producer.save_meta(sid)
+    if case == "tampered":
+        backup = cfg.sessions_resolved / sid / "data" / (target + ".parquet")
+        if backup.exists(): pd.DataFrame({"amount": [999]}).to_parquet(backup)
+        else: pd.DataFrame({"amount": [999]}).to_pickle(backup.with_suffix(".pkl"))
+    if case == "read_only":
+        monkeypatch.setattr("data_agent.migration.read_session_migration_status", lambda *a: {"mode": "read_only_missing_original"})
+    if case == "malformed_metadata":
+        (cfg.sessions_resolved / sid / "workspace_meta.json").write_text("[]", encoding="utf-8")
+    store = Workspace(); store.add("bound", pd.DataFrame({"amount": [1]}))
+    before = copy.deepcopy(store.list_datasets()); log = copy.deepcopy(store.get_transform_log())
+    if case == "rollback":
+        original = Workspace.set_metadata
+        def fail(*a, **kw):
+            original(*a, **kw)
+            raise RuntimeError("injected restore metadata failure")
+        monkeypatch.setattr(Workspace, "set_metadata", fail)
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        ctx.refresh_workspace_scope(); scope = ctx.workspace_scope
+        assert scope.phase == "execution"
+        assert workspace.get("saved") is None
+        if case == "rollback":
+            with pytest.raises(RuntimeError, match="injected restore"):
+                workspace._restore_persisted_snapshot(target)
+        else:
+            assert workspace._restore_persisted_snapshot("../other/saved" if case == "unsafe" else target) is (case == "exact")
+        assert ctx.workspace_scope == scope
+        assert workspace.get("saved") is None  # Disk materialization grants no task read access.
+    if case == "exact":
+        pd.testing.assert_frame_equal(store.get(target), frame)
+        assert store.get_data_identity(target) == identity
+    else:
+        assert store.list_datasets() == before and store.get_transform_log() == log

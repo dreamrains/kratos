@@ -60,6 +60,7 @@ class ServiceRequestResult:
     reason: str
     record: ConfirmationRecord | None = None
     reused_confirmation_id: str = ""
+    reused_question_id: str = ""
 
 
 _LOCKS_GUARD = threading.Lock()
@@ -114,6 +115,7 @@ class ConfirmationService:
                     disposition=policy_result.disposition,
                     reason=policy_result.reason,
                     reused_confirmation_id=policy_result.reused_confirmation_id,
+                    reused_question_id=policy_result.reused_question_id,
                 )
 
             existing = records.get(candidate.confirmation_id)
@@ -442,6 +444,8 @@ class ConfirmationService:
 
     @staticmethod
     def _validate_answer(record: ConfirmationRecord, answer: Any) -> Any:
+        if record.resolution_params.get("question_bindings"):
+            return ConfirmationService._validate_question_answers(record, answer)
         values = {option.value for option in record.options}
         if record.answer_mode == AnswerMode.SINGLE_SELECT:
             if isinstance(answer, str) and answer in values:
@@ -477,6 +481,54 @@ class ConfirmationService:
         if not isinstance(answer, str) or not answer.strip():
             raise ConfirmationAnswerError("answer must contain text")
         return answer.strip()
+
+    @staticmethod
+    def _validate_question_answers(record, answer):
+        try:
+            supplied = json.loads(answer) if isinstance(answer, str) else answer
+        except ValueError as exc:
+            raise ConfirmationAnswerError("multi-question answer must be JSON") from exc
+        bindings = record.resolution_params["question_bindings"]
+        pending = [b for b in bindings if b["disposition"] == "confirmation"]
+        if not isinstance(supplied, list) or len(supplied) != len(pending):
+            raise ConfirmationAnswerError("answer must cover each displayed question exactly once")
+        answers = {}
+        for binding, item in zip(pending, supplied):
+            payload = binding["request"]
+            if (not isinstance(item, dict) or item.get("question_id") != binding["question_id"]
+                    or item.get("question") != payload["question"]
+                    or type(item.get("is_free_input")) is not bool
+                    or "answer" not in item):
+                raise ConfirmationAnswerError("answer question identity or shape does not match")
+            raw = item["answer"]; free = item["is_free_input"]
+            status = raw if not free and isinstance(raw, str) and raw in {"skipped", "cancelled"} else "resolved"
+            if status != "resolved":
+                if not record.skippable:
+                    raise ConfirmationAnswerError("question cannot be skipped")
+                normalized = raw
+            else:
+                request = ConfirmationRequest.from_dict(payload)
+                child = ConfirmationRecord.from_request(request, now=record.updated_at)
+                options = {o.value for o in request.options}
+                if not free and options:
+                    valid = (isinstance(raw, str) and raw in options if request.answer_mode == AnswerMode.SINGLE_SELECT
+                             else isinstance(raw, list) and bool(raw) and all(isinstance(v,str) and v in options for v in raw))
+                    if not valid:
+                        raise ConfirmationAnswerError("selected answer must match the question options")
+                if free and child.answer_mode == AnswerMode.MULTI_SELECT and isinstance(raw,str):
+                    raw = [raw]
+                normalized = ConfirmationService._validate_answer(child, raw)
+            answers[binding["question_id"]] = dict(question_id=binding["question_id"],
+                question=payload["question"], answer=normalized, is_free_input=free, status=status,
+                **{key:payload[key] for key in ("decision_key","data_version","spec_version")})
+        result = []
+        for binding in bindings:
+            qid = binding["question_id"]; payload = binding["request"]
+            result.append(answers[qid] if qid in answers else dict(question_id=qid,
+                question=payload["question"], answer=binding.get("answer"), is_free_input=False,
+                status=binding["disposition"],
+                **{key:payload[key] for key in ("decision_key","data_version","spec_version")}))
+        return json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def _transition(
         self,

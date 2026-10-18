@@ -126,10 +126,12 @@ def test_retention_analysis_records_quality_limits_for_descriptive_claims(audit_
     }
     evidence = _load_json_tool_result(record_evidence_record(json.dumps(payload, ensure_ascii=False)))
 
-    assert evidence["confidence_auto_downgraded"] is True
-    assert evidence["original_confidence"] == "high"
-    assert evidence["calibration_warnings"]
-    assert "统计" in " ".join(evidence.get("auto_generated_limitations", []))
+    assert not evidence.get("confidence_auto_downgraded")
+    assert not evidence.get("calibration_warnings") and not evidence.get("auto_generated_limitations")
+    # The actual original weighted measurements remain exact. A self-reported
+    # confidence label cannot publish these or invent a statistical test.
+    assert weighted_day7 < weighted_day1 and "saved" in evidence
+
 
 
 @pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")

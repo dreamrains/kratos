@@ -59,6 +59,12 @@ EVIDENCE_INPUT_SCHEMA = {
             },
         },
         "derived_measurements": {
+            "description": (
+                "Candidate arithmetic over unique canonical operand identities in this EvidenceRecord. "
+                "difference, ratio, percent_change and percentage_point_change require exactly two operand_refs; "
+                "sum and product require at least one. Reusing one unique operand explicitly is allowed. "
+                "Arithmetic validation does not grant source-value, unit or fact authority."
+            ),
             "type": "array",
             "items": {
                 "type": "object",

@@ -54,7 +54,9 @@ class AnalysisFlowController:
         if intent.analysis_stage in {"discover", "scope", "plan", "execute", "report", "follow_up"}:
             if state.stage in ("discover", "follow_up") or intent.analysis_stage != "discover":
                 state.stage = intent.analysis_stage
-        if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"}:
+        if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"} or (
+            intent.intent_type == "data_operation" and state.analysis_spec is not None
+        ):
             selection = select_playbooks(
                 user_input,
                 intent,
@@ -62,7 +64,10 @@ class AnalysisFlowController:
                 dataset_profile,
                 llm_client=llm_client,
             )
-            apply_selection_to_state(state, selection)
+            apply_selection_to_state(
+                state, selection,
+                continuation_of_plan_id=intent.continuation_of_plan_id,
+            )
         if intent.intent_type == "directed_analysis" and state.analysis_spec:
             self.ensure_workflow_tasks(state)
             self.ensure_confirmation_task(state)
@@ -259,7 +264,7 @@ class AnalysisFlowController:
         for field in ("metrics", "dimensions", "time_scope"):
             val = spec.get(field)
             if isinstance(val, (list, str)) and val:
-                signal_parts.extend(val if isinstance(val, list) else [val])
+                signal_parts.extend(item for item in (val if isinstance(val, list) else [val]) if isinstance(item, str))
         for rec in evidence[-3:]:
             for field in ("claim", "method"):
                 val = rec.get(field, "")

@@ -12,7 +12,7 @@ from data_agent.tools.sandbox import run_python
 from data_agent.tools.task_tools import task_create
 
 
-def test_forecast_accepts_string_periods_and_marks_simple_fallback():
+def test_forecast_rejects_retired_simple_method_with_string_periods():
     ws = Workspace()
     ws.add("sales", pd.DataFrame({
         "date": pd.date_range("2026-01-01", periods=20),
@@ -23,9 +23,8 @@ def test_forecast_accepts_string_periods_and_marks_simple_fallback():
     with use_agent_context(ctx):
         result = json.loads(forecast("sales", target_col="revenue", date_col="date", periods="3", method="simple"))
 
-    assert len(result["forecast"]) == 3
-    assert result["periods"] == 3
-    assert result["fallback_used"] is False
+    assert result["error_type"] == "invalid_parameter"
+    assert result["field"] == "method"
 
 
 def test_forecast_rejects_invalid_periods_with_structured_error():
@@ -50,7 +49,7 @@ def test_forecast_infers_date_column_when_missing():
     ctx = AgentContext(session_id="forecast_infer_date", workspace=ws)
 
     with use_agent_context(ctx):
-        result = json.loads(forecast("sales", target_col="revenue", periods=2, method="simple"))
+        result = json.loads(forecast("sales", target_col="revenue", periods=2, method="auto"))
 
     assert result["date_col"] == "biz_date"
     assert len(result["forecast"]) == 2
@@ -69,6 +68,9 @@ def test_run_python_result_marks_fallback_policy_and_purpose():
     result = json.loads(run_python("1 + 1", purpose="quick unsupported calculation check"))
 
     assert result["result"] == "2"
+    assert result["result_data"] == 2
+    assert result["result_data_status"] == "available"
+    assert result["dataset_reads"] == []
     assert result["fallback_policy"]["role"] == "supplemental"
     assert result["fallback_policy"]["purpose"] == "quick unsupported calculation check"
 

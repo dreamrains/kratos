@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Optional
 
 import numpy as np
@@ -11,6 +12,8 @@ import pandas as pd
 from data_agent.session.workspace import workspace
 from data_agent.tools._utils import get_df
 from data_agent.tools.registry import registry
+from data_agent.agent.publication.native import MINIMAL_PRODUCT_CONTRACTS
+from data_agent.agent.publication.deliveries import CV_FOLDS_SCHEMA
 
 
 # 存储trained models
@@ -20,7 +23,15 @@ _trained_models: dict = {}
 _trained_model_metadata: dict = {}
 
 
-def _record_model(name: str, key: str, target_col: str, feature_cols: list[str], model, kind: str) -> None:
+def _model_key(name: str, kind: str, target_col: str) -> str:
+    from data_agent.agent.context import get_current_context
+    context=get_current_context()
+    scope=[getattr(context,"session_id",None),getattr(context,"project_name",None)]
+    owner=hashlib.sha256(json.dumps(scope,ensure_ascii=False).encode("utf-8")).hexdigest()[:24]
+    return f"{owner}:{name}_{'cls' if kind=='classification' else 'reg'}_{target_col}"
+
+
+def _record_model(name: str, key: str, target_col: str, feature_cols: list[str], model, kind: str, label_mapping=None) -> None:
     _trained_models[key] = model
     _trained_model_metadata[key] = {
         "model_key": key,
@@ -28,20 +39,36 @@ def _record_model(name: str, key: str, target_col: str, feature_cols: list[str],
         "target_col": target_col,
         "feature_cols": list(feature_cols),
         "data_identity": workspace.get_data_identity(name),
+        "label_mapping": list(label_mapping or []),
     }
 
 
-@registry.register(
-    name="forecast",
-    description="时间序列预测。支持 Prophet 和简单统计方法。返回诊断指标（MAPE、RMSE、季节性强度）。",
-    schema_overrides={
-        "name": {"description": "数据集名称"},
-        "target_col": {"description": "预测目标列"},
-        "date_col": {"description": "日期列名"},
-        "periods": {"description": "预测期数"},
-        "method": {"description": "预测方法", "enum": ["auto", "simple", "prophet"]},
-    },
-)
+def _supervised_data(name,target_col,features,method,allowed,cv_folds):
+    """One input contract shared by the existing supervised producers."""
+    def error(code,message):return None,None,json.dumps({"error":message,"error_type":code},ensure_ascii=False)
+    if method not in allowed:return error("unsupported_model_method","不支持的显式模型方法；不会改跑auto。")
+    if type(cv_folds) is not int or cv_folds<0 or cv_folds==1:return error("invalid_cv_folds","cv_folds必须为0或至少2的整数。")
+    df,err=get_df(name)
+    if err:return error("missing_dataset",err)
+    if target_col not in df.columns:return error("missing_target",f"目标列 '{target_col}' 不存在")
+    columns=list(dict.fromkeys(c.strip() for c in features.split(",") if c.strip())) if features else [c for c in df.select_dtypes(include=[np.number]).columns if c!=target_col]
+    if not columns or any(c not in df.columns for c in columns):return error("invalid_features","特征列为空或不存在。")
+    if target_col in columns:return error("target_leakage","目标列不能同时作为训练特征。")
+    if df.columns.duplicated().any():return error("ambiguous_columns","重名列不能确定模型输入。")
+    data=df[columns+[target_col]].dropna().copy()
+    if len(data)<20:return error("insufficient_observations",f"Error: 有效数据({len(data)})太少，至少需要20条。")
+    for column in columns:
+        data[column]=pd.to_numeric(data[column],errors="coerce")
+        if not np.isfinite(data[column].to_numpy(dtype=float)).all():return error("invalid_feature_values",f"特征{column}包含非数值或非有限值。")
+    if cv_folds>len(data):return error("invalid_cv_folds","交叉验证折数不能超过有效记录数。")
+    return data,columns,None
+
+
+def _model_validation(source_rows,effective_rows):
+    return {"scheme":"random_holdout","random_state":42,"test_fraction":.2,"stratified":False,"split_unit":"row", "time_aware":False,
+            "source_rows":source_rows,"effective_rows":effective_rows,"excluded_missing_rows":source_rows-effective_rows}
+
+
 def _forecast_error(message: str, error_type: str = "tool_error", field: str = "") -> str:
     return json.dumps({"error": message, "error_type": error_type, "field": field}, ensure_ascii=False)
 
@@ -71,174 +98,18 @@ def _infer_forecast_date_col(df: pd.DataFrame) -> str:
     return ""
 
 
-def _legacy_forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, method: str = "auto") -> str:
-    periods_value, periods_error = _coerce_forecast_periods(periods)
-    if periods_error:
-        return _forecast_error(periods_error, "invalid_parameter", "periods")
-    periods = periods_value
-    df, err = get_df(name)
-    if err:
-        return err
-
-    if target_col not in df.columns:
-        return _forecast_error(f"Column '{target_col}' not found. Available columns: {list(df.columns)}", "missing_column", "target_col")
-
-    if not date_col:
-        date_col = _infer_forecast_date_col(df)
-
-    if target_col not in df.columns:
-        return f"Error: 列 '{target_col}' 不存在。可用: {list(df.columns)}"
-
-    if date_col and date_col in df.columns:
-        ts = df[[date_col, target_col]].dropna().copy()
-        ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
-        ts = ts.dropna().sort_values(date_col)
-    else:
-        ts = df[[target_col]].dropna().copy()
-
-    values = ts[target_col].values.astype(float)
-    if len(values) < 10:
-        return _forecast_error(f"Too few data points ({len(values)}); at least 10 are required.", "insufficient_data", "name")
-    if len(values) < 10:
-        return f"Error: 数据点太少 ({len(values)})，至少需要 10 个"
-
-    if method == "auto":
-        method = "simple" if len(values) < 30 else "prophet"
-
-    # 计算季节性强度（自相关）
-    seasonality_strength = 0.0
-    if len(values) >= 14:
-        max_lag = min(len(values) // 2, 30)
-        acf_vals = []
-        for lag in range(1, max_lag + 1):
-            if len(values) > lag:
-                r = np.corrcoef(values[:-lag], values[lag:])[0, 1]
-                acf_vals.append(r)
-        if acf_vals:
-            seasonality_strength = round(float(max(abs(v) for v in acf_vals)), 4)
-
-    if method == "simple":
-        # 简单方法：移动平均 + 趋势外推
-        window = min(7, len(values) // 3)
-        ma = np.convolve(values, np.ones(window) / window, mode="valid")
-        trend_slope = np.polyfit(np.arange(len(ma)), ma, 1)[0]
-        last_ma = ma[-1]
-        forecast_vals = [last_ma + trend_slope * (i + 1) for i in range(periods)]
-
-        # 计算历史拟合 MAPE 和 RMSE
-        fitted = np.convolve(values, np.ones(window) / window, mode="valid")
-        actual = values[window - 1:]
-        min_len = min(len(fitted), len(actual))
-        fitted = fitted[:min_len]
-        actual = actual[:min_len]
-        nonzero_mask = actual != 0
-        mape = round(float(np.mean(np.abs((actual[nonzero_mask] - fitted[nonzero_mask]) / actual[nonzero_mask])) * 100), 2) if nonzero_mask.any() else None
-        rmse = round(float(np.sqrt(np.mean((actual - fitted) ** 2))), 4)
-
-        result = {
-            "method": "moving_average_trend",
-            "periods": periods,
-            "date_col": date_col,
-            "fallback_used": False,
-            "window": window,
-            "trend_slope": round(float(trend_slope), 4),
-            "last_observed": round(float(values[-1]), 4),
-            "forecast": [round(float(v), 4) for v in forecast_vals],
-            "diagnostics": {
-                "mape": mape,
-                "rmse": rmse,
-                "seasonality_strength": seasonality_strength,
-            },
-            "note": "简单趋势外推，适用于短期预测",
-        }
-        return json.dumps(result, ensure_ascii=False, indent=2)
-
-    if method == "prophet":
-        try:
-            from prophet import Prophet
-
-            if date_col and date_col in ts.columns:
-                prophet_df = pd.DataFrame({
-                    "ds": ts[date_col],
-                    "y": values,
-                })
-            else:
-                dates = pd.date_range(start="2020-01-01", periods=len(values), freq="D")
-                prophet_df = pd.DataFrame({"ds": dates, "y": values})
-
-            model = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=False)
-            model.fit(prophet_df)
-
-            future = model.make_future_dataframe(periods=periods)
-            forecast_df = model.predict(future)
-
-            # 计算历史拟合 MAPE 和 RMSE
-            historical = forecast_df.iloc[:-periods]
-            hist_actual = values
-            hist_min = min(len(historical["yhat"].values), len(hist_actual))
-            yhat_hist = historical["yhat"].values[:hist_min]
-            y_actual = hist_actual[:hist_min]
-            nonzero_mask = y_actual != 0
-            mape = round(float(np.mean(np.abs((y_actual[nonzero_mask] - yhat_hist[nonzero_mask]) / y_actual[nonzero_mask])) * 100), 2) if nonzero_mask.any() else None
-            rmse = round(float(np.sqrt(np.mean((y_actual - yhat_hist) ** 2))), 4)
-
-            fc = forecast_df.tail(periods)
-            result = {
-                "method": "prophet",
-                "forecast": [],
-                "components": {
-                    "trend": round(float(fc["trend"].iloc[-1]), 4),
-                },
-                "diagnostics": {
-                    "mape": mape,
-                    "rmse": rmse,
-                    "seasonality_strength": seasonality_strength,
-                },
-            }
-            for _, row in fc.iterrows():
-                result["forecast"].append({
-                    "date": str(row["ds"].date()),
-                    "yhat": round(float(row["yhat"]), 4),
-                    "yhat_lower": round(float(row["yhat_lower"]), 4),
-                    "yhat_upper": round(float(row["yhat_upper"]), 4),
-                })
-            return json.dumps(result, ensure_ascii=False, indent=2)
-
-        except ImportError:
-            from data_agent.utils.logging import get_logger
-            get_logger("tools").warning("Prophet not available, falling back to simple forecast")
-            raw = _legacy_forecast(name, target_col, date_col, periods, "simple")
-            try:
-                result = json.loads(raw)
-                result["fallback_used"] = True
-                result["fallback_reason"] = "prophet_not_available"
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            except json.JSONDecodeError:
-                return raw
-        except (AttributeError, Exception) as e:
-            from data_agent.utils.logging import get_logger
-            get_logger("tools").warning(f"Prophet failed: {e}, falling back to simple forecast")
-            raw = _legacy_forecast(name, target_col, date_col, periods, "simple")
-            try:
-                result = json.loads(raw)
-                result["fallback_used"] = True
-                result["fallback_reason"] = f"prophet_failed: {e}"
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            except json.JSONDecodeError:
-                return raw
-
-    return f"Error: 不支持的方法 '{method}'。可用: auto, simple, prophet"
 
 
 @registry.register(
     name="forecast",
-    description="时间序列预测：候选基线经有序留出回测选择，返回区间、窗口和限制。",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["forecast"],
+    description="时间序列预测：auto/backtest原末值/线性候选经有序留出选择，返回完整时间戳、有限筛样/重复时间求和范围与未校准残差启发带；不表示95%预测覆盖。",
     schema_overrides={
         "name": {"description": "数据集名称"},
         "target_col": {"description": "预测目标列"},
         "date_col": {"description": "日期列；为空时自动推断"},
         "periods": {"description": "短期预测期数"},
-        "method": {"description": "仅支持 backtest/auto；不再将样本内拟合报告为验证"},
+        "method": {"description": "仅支持 backtest/auto；不再将样本内拟合报告为验证", "enum": ["auto", "backtest"]},
     },
 )
 def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, method: str = "auto"):
@@ -246,7 +117,7 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
     periods_value, error = _coerce_forecast_periods(periods)
     if error:
         return _forecast_error(error, "invalid_parameter", "periods")
-    if method not in {"auto", "backtest", "simple", "prophet"}:
+    if method not in {"auto", "backtest"}:
         return _forecast_error("method must be auto or backtest", "invalid_parameter", "method")
     df, lookup_error = get_df(name)
     if lookup_error:
@@ -255,223 +126,132 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
         date_col = _infer_forecast_date_col(df)
     if not date_col:
         return _forecast_error("date_col is required for a time-series forecast", "missing_date_column", "date_col")
-    from data_agent.tools.forecasting import backtested_forecast
-    result = backtested_forecast(name, target_col, date_col, periods_value)
-    if result.data is None:
-        return json.dumps({"error": result.summary, "error_type": "forecast_failed"}, ensure_ascii=False)
-    payload = dict(result.data)
-    payload["periods"] = periods_value
-    payload["date_col"] = date_col
-    payload["fallback_used"] = False
-    payload["diagnostics"] = {
-        "mae": payload.get("backtest", {}).get("mae"),
-        "backtest_scheme": payload.get("parameters", {}).get("backtest_scheme"),
-    }
-    return json.dumps(payload, ensure_ascii=False, default=str)
+    from data_agent.tools.forecasting import _forecast_result
+    try:payload=_forecast_result(df,{"name":name,"target_col":target_col,"date_col":date_col,"periods":periods_value,"method":method},workspace.get_data_identity(name))
+    except (ValueError,TypeError,OverflowError) as exc:return _forecast_error(str(exc),"forecast_failed")
+    return json.dumps(payload,ensure_ascii=False,allow_nan=False)
+
 
 
 @registry.register(
     name="classification",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["classification"],
     description="分类模型训练和评估。支持 cv_folds 交叉验证。",
     schema_overrides={
         "name": {"description": "数据集名称"},
         "target_col": {"description": "目标分类列"},
         "features": {"description": "特征列，逗号分隔，为空则自动选择数值列"},
         "method": {"description": "分类方法", "enum": ["auto", "logistic", "rf"]},
-        "cv_folds": {"description": "交叉验证折数，0表示不交叉验证"},
+        "cv_folds": dict(CV_FOLDS_SCHEMA,description="交叉验证折数，0表示不交叉验证，启用时至少2折"),
     },
 )
 def classification(name: str, target_col: str, features: str = "", method: str = "auto", cv_folds: int = 0) -> str:
     from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import train_test_split, cross_val_score
-    from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+    from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, precision_recall_fscore_support, confusion_matrix
     from sklearn.preprocessing import LabelEncoder
-
-    df, err = get_df(name)
-    if err:
-        return err
-
-    if target_col not in df.columns:
-        return f"Error: 目标列 '{target_col}' 不存在。可用: {list(df.columns)}"
-
-    if features:
-        feature_cols = [c.strip() for c in features.split(",")]
+    data,feature_cols,err=_supervised_data(name,target_col,features,method,{"auto","logistic","rf"},cv_folds)
+    if err:return err
+    try:
+        encoder=LabelEncoder();y=encoder.fit_transform(data[target_col].to_numpy())
+        labels=[v.item() if isinstance(v,np.generic) else v for v in encoder.classes_]
+        json.dumps(labels,allow_nan=False)
+    except (TypeError,ValueError) as exc:
+        return json.dumps({"error":f"分类标签类型不一致或不支持: {exc}","error_type":"invalid_class_labels"},ensure_ascii=False)
+    n_classes=len(labels)
+    if n_classes<2:return json.dumps({"error":"目标变量只有1个类别","error_type":"insufficient_classes"},ensure_ascii=False)
+    if cv_folds and min(np.bincount(y))<cv_folds:return json.dumps({"error":"每类有效观测不足以支持指定分层CV折数","error_type":"invalid_cv_folds"},ensure_ascii=False)
+    X=data[feature_cols].to_numpy(dtype=float)
+    X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=.2,random_state=42)
+    constructors={"auto":lambda:GradientBoostingClassifier(n_estimators=100,random_state=42),"logistic":lambda:LogisticRegression(max_iter=1000,random_state=42),"rf":lambda:RandomForestClassifier(n_estimators=100,random_state=42)}
+    model=constructors[method]()
+    try:
+        model.fit(X_train,y_train);y_pred=model.predict(X_test)
+        scores=cross_val_score(model,X,y,cv=cv_folds,scoring="accuracy",error_score="raise") if cv_folds else None
+    except ValueError as exc:return json.dumps({"error":f"分类训练或验证前提不足: {exc}","error_type":"model_validation_failed"},ensure_ascii=False)
+    if scores is not None and not np.isfinite(scores).all():return json.dumps({"error":"交叉验证结果非有限","error_type":"nonfinite_validation"},ensure_ascii=False)
+    all_labels=np.arange(n_classes)
+    precision,recall,f1,support=precision_recall_fscore_support(y_test,y_pred,labels=all_labels,zero_division=0)
+    class_metrics=[{"encoded":i,"label":label,"precision":round(float(precision[i]),4),"recall":round(float(recall[i]),4),"f1":round(float(f1[i]),4),"support":int(support[i])} for i,label in enumerate(labels)]
+    importances={};coefficient_classes=[]
+    if hasattr(model,"feature_importances_"):
+        importances={f:round(float(v),4) for f,v in sorted(zip(feature_cols,model.feature_importances_),key=lambda pair:-pair[1])}
+        importance_semantics="impurity_based_model_importance"
     else:
-        feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
-
-    if not feature_cols:
-        return "Error: 没有可用的特征列"
-
-    data = df[feature_cols + [target_col]].dropna()
-    if len(data) < 20:
-        return f"Error: 有效数据 ({len(data)}) 太少，至少需要 20 条"
-
-    X = data[feature_cols].values
-    y = data[target_col].values
-
-    # 标签编码（如果是字符串）
-    le = None
-    if y.dtype == object:
-        le = LabelEncoder()
-        y = le.fit_transform(y)
-
-    n_classes = len(np.unique(y))
-    if n_classes < 2:
-        return "Error: 目标变量只有 1 个类别"
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    if method == "auto":
-        model = GradientBoostingClassifier(n_estimators=100, random_state=42)
-    elif method == "logistic":
-        model = LogisticRegression(max_iter=1000, random_state=42)
-    elif method == "rf":
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-    else:
-        model = GradientBoostingClassifier(n_estimators=100, random_state=42)
-
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-
-    # 特征重要性
-    importances = {}
-    if hasattr(model, "feature_importances_"):
-        for fname, imp in sorted(zip(feature_cols, model.feature_importances_), key=lambda x: -x[1]):
-            importances[fname] = round(float(imp), 4)
-    elif hasattr(model, "coef_"):
-        coefs = model.coef_[0] if model.coef_.ndim > 1 else model.coef_
-        for fname, coef in sorted(zip(feature_cols, coefs), key=lambda x: abs(x[1]), reverse=True):
-            importances[fname] = round(float(coef), 4)
-
-    result = {
-        "method": type(model).__name__,
-        "n_classes": int(n_classes),
-        "train_size": len(X_train),
-        "test_size": len(X_test),
-        "metrics": {
-            "accuracy": round(float(accuracy_score(y_test, y_pred)), 4),
-        },
-        "feature_importance": importances,
-    }
-
-    if n_classes == 2:
-        result["metrics"]["f1"] = round(float(f1_score(y_test, y_pred, average="binary")), 4)
-        result["metrics"]["precision"] = round(float(precision_score(y_test, y_pred, average="binary")), 4)
-        result["metrics"]["recall"] = round(float(recall_score(y_test, y_pred, average="binary")), 4)
-    else:
-        result["metrics"]["f1_macro"] = round(float(f1_score(y_test, y_pred, average="macro")), 4)
-
-    # 交叉验证
-    if cv_folds >= 2:
-        cv_scores = cross_val_score(model, X, y, cv=cv_folds, scoring="accuracy")
-        result["cv"] = {
-            "folds": cv_folds,
-            "mean": round(float(cv_scores.mean()), 4),
-            "std": round(float(cv_scores.std()), 4),
-        }
-
-    # 保存模型
-    model_key = f"{name}_cls_{target_col}"
-    _record_model(name, model_key, target_col, feature_cols, model, "classification")
-
-    return json.dumps(result, ensure_ascii=False, indent=2)
+        coefficients=model.coef_;mapped=[labels[1]] if n_classes==2 else labels
+        coefficient_classes=[{"label":label,"coefficients":{f:float(v) for f,v in zip(feature_cols,row)}} for label,row in zip(mapped,coefficients)]
+        importances={f:round(float(v),4) for f,v in sorted(zip(feature_cols,coefficients[0]),key=lambda pair:-abs(pair[1]))}
+        importance_semantics="signed_coefficients_for_class_"+str(mapped[0])
+    result={"method_contract":"analysis_method_result.v1","status":"supported","claim_ceiling":"predictive_holdout_only",
+            "data_identity":workspace.get_data_identity(name),"target_col":target_col,"feature_cols":feature_cols,"requested_method":method,"method":type(model).__name__,
+            "n_classes":n_classes,"label_mapping":[{"encoded":i,"label":label} for i,label in enumerate(labels)],"positive_class":labels[1] if n_classes==2 else None,
+            "class_metrics":class_metrics,"confusion_matrix":confusion_matrix(y_test,y_pred,labels=all_labels).tolist(),"coefficients_by_class":coefficient_classes,
+            "train_size":len(X_train),"test_size":len(X_test),"validation":_model_validation(len(workspace.get(name)),len(data)),
+            "evaluation":{"y_true":y_test.tolist(),"y_pred":y_pred.tolist()},"metrics":{"accuracy":round(float(accuracy_score(y_test,y_pred)),4),"f1_macro":round(float(np.mean(f1)),4),"precision_macro":round(float(np.mean(precision)),4),"recall_macro":round(float(np.mean(recall)),4)},
+            "feature_importance":importances,"feature_importance_semantics":importance_semantics,
+            "limitations":["当前随机按行留出评估；未按时间或业务单位分组，不证明未来、总体或因果效果。","原标签统一编码；二分类默认正类为排序后末类，仅统计约定，不代表业务好坏。","特征重要性解释该模型；类别系数按公开类别分别保留，不以首类代替其他类别。"]}
+    if n_classes==2:
+        result["metrics"].update(f1=round(float(f1[1]),4),precision=round(float(precision[1]),4),recall=round(float(recall[1]),4))
+    if cv_folds:result["cv"]={"folds":cv_folds,"mean":round(float(scores.mean()),4),"std":round(float(scores.std()),4),"scores":scores.tolist(),"scheme":"stratified_kfold_without_shuffle","scoring":"accuracy"}
+    _record_model(name,_model_key(name,"classification",target_col),target_col,feature_cols,model,"classification",result["label_mapping"])
+    return json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)
 
 
 @registry.register(
     name="regression_analysis",
-    description="回归分析。支持线性回归、弹性网络、梯度提升。支持 cv_folds 交叉验证。",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["regression_analysis"],
+    description="回归分析。linear实际为ElasticNet，rf为随机森林，auto/gbrt为梯度提升。保留随机按行留出和可选CV，公开实际算法与验证限制。",
     schema_overrides={
         "name": {"description": "数据集名称"},
         "target_col": {"description": "目标回归列"},
         "features": {"description": "特征列，逗号分隔，为空则自动选择数值列"},
         "method": {"description": "回归方法", "enum": ["auto", "linear", "rf", "gbrt"]},
-        "cv_folds": {"description": "交叉验证折数，0表示不交叉验证"},
+        "cv_folds": dict(CV_FOLDS_SCHEMA,description="交叉验证折数，0表示不交叉验证，启用时至少2折"),
     },
 )
 def regression_analysis(name: str, target_col: str, features: str = "", method: str = "auto", cv_folds: int = 0) -> str:
     from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
     from sklearn.linear_model import ElasticNet
     from sklearn.model_selection import train_test_split, cross_val_score
-    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-
-    df, err = get_df(name)
-    if err:
-        return err
-
-    if target_col not in df.columns:
-        return f"Error: 目标列 '{target_col}' 不存在。可用: {list(df.columns)}"
-
-    if features:
-        feature_cols = [c.strip() for c in features.split(",")]
-    else:
-        feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
-
-    if not feature_cols:
-        return "Error: 没有可用的特征列"
-
-    data = df[feature_cols + [target_col]].dropna()
-    if len(data) < 20:
-        return f"Error: 有效数据 ({len(data)}) 太少，至少需要 20 条"
-
-    X = data[feature_cols].values
-    y = data[target_col].values.astype(float)
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    if method == "auto" or method == "gbrt":
-        model = GradientBoostingRegressor(n_estimators=100, random_state=42)
-    elif method == "linear":
-        model = ElasticNet(random_state=42)
-    elif method == "rf":
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-    else:
-        model = GradientBoostingRegressor(n_estimators=100, random_state=42)
-
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-
-    importances = {}
-    if hasattr(model, "feature_importances_"):
-        for fname, imp in sorted(zip(feature_cols, model.feature_importances_), key=lambda x: -x[1]):
-            importances[fname] = round(float(imp), 4)
-    elif hasattr(model, "coef_"):
-        for fname, coef in sorted(zip(feature_cols, model.coef_), key=lambda x: abs(x[1]), reverse=True):
-            importances[fname] = round(float(coef), 4)
-
-    result = {
-        "method": type(model).__name__,
-        "train_size": len(X_train),
-        "test_size": len(X_test),
-        "metrics": {
-            "r2": round(float(r2_score(y_test, y_pred)), 4),
-            "rmse": round(float(np.sqrt(mean_squared_error(y_test, y_pred))), 4),
-            "mae": round(float(mean_absolute_error(y_test, y_pred)), 4),
-        },
-        "feature_importance": importances,
-    }
-
-    # 交叉验证
-    if cv_folds >= 2:
-        cv_scores = cross_val_score(model, X, y, cv=cv_folds, scoring="r2")
-        result["cv"] = {
-            "folds": cv_folds,
-            "mean": round(float(cv_scores.mean()), 4),
-            "std": round(float(cv_scores.std()), 4),
-        }
-
-    model_key = f"{name}_reg_{target_col}"
-    _record_model(name, model_key, target_col, feature_cols, model, "regression")
-
-    return json.dumps(result, ensure_ascii=False, indent=2)
+    from sklearn.metrics import mean_absolute_error,mean_squared_error,r2_score
+    data,feature_cols,err=_supervised_data(name,target_col,features,method,{"auto","linear","rf","gbrt"},cv_folds)
+    if err:return err
+    y=pd.to_numeric(data[target_col],errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(y).all():return json.dumps({"error":"目标列包含非数值或非有限值","error_type":"invalid_target_values"},ensure_ascii=False)
+    if cv_folds and len(data)//cv_folds<2:return json.dumps({"error":"R2交叉验证每折至少需要两条验证观测","error_type":"invalid_cv_folds"},ensure_ascii=False)
+    X=data[feature_cols].to_numpy(dtype=float)
+    X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=.2,random_state=42)
+    constructors={"auto":lambda:GradientBoostingRegressor(n_estimators=100,random_state=42),"gbrt":lambda:GradientBoostingRegressor(n_estimators=100,random_state=42),"linear":lambda:ElasticNet(random_state=42),"rf":lambda:RandomForestRegressor(n_estimators=100,random_state=42)}
+    model=constructors[method]()
+    try:
+        model.fit(X_train,y_train);y_pred=model.predict(X_test)
+        scores=cross_val_score(model,X,y,cv=cv_folds,scoring="r2",error_score="raise") if cv_folds else None
+    except ValueError as exc:return json.dumps({"error":f"回归训练或验证前提不足: {exc}","error_type":"model_validation_failed"},ensure_ascii=False)
+    if not np.isfinite(y_pred).all() or scores is not None and not np.isfinite(scores).all():return json.dumps({"error":"模型预测或验证结果非有限","error_type":"nonfinite_validation"},ensure_ascii=False)
+    coefficients=getattr(model,"coef_",None);weights=model.feature_importances_ if hasattr(model,"feature_importances_") else coefficients
+    importance={f:round(float(v),4) for f,v in sorted(zip(feature_cols,weights),key=lambda pair:-abs(pair[1]))}
+    result={"method_contract":"analysis_method_result.v1","status":"supported","claim_ceiling":"predictive_holdout_only",
+            "data_identity":workspace.get_data_identity(name),"requested_method":method,"method":type(model).__name__,"target_col":target_col,"feature_cols":feature_cols,
+            "train_size":len(X_train),"test_size":len(X_test),"validation":_model_validation(len(workspace.get(name)),len(data)),"evaluation":{"y_true":y_test.tolist(),"y_pred":y_pred.tolist()},
+            "metrics":{"r2":round(float(r2_score(y_test,y_pred)),4),"rmse":round(float(np.sqrt(mean_squared_error(y_test,y_pred))),4),"mae":round(float(mean_absolute_error(y_test,y_pred)),4)},
+            "feature_importance":importance,"feature_importance_semantics":"signed_elastic_net_coefficients" if method=="linear" else "impurity_based_model_importance",
+            "limitations":["当前随机按行留出评估；未按时间或业务单位分组，不证明未来、总体或因果效果。","linear参数实际使用ElasticNet；不代表未惩罚普通最小二乘。","模型特征重要性或系数只描述当前拟合，不识别因果驱动。"]}
+    if coefficients is not None:result["coefficients"]={f:float(v) for f,v in zip(feature_cols,coefficients)}
+    if cv_folds:result["cv"]={"folds":cv_folds,"mean":round(float(scores.mean()),4),"std":round(float(scores.std()),4),"scores":scores.tolist(),"scheme":"kfold_without_shuffle","scoring":"r2"}
+    _record_model(name,_model_key(name,"regression",target_col),target_col,feature_cols,model,"regression")
+    return json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)
 
 
 @registry.register(
     name="attribution_analysis",
-    description="归因分析：识别目标变量的关键驱动因素，基于特征重要性和相关性。",
+    description="因素分析：原标准化 OLS＋HC3、Holm 与 VIF 的调整关联；不识别因果驱动。",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["attribution_analysis"],
     schema_overrides={
         "name": {"description": "数据集名称"},
-        "target_col": {"description": "目标变量列"},
+        "target_col": {"description": "目标变量列；不得同时作为特征"},
+        "unit_col": {"description": "可选单位列，仅披露观测范围；不据此聚合或聚类校正"},
+        "time_col": {"description": "可选时间列，仅披露观测范围；不据此校正时间相关性"},
         "features": {"description": "特征列，逗号分隔，为空则自动选择数值列"},
     },
 )
@@ -480,71 +260,10 @@ def attribution_analysis(name: str, target_col: str, features: str = "", unit_co
     if err:
         return err
 
-    from data_agent.tools.factor_analysis import factor_relationships
-    selected_features = [c.strip() for c in features.split(",") if c.strip()] if features else [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
-    result = factor_relationships(name, target_col, selected_features, unit_col, time_col)
-    if result.data is None:
-        return json.dumps({"error": result.summary}, ensure_ascii=False)
-    payload = dict(result.data)
-    payload["top_drivers"] = payload.get("estimates") or payload.get("bivariate_associations") or []
-    return json.dumps(payload, ensure_ascii=False, default=str)
-
-    if target_col not in df.columns:
-        return f"Error: 目标列 '{target_col}' 不存在。可用: {list(df.columns)}"
-
-    if features:
-        feature_cols = [c.strip() for c in features.split(",")]
-    else:
-        feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
-
-    if not feature_cols:
-        return "Error: 没有可用的特征列"
-
-    data = df[feature_cols + [target_col]].dropna()
-    X = data[feature_cols].values
-    y = data[target_col].values.astype(float)
-
-    # 相关性归因
-    correlations = {}
-    for col in feature_cols:
-        r = np.corrcoef(data[col].values, y)[0, 1]
-        correlations[col] = round(float(r), 4)
-
-    # 优先复用已训练的模型
-    model_key = f"{name}_reg_{target_col}"
-    if model_key in _trained_models and hasattr(_trained_models[model_key], "feature_importances_"):
-        model = _trained_models[model_key]
-        reused = True
-    else:
-        from sklearn.ensemble import GradientBoostingRegressor
-        model = GradientBoostingRegressor(n_estimators=100, random_state=42)
-        model.fit(X, y)
-        reused = False
-
-    model_importance = {}
-    for fname, imp in sorted(zip(feature_cols, model.feature_importances_), key=lambda x: -x[1]):
-        model_importance[fname] = round(float(imp), 4)
-
-    # 综合评分
-    drivers = []
-    for col in feature_cols:
-        corr_score = abs(correlations.get(col, 0))
-        imp_score = model_importance.get(col, 0)
-        combined = round(corr_score * 0.3 + imp_score * 0.7, 4)
-        drivers.append({
-            "feature": col,
-            "correlation": correlations.get(col, 0),
-            "model_importance": model_importance.get(col, 0),
-            "combined_score": combined,
-        })
-
-    drivers.sort(key=lambda x: x["combined_score"], reverse=True)
-
-    result = {
-        "target": target_col,
-        "top_drivers": drivers[:10],
-        "method": "correlation + GradientBoosting importance",
-        "model_reused": reused,
-    }
-
-    return json.dumps(result, ensure_ascii=False, indent=2)
+    from data_agent.tools.factor_analysis import _attribution_result
+    from data_agent.session.workspace import workspace
+    try:
+        payload=_attribution_result(df,{"name":name,"target_col":target_col,"features":features,"unit_col":unit_col,"time_col":time_col},workspace.get_data_identity(name))
+    except (ValueError,TypeError) as exc:
+        return json.dumps({"error":str(exc)},ensure_ascii=False)
+    return json.dumps(payload,ensure_ascii=False,allow_nan=False)

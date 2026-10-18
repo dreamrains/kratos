@@ -1,16 +1,7 @@
-"""Deterministic synthesis policy selection.
-
-This module converts intent, analysis state, and user constraints into a small
-instruction contract for final-answer synthesis. It intentionally uses only
-local rules so identical inputs produce identical output.
-"""
-
-from __future__ import annotations
-
-from dataclasses import asdict, dataclass, replace
-from html import escape as html_escape
+"""Presentation guidance; factual authority belongs to host deliveries and claims."""
+from dataclasses import asdict, dataclass
+from html import escape
 from typing import Any
-
 
 @dataclass(frozen=True)
 class SynthesisPolicy:
@@ -27,395 +18,43 @@ class SynthesisPolicy:
         return asdict(self)
 
 
-def derive_synthesis_policy(
-    intent: Any = None,
-    state: Any = None,
-    user_input: str = "",
-    data_profile: Any = None,
-    tool_error_count: int = 0,
-    user_requirements: Any = None,
-    proficiency: str | None = None,
-    analysis_spec: dict[str, Any] | None = None,
-    evidence_records: list[dict[str, Any]] | None = None,
-    **_: Any,
-) -> SynthesisPolicy:
-    """Derive a deterministic answer synthesis policy.
 
-    Parameters accept concrete repository objects or plain dictionaries. Extra
-    keyword arguments are ignored for forward compatibility with pipeline calls.
-    """
-
-    text = _join_text(user_input, user_requirements)
-    profile_text = _text(data_profile)
-    intent_type = _get(intent, "intent_type", "")
-    action = _get(intent, "recommended_action", "")
-    spec = analysis_spec if analysis_spec is not None else (_get(state, "analysis_spec", None) or {})
-    evidence = evidence_records if evidence_records is not None else (_get(state, "evidence_records", None) or [])
-    evidence = list(evidence or [])
-    verification_report = _latest_verification_report(state)
-    verification_status = str(verification_report.get("overall_status") or "").strip() if isinstance(verification_report, dict) else ""
-    wording_style = _wording_style(proficiency)
-    advisory = _is_advisory_request(text, profile_text, intent_type)
-
-    # An explicitly requested recommendation survives a terse framing: brevity
-    # bounds wording, never the user's requested action advice (S04).
-    if (_is_terse(text) or _is_direct_intent(intent_type, action)) and not advisory:
-        return _apply_verification_status(
-            SynthesisPolicy(
-                answer_mode="direct",
-                insight_depth="none",
-                business_translation="not_applicable",
-                risk_boundary="descriptive",
-                required_moves=["core_answer"],
-                suppressed_moves=["business_meaning", "assumptions"],
-                wording_style=wording_style,
-                reason="Direct or terse request; suppressing business translation.",
-            ),
-            verification_status,
-            verification_report,
-        )
-
-    if not evidence:
-        return _apply_verification_status(
-            SynthesisPolicy(
-                answer_mode="exploratory",
-                insight_depth="none",
-                business_translation="not_applicable",
-                risk_boundary="descriptive",
-                required_moves=["core_answer", "limitation", "next_step"],
-                suppressed_moves=["business_meaning", "decision_recommendation"],
-                wording_style=wording_style,
-                reason="No evidence records are available, so synthesis stays exploratory.",
-            ),
-            verification_status,
-            verification_report,
-        )
-
-    uncertain = _has_low_confidence(evidence) or _is_uncertain_context(text, profile_text, spec)
-    reasons: list[str] = []
-    if advisory:
-        reasons.append("advisory or predictive request")
-    if uncertain:
-        reasons.append("low confidence or high uncertainty")
-    if tool_error_count >= 2:
-        reasons.append(f"{tool_error_count} tool errors")
-
-    if advisory:
-        required_moves = [
-            "core_answer",
-            "evidence",
-            "method_note",
-            "assumptions",
-            "limitation",
-            "business_meaning",
-            "next_step",
-        ]
-        return _apply_verification_status(
-            SynthesisPolicy(
-                answer_mode="advisory",
-                insight_depth="light" if _is_terse(text) else "standard",
-                business_translation="cautious",
-                risk_boundary="predictive",
-                required_moves=required_moves,
-                suppressed_moves=[],
-                wording_style=wording_style,
-                reason=_reason(reasons, "Evidence supports a cautious advisory synthesis."),
-            ),
-            verification_status,
-            verification_report,
-        )
-
-    required_moves = [
-        "core_answer",
-        "evidence",
-        "method_note",
-        "limitation",
-        "business_meaning",
-        "next_step",
-    ]
-    if uncertain and "assumptions" not in required_moves:
-        required_moves.insert(3, "assumptions")
-
-    # A normal analytical request needs enough room for the conclusion,
-    # evidence, interpretation, and limits.  Explicitly terse requests are
-    # handled earlier; do not silently downgrade every other request to light.
-    depth = "standard"
-
-    return _apply_verification_status(
-        SynthesisPolicy(
-            answer_mode="analytical",
-            insight_depth=depth,
-            business_translation="cautious",
-            risk_boundary="descriptive",
-            required_moves=required_moves,
-            suppressed_moves=["decision_recommendation"],
-            wording_style=wording_style,
-            reason=_reason(
-                reasons,
-                "Evidence supports a detailed analytical synthesis."
-                if depth == "standard"
-                else "Evidence supports a light analytical synthesis.",
-            ),
-        ),
-        verification_status,
-        verification_report,
-    )
+def derive_synthesis_policy(intent=None, state=None, user_input="", data_profile=None,
+        tool_error_count=0, user_requirements=None, proficiency=None,
+        analysis_spec=None, evidence_records=None, current_request_id=None, **_):
+    def get(obj,key,default=None):
+        return obj.get(key,default) if isinstance(obj,dict) else getattr(obj,key,default)
+    route=get(intent,"intent_type","")
+    requirements=get(state,"answer_requirements",[]) or []
+    from .publication.requirements import presentation_applies
+    if current_request_id is None:
+        current_request_id = next((r.get("source_message_ref") for r in reversed(requirements) if r.get("source_message_ref")), None)
+    active=[r for r in requirements if r.get("lifecycle_status")=="active" and presentation_applies(r,current_request_id)]
+    conditional=any(r.get("semantic_kind")=="conditional_action" or "conditional_action" in r.get("purposes",[]) for r in active)
+    consultation=route in {"simple_response","knowledge_qa","analysis_consultation","intent_negotiation","data_requirement"}
+    direct=route in {"simple_response","data_operation"}
+    plan=get(state,"analysis_plan",{}) or {}
+    depth="none" if direct else "detailed" if plan.get("depth")=="comprehensive" else "standard"
+    styles=[r for r in active if r.get("presentation_role")=="style" and r.get("presentation_style")]
+    current_styles=[r for r in styles if r.get("presentation_scope")=="turn"]
+    style=next((r["presentation_style"] for r in reversed(current_styles or styles)),None)
+    style=style or {"beginner":"plain_language","novice":"plain_language","advanced":"technical_concise","expert":"technical_concise"}.get(proficiency,"balanced")
+    return SynthesisPolicy(answer_mode="direct" if direct else "consultation" if consultation else "advisory" if conditional else "analytical",
+        insight_depth=depth,business_translation="not_applicable" if consultation or direct else "cautious",
+        risk_boundary="host_claims",required_moves=["core_answer"] if direct else ["core_answer","method_note","limitation","next_step"],
+        suppressed_moves=[],wording_style=style,
+        reason="Original requirements choose presentation; verified host deliveries choose factual coverage. Evidence labels and prose do not grant or suppress facts.")
 
 
-def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
-    """Format a compact XML-like instruction block for prompt assembly."""
-
-    answer_mode = _escape_prompt_value(policy.answer_mode, quote=True)
-    insight_depth = _escape_prompt_value(policy.insight_depth, quote=True)
-    business_translation = _escape_prompt_value(policy.business_translation, quote=True)
-    risk_boundary = _escape_prompt_value(policy.risk_boundary, quote=True)
-    wording_style = _escape_prompt_value(policy.wording_style, quote=True)
-    required = ",".join(_escape_prompt_value(move) for move in policy.required_moves)
-    suppressed = ",".join(_escape_prompt_value(move) for move in policy.suppressed_moves)
-    reason = _escape_prompt_value(policy.reason)
-    return (
-        "<synthesis_policy "
-        f'answer_mode="{answer_mode}" '
-        f'insight_depth="{insight_depth}" '
-        f'business_translation="{business_translation}" '
-        f'risk_boundary="{risk_boundary}" '
-        f'wording_style="{wording_style}">'
-        f"<required_moves>{required}</required_moves>"
-        f"<suppressed_moves>{suppressed}</suppressed_moves>"
-        f"<reason>{reason}</reason>"
-        "</synthesis_policy>"
-        "<answer_discipline>"
-        "Classify every material statement as direct evidence, inferential evidence, or suggestive context. "
-        "Do not represent inferential or suggestive context as proof. "
-        "For a recommendation explicitly requested by the user, provide a conditional, reversible recommendation when the available evidence supports it; lack of causal proof alone is not a reason to erase every recommendation. "
-        "Choose Markdown structure from the content: lead with the conclusion, use tables for repeated comparisons, bullets for parallel findings or actions, and additional sections when distinct requested questions need them. Preserve every supported material finding and denominator even when that requires more than four sections. Do not dump raw JSON or mechanically repeat the same headings for every finding. "
-        "State competing explanations and the distinguishing evidence needed whenever a causal or driver conclusion remains unresolved."
-        "</answer_discipline>"
-        "<bounded_evidence_replenishment>"
-        "Before final synthesis, check whether each material claim is supported by an EvidenceRecord. "
-        "Do not read raw datasets during synthesis. "
-        "If a material claim lacks evidence and a relevant dataset is available, call record_analysis_plan "
-        "with contract_version stage3c0b.v1, the current analysis plan id, and one bounded independent step "
-        "for that dataset. "
-        "After the step runs, record the result with record_evidence_record and synthesize from EvidenceRecords. "
-        "If evidence cannot be produced within the bounded plan, return a partial answer with missing-evidence limitations."
-        "</bounded_evidence_replenishment>"
-    )
-
-
-def _get(obj: Any, key: str, default: Any = None) -> Any:
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
-
-
-def _latest_verification_report(state: Any) -> Any:
-    reports = _get(state, "verification_reports", None)
-    if not isinstance(reports, list) or not reports:
-        return None
-    latest = reports[-1]
-    return latest if isinstance(latest, dict) else None
-
-
-def _latest_verification_status(state: Any) -> str:
-    report = _latest_verification_report(state)
-    if not isinstance(report, dict):
-        return ""
-    return str(report.get("overall_status") or "").strip()
-
-
-def _apply_verification_status(
-    policy: SynthesisPolicy,
-    status: str,
-    report: Any = None,
-) -> SynthesisPolicy:
-    if status not in {"fail", "pass_with_downgrades"}:
-        return policy
-
-    required_moves = _append_unique(policy.required_moves, "limitation")
-    if status == "pass_with_downgrades":
-        reason = (
-            f"{policy.reason} Verification status is pass_with_downgrades; disclose the downgrade "
-            "and keep any requested recommendation conditional and reversible."
-        )
-        return replace(
-            policy,
-            business_translation="cautious",
-            required_moves=required_moves,
-            reason=reason,
-        )
-
-    suppressed_moves = _append_unique(policy.suppressed_moves, "decision_recommendation")
-    reason = f"{policy.reason} Verification status is {status}; decision recommendations are suppressed."
-    if isinstance(report, dict) and report.get("passed_evidence_ids"):
-        # Verification failure scopes to the failed claims; observations that
-        # passed on their own evidence remain publishable (S07).
-        reason += (
-            " Suppression applies to claims relying on failed evidence; "
-            "independent verified observations remain publishable."
-        )
-    return replace(
-        policy,
-        business_translation="cautious",
-        required_moves=required_moves,
-        suppressed_moves=suppressed_moves,
-        reason=reason,
-    )
-
-
-def _append_unique(items: list[str], item: str) -> list[str]:
-    result = list(items)
-    if item not in result:
-        result.append(item)
-    return result
-
-
-def _text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.lower()
-    return str(value).lower()
-
-
-def _join_text(*values: Any) -> str:
-    return " ".join(_text(value) for value in values if value is not None).strip()
-
-
-def _is_direct_intent(intent_type: str, action: str) -> bool:
-    return intent_type in {"simple_response", "data_operation"} or action in {
-        "answer_directly",
-        "execute_operation",
-    }
-
-
-def _is_terse(text: str) -> bool:
-    terse_markers = (
-        "formula only",
-        "no explanation",
-        "just the formula",
-        "only answer",
-        "answer only",
-        "terse",
-        "brief",
-        "只要公式",
-        "只给公式",
-        "只给结论",
-        "只要结论",
-        "简短",
-        "简要说",
-        "简要说明",
-        "简洁",
-    )
-    return any(marker in text for marker in terse_markers)
-
-
-_ADVISORY_MARKERS_EN = (
-    "advis",
-    "recommend",
-    "decision",
-    "should we",
-    "worth",
-    "ltv",
-    "lifetime value",
-    "forecast",
-    "predict",
-    "projection",
-    "estimate future",
-)
-# Chinese advisory/predictive wording must produce the same policy as its
-# English equivalent (S01/S02). Matching is negation-aware: "不需要建议"
-# must not count as an advisory request (S05).
-_ADVISORY_MARKERS_ZH = (
-    "行动建议",
-    "给出建议",
-    "给个建议",
-    "给一个建议",
-    "给建议",
-    "建议",
-    "推荐",
-    "该怎么",
-    "怎么办",
-    "要不要",
-    "是否值得",
-    "值不值得",
-    "决策",
-    "预测",
-    "预估",
-    "预计",
-    "推算",
-)
-
-
-def _is_advisory_request(text: str, profile_text: str, intent_type: str) -> bool:
-    from data_agent.agent.request_language import keyword_group_state
-
-    if intent_type == "comprehensive_report":
-        return True
-    combined = f"{text} {profile_text}"
-    if any(marker in combined for marker in _ADVISORY_MARKERS_EN):
-        return True
-    return keyword_group_state(text, _ADVISORY_MARKERS_ZH) == "affirmative"
-
-
-_DEPTH_MARKERS = (
-    "详细",
-    "深入",
-    "仔细",
-    "全面",
-    "诊断",
-    "深挖",
-    "透彻",
-    "detailed",
-    "in depth",
-    "deep dive",
-    "thorough",
-    "diagnose",
-    "comprehensive",
-)
-
-
-def _explicit_depth_request(text: str) -> bool:
-    from data_agent.agent.request_language import keyword_group_state
-
-    return keyword_group_state(text, _DEPTH_MARKERS) == "affirmative"
-
-
-def _has_low_confidence(evidence: list[Any]) -> bool:
-    low_markers = {"low", "weak", "uncertain", "medium_low"}
-    for record in evidence:
-        confidence = _text(_get(record, "confidence", None))
-        if any(marker in confidence for marker in low_markers):
-            return True
-    return False
-
-
-def _is_uncertain_context(text: str, profile_text: str, spec: Any) -> bool:
-    combined = f"{text} {profile_text} {_text(spec)}"
-    uncertainty_markers = (
-        "uncertain",
-        "sparse",
-        "missing",
-        "no revenue",
-        "assumption",
-    )
-    return any(marker in combined for marker in uncertainty_markers)
-
-
-def _wording_style(proficiency: str | None) -> str:
-    level = (proficiency or "").lower().strip()
-    if level in {"beginner", "novice", "nontechnical", "non-technical"}:
-        return "plain_language"
-    if level in {"advanced", "expert", "technical"}:
-        return "technical_concise"
-    return "balanced"
-
-
-def _reason(reasons: list[str], fallback: str) -> str:
-    if not reasons:
-        return fallback
-    return f"{fallback} Triggered by: {', '.join(reasons)}."
-
-
-def _escape_prompt_value(value: Any, *, quote: bool = False) -> str:
-    return html_escape(str(value), quote=quote)
+def build_synthesis_instruction(policy):
+    attributes=" ".join(key+'="'+escape(str(getattr(policy,key)),quote=True)+'"' for key in
+        ("answer_mode","insight_depth","business_translation","risk_boundary","wording_style"))
+    return ('<synthesis_policy '+attributes+'><required_moves>'+escape(",".join(policy.required_moves))+'</required_moves><reason>'+escape(policy.reason)+'</reason></synthesis_policy>'
+        '<answer_discipline>Follow the original business goals, expression preferences and constraints. '
+        'Use the current host catalogue and claim IDs for data facts, preserving source, unit, window and limitations. '
+        'Explain supported results professionally, including competing explanations and the evidence needed to distinguish them. '
+        'Keep requested actions conditional on their complete trigger and stop conditions. '
+        'Knowledge consultation may use illustrative examples without uploading data. '
+        'The existing single local semantic audit checks open explanations; research confidence labels do not approve facts. '
+        'Declare necessary typed deliveries before execution using record_analysis_plan; do not read raw data during synthesis. '
+        'Return answer_bindings.v2; host rendering supplies verified values and explicit gaps.</answer_discipline>')

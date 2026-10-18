@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from data_agent.agent.artifact_refs import hydrate_refs
+from data_agent.agent.artifact_refs import hydrate_refs, unassessed_trust_records
+from data_agent.agent.question_need_detector import _required_field_risks
 from data_agent.agent.confirmation_policy import (
     empty_confirmation_gate,
     pending_confirmation_gate,
@@ -106,12 +107,16 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
     active_route = _text(scope.get("active_route"))
     active_mode = _active_mode(state, scope, active_dataset)
 
-    contracts = hydrate_refs(_list_attr(state, "dataset_contracts"))
-    routes = hydrate_refs(_list_attr(state, "route_proposals"))
-    cleaning_logs = hydrate_refs(_list_attr(state, "cleaning_logs"))
+    contracts = hydrate_refs(_list_attr(state, "dataset_contracts"), trust_records=True)
+    routes = hydrate_refs(_list_attr(state, "route_proposals"), trust_records=True)
+    cleaning_logs = hydrate_refs(_list_attr(state, "cleaning_logs"), trust_records=True)
     confirmation_gate = pending_confirmation_gate(state) or empty_confirmation_gate()
 
-    if limit <= 0:
+    unresolved = unassessed_trust_records(state)
+    if unresolved:
+        executable = []
+        exploratory = []
+    elif limit <= 0:
         executable: list[dict[str, Any]] = []
         exploratory: list[dict[str, Any]] = []
     elif active_mode == "consulting":
@@ -134,6 +139,7 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
         exploratory = (demoted + _unsupported_exploratory(contracts, active_dataset, limit))[:limit]
 
     return {
+        "evidence_status": "unassessed" if unresolved else "current",
         "active_dataset": active_dataset,
         "active_route": active_route,
         "active_mode": active_mode,
@@ -410,25 +416,6 @@ def _consulting_exploratory(paths: list[dict[str, Any]], limit: int) -> list[dic
     return items
 
 
-def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, Any]]) -> list[str]:
-    required = set(_required_fields(route))
-    if not required:
-        return []
-    route_dataset = _text(route.get("dataset"))
-    risks: list[str] = []
-    for log in cleaning_logs:
-        log_dataset = _text(log.get("dataset"))
-        if route_dataset and log_dataset and route_dataset != log_dataset:
-            continue
-        for decision in _cleaning_decisions(log):
-            if _text(decision.get("decision_type")) != "needs_confirmation":
-                continue
-            field = _text(decision.get("column") or decision.get("field"))
-            if field in required:
-                risks.append(field)
-    return _dedupe(risks)
-
-
 def _required_fields(route: dict[str, Any]) -> list[str]:
     required = _text_list(route.get("evidence_requirements"))
     required.extend(_route_field_role_requirements(route))
@@ -475,13 +462,6 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
-
-
-def _cleaning_decisions(log: dict[str, Any]) -> list[dict[str, Any]]:
-    decisions = log.get("decisions")
-    if isinstance(decisions, list):
-        return [item for item in decisions if isinstance(item, dict)]
-    return [log] if _text(log.get("decision_type")) else []
 
 
 def _raw_list(value: Any) -> list[Any]:

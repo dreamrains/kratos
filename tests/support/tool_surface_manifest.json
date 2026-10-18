@@ -1,6 +1,6 @@
 {
   "schema_version": "tool_surface_manifest.v1",
-  "baseline": "7/13",
+  "baseline": "2026-10-08 canonical target completion; original 76 retained",
   "tools": [
     "ab_test",
     "add_mcp_server",
@@ -53,12 +53,13 @@
     "preview_data",
     "quick_profile",
     "read_file",
-    "reload_data",
     "record_analysis_plan",
     "record_analysis_spec",
+    "record_answer_targets",
     "record_data_requirement",
     "record_evidence_record",
     "regression_analysis",
+    "reload_data",
     "retrieve_knowledge_context",
     "run_python",
     "search_knowledge",

@@ -88,7 +88,7 @@ def test_trustworthy_workflow_mvp_chain():
     refined = refine_intent_with_data("help me look at this data", intent, [contract], routes)
 
     report = verify_analysis_claims(
-        claims=["GMV increased over the period"],
+        claims=[{"claim":"GMV increased over the period","evidence_id":"ev1"}],
         evidence_records=[{
             "id": "ev1",
             "claim": "GMV increased over the period",
@@ -114,6 +114,7 @@ def test_trustworthy_workflow_mvp_chain():
     assert refined.recommended_action == "guide_analysis"
     assert any(item.get("field") == "analysis_route" for item in refined.ambiguities)
     assert report["overall_status"] in {"pass", "pass_with_downgrades"}
+    assert report["claim_checks"][0]["strength"] == "unassessed"
     assert state.cleaning_logs
     assert state.preview_digests
     assert state.dataset_contracts

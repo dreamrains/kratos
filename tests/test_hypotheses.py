@@ -274,7 +274,10 @@ def test_receipt_value_and_current_data_version_authorize_only_matching_descript
     import pandas as pd
 
     from data_agent.agent.context import AgentContext, use_agent_context
-    from data_agent.agent.hypotheses import receipt_verified_hypothesis_measurements
+    from data_agent.agent.hypotheses import (
+        receipt_verified_descriptive_directions,
+        receipt_verified_hypothesis_measurements,
+    )
     from data_agent.config import get_config
     from data_agent.session.workspace import Workspace
 
@@ -287,6 +290,7 @@ def test_receipt_value_and_current_data_version_authorize_only_matching_descript
     }))
     ctx = AgentContext(session_id="hyp_receipt_values", workspace=workspace)
     ctx.analysis_state = AnalysisSessionState(session_id=ctx.session_id)
+    ctx.analysis_state.analysis_plan = {"id": "plan_value_fixture"}
     result = {"metrics": {"revenue": {"period_a": 10, "period_b": 20, "diff": 10}}}
     detail = cfg.sessions_resolved / ctx.session_id / "tool_outputs" / "comparison_detail.json"
     detail.parent.mkdir(parents=True)
@@ -296,17 +300,20 @@ def test_receipt_value_and_current_data_version_authorize_only_matching_descript
     ).hexdigest()
     identity = {"sales": workspace.get_data_identity("sales")}
     ctx.analysis_state.tool_receipts = [{
-        "id": "tr_comparison", "tool_call_id": "call_comparison", "tool_name": "compare_periods",
+        "id": "tr_comparison", "plan_id": "plan_value_fixture", "tool_call_id": "call_comparison", "tool_name": "compare_periods",
         "arguments": {"name": "sales", "date_col": "day", "metrics": "revenue"},
         "data_identities": identity, "structured_result_sha256": digest,
         "detail_ref": {"path": "tool_outputs/comparison_detail.json"},
     }]
-    hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), _state())
+    fixture_state = _state()
+    fixture_state.analysis_plan = {"id": "plan_value_fixture"}
+    hypothesis_set = build_hypothesis_set("compare revenue by period", _entry_decision(), fixture_state)
     primary = hypothesis_set["hypotheses"][0]
     record = _relation_evidence(
         "ev_receipt", primary["id"], "supports", "revenue", "increased", delta=10,
         claim="Revenue increased between compared periods.",
     )
+    record["plan_id"] = "plan_value_fixture"
     record["tool_receipt_ids"] = ["tr_comparison"]
     record["result_bindings"] = [{
         "receipt_id": "tr_comparison", "result_sha256": digest, "data_identities": identity,
@@ -319,14 +326,15 @@ def test_receipt_value_and_current_data_version_authorize_only_matching_descript
         assert supported["hypotheses"][0]["status"] == "supported"
         assert supported["hypotheses"][0]["evidence_relations"][0]["receipt_id"] == "tr_comparison"
 
-        trend_result = {"data_points": 3, "trend": {"slope": 5.0, "direction": "up", "p_value": 0.0}}
+        trend_result = {"data_points": 3, "inferred_columns": {"value_col": "revenue"},
+                        "trend": {"slope": 5.0, "direction": "up", "p_value": 0.0}}
         trend_detail = detail.parent / "trend_detail.json"
         trend_detail.write_text(json.dumps(trend_result), encoding="utf-8")
         trend_digest = "sha256:" + hashlib.sha256(
             json.dumps(trend_result, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
         ).hexdigest()
         ctx.analysis_state.tool_receipts.append({
-            "id": "tr_trend", "tool_call_id": "call_trend", "tool_name": "analyze_time_series",
+            "id": "tr_trend", "plan_id": "plan_value_fixture", "tool_call_id": "call_trend", "tool_name": "analyze_time_series",
             "arguments": {"name": "sales", "date_col": "day", "value_col": "revenue"},
             "data_identities": identity, "structured_result_sha256": trend_digest,
             "detail_ref": {"path": "tool_outputs/trend_detail.json"},
@@ -337,6 +345,7 @@ def test_receipt_value_and_current_data_version_authorize_only_matching_descript
         )
         trend_record["measurements"][0].pop("delta")
         trend_record["measurements"][0]["value"] = 5
+        trend_record["plan_id"] = "plan_value_fixture"
         trend_record["tool_receipt_ids"] = ["tr_trend"]
         trend_record["result_bindings"] = [{
             "receipt_id": "tr_trend", "result_sha256": trend_digest, "data_identities": identity,
@@ -345,6 +354,50 @@ def test_receipt_value_and_current_data_version_authorize_only_matching_descript
         assert update_hypotheses_from_evidence(
             hypothesis_set, [trend_record], verified_measurements=trend_verified,
         )["hypotheses"][0]["status"] == "supported"
+        # The model may name a slope statistic instead of the hypothesis's
+        # target metric. The current bound trend receipt still decides the
+        # closed descriptive predicate; the rejected proposal stays visible.
+        wrong_metric = dict(trend_record)
+        wrong_metric["measurements"] = [{"metric": "trend_slope_per_day", "value": 5}]
+        wrong_metric["competing_hypotheses"] = [{
+            "hypothesis_id": primary["id"], "relation": "supports",
+            "metric": "trend_slope_per_day", "observed": "increased",
+        }]
+        directions = receipt_verified_descriptive_directions(ctx.analysis_state, [wrong_metric])
+        resolved = update_hypotheses_from_evidence(
+            hypothesis_set, [wrong_metric], verified_directions=directions,
+        )
+        assert resolved["hypotheses"][0]["status"] == "supported"
+        assert resolved["hypotheses"][0]["evidence_relations"][0]["receipt_id"] == "tr_trend"
+        assert resolved["hypotheses"][0]["relation_candidates"][0]["reason"] == "metric_not_target"
+        assert resolved["hypotheses"][1]["status"] != "supported"
+
+        # Real app calls may pass only the dataset name; the bound tool result
+        # records which metric it actually inferred. Conflicting identities
+        # must not create a descriptive relation.
+        ctx.analysis_state.tool_receipts[-1]["arguments"] = {"name": "sales"}
+        assert receipt_verified_descriptive_directions(ctx.analysis_state, [wrong_metric]) == directions
+        ctx.analysis_state.tool_receipts[-1]["arguments"] = {"name": "sales", "value_col": "other"}
+        assert receipt_verified_descriptive_directions(ctx.analysis_state, [wrong_metric]) == {}
+        assert receipt_verified_hypothesis_measurements(ctx.analysis_state, [trend_record]) == {}
+        ctx.analysis_state.tool_receipts[-1]["arguments"] = {"name": "sales"}
+        assert receipt_verified_hypothesis_measurements(ctx.analysis_state, [trend_record])["ev_trend"]["revenue"]["value"] == "5.0"
+
+        flat_result = {"data_points": 3, "inferred_columns": {"value_col": "revenue"},
+                       "trend": {"slope": 0.0, "direction": "flat"}}
+        trend_detail.write_text(json.dumps(flat_result), encoding="utf-8")
+        flat_digest = "sha256:" + hashlib.sha256(
+            json.dumps(flat_result, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+        ).hexdigest()
+        ctx.analysis_state.tool_receipts[-1]["structured_result_sha256"] = flat_digest
+        wrong_metric["result_bindings"] = [{
+            "receipt_id": "tr_trend", "result_sha256": flat_digest, "data_identities": identity,
+        }]
+        flat = update_hypotheses_from_evidence(
+            hypothesis_set, [wrong_metric],
+            verified_directions=receipt_verified_descriptive_directions(ctx.analysis_state, [wrong_metric]),
+        )
+        assert flat["hypotheses"][0]["status"] == "refuted"
         causal = hypothesis_set["hypotheses"][1]
         causal_record = dict(trend_record)
         causal_record["competing_hypotheses"] = [{
@@ -364,6 +417,7 @@ def test_receipt_value_and_current_data_version_authorize_only_matching_descript
             "revenue": [100, 150, 200],
         }))
         assert receipt_verified_hypothesis_measurements(ctx.analysis_state, [record]) == {}
+        assert receipt_verified_descriptive_directions(ctx.analysis_state, [wrong_metric]) == {}
 
 
 def _verified_unit_stub(*records):
@@ -512,3 +566,13 @@ class TestHypothesisRelations:
         assert "未决" in brief or "inconclusive" in brief
         assert "区分" in brief
         assert "已排除" not in brief
+
+
+def test_host_hypothesis_predicate_uses_route_and_roles_instead_of_template_words():
+    from data_agent.agent.hypotheses import _hypothesis
+    roles={"metrics":["amount"],"date":["date"]}
+    requirements=[{"kind":"metric","field":"amount","required":True}]
+    values=[_hypothesis("set",1,"orders","trend",text,requirements,roles,"proposed",[],["primary"])["decision_rule"] for text in ["完全重写的说明", "amount changed", "no English keyword"]]
+    assert values==[{"metrics":["amount"],"predicate":"changed"}]*3
+    other=_hypothesis("set",1,"orders","profile","trend changed",requirements,roles,"proposed",[],["primary"])
+    assert other["decision_rule"]["predicate"]==""

@@ -137,7 +137,7 @@ class AnalysisSessionState:
     preview_digests: list[dict[str, Any]] = field(default_factory=list)
     route_proposals: list[dict[str, Any]] = field(default_factory=list)
     verification_reports: list[dict[str, Any]] = field(default_factory=list)
-    publication_packets: list[dict[str, Any]] = field(default_factory=list)
+    accepted_answers: list[dict[str, Any]] = field(default_factory=list)
     answer_requirements: list[dict[str, Any]] = field(default_factory=list)
     requirement_revision: int = 0
     hypothesis_sets: list[dict[str, Any]] = field(default_factory=list)
@@ -173,7 +173,7 @@ class AnalysisSessionState:
             preview_digests=list(data.get("preview_digests") or []),
             route_proposals=list(data.get("route_proposals") or []),
             verification_reports=list(data.get("verification_reports") or []),
-            publication_packets=_dict_list_or_empty(data.get("publication_packets")),
+            accepted_answers=_dict_list_or_empty(data.get("accepted_answers")),
             answer_requirements=_dict_list_or_empty(data.get("answer_requirements")),
             requirement_revision=int(data.get("requirement_revision") or 0),
             hypothesis_sets=list(data.get("hypothesis_sets") or []),
@@ -207,7 +207,7 @@ class AnalysisSessionState:
             "preview_digests": self.preview_digests,
             "route_proposals": self.route_proposals,
             "verification_reports": self.verification_reports,
-            "publication_packets": self.publication_packets,
+            "accepted_answers": self.accepted_answers,
             "answer_requirements": self.answer_requirements,
             "requirement_revision": self.requirement_revision,
             "hypothesis_sets": self.hypothesis_sets,
@@ -271,7 +271,8 @@ class AnalysisSessionState:
         self.touch()
         path = _state_path(self.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        from data_agent.utils.atomic_files import write_text_atomic
+        write_text_atomic(path, json.dumps(self.to_dict(), ensure_ascii=False, indent=2))
         return path
 
     def add_data_requirement(self, requirement: dict[str, Any]) -> dict[str, Any]:
@@ -288,7 +289,6 @@ class AnalysisSessionState:
         item.setdefault("id", uuid.uuid4().hex[:10])
         item.setdefault("created_at", _now())
         self.analysis_spec = item
-        self.analysis_plan = item
         self.goal = item.get("goal") or self.goal
         self.stage = "plan"
         return item
@@ -298,7 +298,6 @@ class AnalysisSessionState:
         item.setdefault("id", uuid.uuid4().hex[:10])
         item.setdefault("created_at", _now())
         self.analysis_plan = item
-        self.analysis_spec = item
         self.goal = item.get("goal") or self.goal
         self.stage = "plan"
         return item
@@ -317,19 +316,6 @@ class AnalysisSessionState:
         item.setdefault("id", "tr_" + uuid.uuid4().hex[:12])
         item.setdefault("created_at", _now())
         self.tool_receipts.append(item)
-        return item
-
-    def add_publication_packet(self, packet: dict[str, Any]) -> dict[str, Any]:
-        """Persist the bounded finalization hand-off in existing session state."""
-        item = dict(packet)
-        packet_id = str(item.get("id") or "")
-        if packet_id:
-            for index, existing in enumerate(self.publication_packets):
-                if str(existing.get("id") or "") == packet_id:
-                    self.publication_packets[index] = item
-                    return item
-        self.publication_packets.append(item)
-        self.publication_packets[:] = self.publication_packets[-20:]
         return item
 
     def upsert_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -730,7 +716,7 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- preview_digests: {len(state.preview_digests)}",
         f"- route_proposals: {len(state.route_proposals)}",
         f"- verification_reports: {len(state.verification_reports)}",
-        f"- publication_packets: {len(state.publication_packets)}",
+        f"- accepted_answers: {len(state.accepted_answers)}",
         f"- hypothesis_sets: {len(state.hypothesis_sets)}",
         f"- pending_confirmations: {len(pending)}",
     ]

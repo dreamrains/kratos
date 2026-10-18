@@ -43,6 +43,9 @@ class AgentManager:
         history, object context, and workspace data.
         """
         from data_agent.agent.loop import AgentLoop, set_interaction_mode
+        from data_agent.agent.publication.runtime import require_writable
+        if session_id:
+            require_writable(session_id)
 
         if session_id and session_id in self._loops:
             return self._loops[session_id]
@@ -73,6 +76,9 @@ class AgentManager:
                 loop._restore_workspace()
                 logger.info("Session restored from disk",
                             extra={"extra_data": {"session_id": sid, "messages": len(loop.messages)}})
+
+        from data_agent.web.blueprints.uploads import configure_upload_confirmation
+        configure_upload_confirmation(loop)
 
         with self._lock:
             self._loops[sid] = loop

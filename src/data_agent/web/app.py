@@ -71,4 +71,24 @@ def create_app() -> Flask:
         from flask import jsonify
         return jsonify({"error": f"File too large. Maximum size: {MAX_UPLOAD_MB}MB"}), 413
 
+    from data_agent.agent.publication.runtime import ReadOnlySessionError, require_writable
+
+    @app.errorhandler(ReadOnlySessionError)
+    def legacy_readonly(error):
+        from flask import jsonify
+        return jsonify({"error": str(error), "error_type": "legacy_session_readonly", "requires_new_session": True}), 409
+
+    @app.before_request
+    def protect_legacy_session_mutation():
+        from flask import request
+        # Reading/exporting original history stays available; old execution does not.
+        if request.method not in {"POST", "PUT", "PATCH"} or request.path.endswith("/export-reply"):
+            return None
+        if request.blueprint not in {"chat", "uploads", "commands", "sessions"}:
+            return None
+        sid = (request.view_args or {}).get("session_id") or (request.get_json(silent=True) or {}).get("session_id") or request.form.get("session_id")
+        if sid:
+            require_writable(sid)
+        return None
+
     return app

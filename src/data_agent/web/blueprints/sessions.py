@@ -22,13 +22,6 @@ from data_agent.session.history import (
 sessions_bp = Blueprint("sessions", __name__)
 
 
-def _get_model_context_window(model_id: str) -> int | None:
-    """Try to get the actual context window (max_input_tokens) for the model."""
-    from data_agent.llm.routing import model_context_window
-
-    return model_context_window(model_id)
-
-
 @sessions_bp.get("/sessions")
 def get_sessions():
     object_name = request.args.get("object_name", "")
@@ -42,29 +35,16 @@ def get_session(session_id: str):
     if not data:
         return jsonify({"error": "Session not found"}), 404
 
-    # Attach token usage — use real model context window when available
-    from data_agent.agent.compact import estimate_tokens
+    from data_agent.agent.publication.runtime import is_read_only_session
+    data["read_only"] = is_read_only_session(data)
+
     from data_agent.config import get_config
-
+    from data_agent.llm.request_policy import request_budget_status
     cfg = get_config()
-    context_window = _get_model_context_window(cfg.model_id)
-
-    if context_window is not None:
-        manager = current_app.config["agent_manager"]
-        loop = manager.get(session_id)
-        if loop and loop.messages:
-            used = estimate_tokens(loop.messages)
-        else:
-            messages = data.get("messages", [])
-            used = estimate_tokens(messages) if messages else 0
-
-        data["token_usage"] = {
-            "used": used,
-            "threshold": context_window,
-            "pct": min(round(used / max(context_window, 1) * 100), 100),
-        }
-    else:
-        data["token_usage"] = None
+    manager = current_app.config["agent_manager"]
+    loop = manager.get(session_id)
+    data["token_usage"] = request_budget_status(cfg, loop.messages if loop else data.get("messages", []),
+                    getattr(loop,"_request_budget_estimate",None) if loop else None)
 
     from data_agent.agent.confirmation.runtime import (
         build_action_registry,
@@ -76,7 +56,11 @@ def get_session(session_id: str):
         cfg.sessions_resolved,
         action_registry=build_action_registry(),
     )
-    data.update(confirmation_session_state(service, session_id))
+    if data["read_only"]:
+        # Preserve old event/snapshot bytes; no resumable card in another protocol.
+        data.update(active_confirmation=None, queued_confirmation_count=0, failed_confirmation_count=0)
+    else:
+        data.update(confirmation_session_state(service, session_id))
     runs = getattr(current_app.config["agent_manager"], "runs", None)
     data["run_state"] = runs.snapshot(session_id) if runs is not None else {}
     from data_agent.session.public_messages import public_messages
@@ -263,102 +247,22 @@ def rewind_session(session_id: str):
 @sessions_bp.get("/sessions/<session_id>/export")
 def export_session(session_id: str):
     """Export session analysis results as HTML or Markdown file."""
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.session.workspace import Workspace
+    from data_agent.tools.report import export_conversation
     fmt = request.args.get("format", "html").lower()
-    if fmt == "pdf":
-        return jsonify({
-            "error": "PDF conversation export is not supported",
-            "error_type": "unsupported_export_format",
-            "supported_formats": ["html", "markdown"],
-        }), 400
-    if fmt in ("html", "markdown", "md"):
-        from data_agent.agent.context import AgentContext, use_agent_context
-        from data_agent.session.workspace import Workspace
-        from data_agent.tools.report import export_conversation
-
-        ctx = AgentContext(session_id=session_id, workspace=Workspace())
-        with use_agent_context(ctx):
-            return jsonify(json.loads(export_conversation(format=fmt)))
-
-    if fmt not in ("html", "markdown", "md"):
-        fmt = "html"
-
-    data = load_session(session_id)
-    if not data:
-        return jsonify({"error": "Session not found"}), 404
-
-    messages = data.get("messages", [])
-
-    # Extract assistant analysis content (filter tool calls, keep text responses >30 chars)
-    analysis_blocks = []
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content", "")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        if len(content.strip()) > 30:
-            analysis_blocks.append(content.strip())
-
-    if not analysis_blocks:
-        return jsonify({"error": "No analysis results to export"}), 400
-
-    from datetime import datetime
-    from jinja2 import Template
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    title = data.get("summary", "Analysis Export") or "Analysis Export"
-    ts_file = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if fmt in ("markdown", "md"):
-        md_lines = [f"# {title}", f"\n_Generated: {timestamp}_\n"]
-        for i, block in enumerate(analysis_blocks, 1):
-            md_lines.append(f"## Analysis {i}\n")
-            md_lines.append(block)
-            md_lines.append("")
-        filename = f"export_{ts_file}.md"
-        content_type = "text/markdown"
-        content_bytes = "\n".join(md_lines).encode("utf-8")
-    else:
-        # HTML export with inline styles
-        def _md_to_html(text):
-            import re
-            text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.M)
-            text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.M)
-            text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.M)
-            text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-            text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
-            text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
-            text = re.sub(r'\n', '<br>\n', text)
-            return text
-
-        rendered = [f'<div class="analysis-block">{_md_to_html(b)}</div>' for b in analysis_blocks]
-        html = f"""<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><title>{title}</title>
-<style>
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif;max-width:960px;margin:0 auto;padding:40px 20px;color:#333;line-height:1.7}}
-h1{{color:#1a1a2e;border-bottom:3px solid #16213e;padding-bottom:12px}}
-h2{{color:#16213e;border-bottom:1px solid #e0e0e0;padding-bottom:8px;margin-top:36px}}
-.metadata{{color:#999;font-size:13px;margin-bottom:24px}}
-.analysis-block{{margin:20px 0;padding:16px 20px;background:#fafafa;border-left:3px solid #16213e;border-radius:4px}}
-code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em}}
-</style></head><body><h1>{title}</h1><div class="metadata">Generated: {timestamp}</div>{"".join(rendered)}</body></html>"""
-        filename = f"export_{ts_file}.html"
-        content_type = "text/html"
-        content_bytes = html.encode("utf-8")
-
-    return Response(
-        content_bytes,
-        mimetype=content_type,
-        headers={
-            "Content-Disposition": f"attachment; filename={filename}",
-        },
-    )
+    if not load_session(session_id):
+        return jsonify({"error":"Session not found"}), 404
+    with use_agent_context(AgentContext(session_id=session_id, workspace=Workspace())):
+        result = json.loads(export_conversation(format=fmt))
+    return jsonify(result), (400 if result.get("error_type") == "unsupported_export_format" else 500 if result.get("error") else 200)
 
 
 def _analysis_state_payload(state) -> dict:
+    from data_agent.web.event_bus import _json_safe
     pending = [c for c in state.pending_confirmations if c.get("status") == "pending"]
     return {
-        "state": state.to_dict(),
+        "state": _json_safe(state.to_dict()),
         "summary": {
             "goal": state.goal,
             "stage": state.stage,

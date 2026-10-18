@@ -11,6 +11,7 @@ from data_agent.agent.confirmation.decision import (
     is_method_approval_shaped,
     represents_business_gap,
     stable_decision_key,
+    resolved_question_records,
 )
 from data_agent.agent.confirmation.models import (
     ConfirmationContractError,
@@ -34,6 +35,7 @@ class PolicyResult:
     reason: str
     request: ConfirmationRequest | None = None
     reused_confirmation_id: str = ""
+    reused_question_id: str = ""
 
 
 class QuestionPolicy:
@@ -52,15 +54,20 @@ class QuestionPolicy:
         allow_advisory: bool = True,
     ) -> PolicyResult:
         existing = tuple(existing)
+        if candidate.resolution_params.get("question_bindings"):
+            return self._evaluate_questions(candidate, existing=existing, allow_advisory=allow_advisory)
+        if candidate.resolution_params.get("host_nonblocking_reason"):
+            return self._nonblocking(candidate.resolution_params["host_nonblocking_reason"], allow_advisory)
         reused = self._matching_resolution(candidate, existing)
         if reused is not None:
             return PolicyResult(
                 disposition=RequestDisposition.REUSED,
                 reason="A still-valid resolution already covers this decision.",
                 reused_confirmation_id=reused.confirmation_id,
+                reused_question_id=getattr(reused, "resolution_params", {}).get("_question_id", ""),
             )
 
-        if candidate.source in {"host_measurement_mapping.v1", "host_aggregate_mapping.v1"} and any(
+        if candidate.source == "host_measurement_mapping.v1" and any(
             record.status == ConfirmationStatus.SKIPPED
             and record.decision_key == candidate.decision_key
             and record.data_version == candidate.data_version
@@ -116,6 +123,35 @@ class QuestionPolicy:
             request=request,
         )
 
+    def _evaluate_questions(self, candidate, *, existing, allow_advisory):
+        from dataclasses import fields, replace
+        import json
+        bindings, visible = [], []
+        for original in candidate.resolution_params["question_bindings"]:
+            request = ConfirmationRequest.from_dict(original["request"])
+            member = QuestionCandidate(**{field.name: getattr(request, field.name) for field in fields(QuestionCandidate)})
+            result = self.evaluate(member, existing=existing, allow_advisory=allow_advisory)
+            binding = dict(original, disposition=result.disposition.value, reason=result.reason)
+            if result.disposition == RequestDisposition.REUSED:
+                resolved = self._matching_resolution(member, existing)
+                binding.update(answer=resolved.response, source_confirmation_id=resolved.confirmation_id,
+                               source_question_id=result.reused_question_id)
+            elif result.disposition == RequestDisposition.CONFIRMATION:
+                visible.append(dict(original["input"], question_id=original["question_id"],
+                                    options=[o.to_dict() for o in request.options]))
+            bindings.append(binding)
+        if not visible:
+            return self._nonblocking("各题已逐项裁决：" + json.dumps([
+                {"question": b["request"]["question"], "disposition": b["disposition"],
+                 "answer": b.get("answer"), "reason": b["reason"]} for b in bindings
+            ], ensure_ascii=False), allow_advisory)
+        params = dict(candidate.resolution_params, question_bindings=bindings,
+                      context=json.dumps(visible, ensure_ascii=False))
+        request = ConfirmationRequest.from_candidate(replace(candidate,
+            question="; ".join(q["question"] for q in visible), resolution_params=params))
+        return PolicyResult(RequestDisposition.CONFIRMATION,
+                            "Only unresolved material questions require an answer.", request=request)
+
     @staticmethod
     def _nonblocking(reason: str, allow_advisory: bool) -> PolicyResult:
         disposition = (
@@ -140,8 +176,11 @@ class QuestionPolicy:
         existing: Iterable[ConfirmationRecord],
     ) -> ConfirmationRecord | None:
         logical_key = stable_decision_key(candidate, session_id=candidate.session_id)
-        for record in existing:
+        for record in (item for original in existing for item in resolved_question_records(original)):
             if record.status != ConfirmationStatus.RESOLVED:
+                continue
+            reference = candidate.resolution_params.get("host_reuse_decision_id")
+            if reference and reference != (record.resolution_params.get("_question_id") or record.confirmation_id):
                 continue
             if record.decision_key != candidate.decision_key and (
                 not logical_key or record.decision_key != logical_key

@@ -1,844 +1,683 @@
-# 中文数据分析 Agent 可信发布架构重置计划
-
-日期：2026-09-22
-状态：实施中；当前阶段任务与退出状态见 `docs/audit/2026-09-25-trust-reset-stage-status.md`，§0.1 保留实施沿革
-适用仓库：`D:\Project\Daily\data-agent`
-编写时基线：`main@5176c41103ee1b1c77b4b44331d8225fb49890be`
-
-> 本文件是下一轮全新对话的唯一任务入口。执行者必须先阅读仓库根目录
-> `AGENTS.md`、本文件以及本文件引用的三份原始计划，再检查实际 HEAD、工作树和
-> 证据目录。不得从历史聊天摘要中自行补全设计，不得直接沿用旧的词表修补方案。
-
-> 续接进度与防遗漏索引：`docs/audit/2026-09-25-trust-reset-stage-status.md`。
-> 该表区分机制就绪、E2/E3/E4 与阶段退出；本计划的目标和退出条件仍为准。
-
-> **2026-09-27 最新门控**：`main@7780bb8` 的默认关闭待核行定位在完整 E2 后，精确授权的两例归档自然 M03 内容等价 Shadow 重渲染已执行（2 次物理调用，账本闭合）。受控机械入口可用，但预先固定的四个关键风险只命中一项，宿主引用被两次误报；自然语义校准未通过，普通 AgentLoop 调度、Phase 6.C/D、Phase 7 逐族退役及整条 E4 均未退出。身份、正反逐条判断与成本见 [Shadow R1 校准](../../audit/2026-09-27-shadow-natural-m03-r1-evaluation.md)。§0.1 旧日期条目保留实施沿革，不可据其“尚未调用”字样判断现在状态。
-
-> 用户确认的后续边界：正式默认和旧散文门保持不变，Shadow 仅诊断。R11/R16/M03/M04 的原回执、packet、scope、用户决定和审计输入已对照；下一默认关闭结构方案及正反验收见[宿主事实边界](../../audit/2026-09-27-trust-reset-host-fact-boundary.md)。这是设计门，不把行数/日期字段可见当作 Phase 5/6 质量通过，也不授权新 Provider 批次。
-
-### 0.1 当前执行检查点（2026-09-24；每次续接须重新核实）
-
-- 本节是有序实施检查点，不是可替代 `git rev-parse HEAD` / `git status` 的实时状态。早期基线 `main@b7e1f981b395a3a5007998013422886b8958487e` 曾为 clean/ahead 60；第五离线切片从 `main@7d348ad4b85c663de1b81acaa6041036fd613a32`、clean/ahead 64 进入，且未 push。`git status` 对本机全局 ignore 与 `.pytest_cache` 的权限警告不等于用户改动或测试成功。
-- Phase 0—4 已有各自 E1/E2 收据；Phase 5 **只有离线 `publication_audit.v1` 校验器，没有真实 Shadow 调度**。Phase 6 经用户批准仅启动 A（可信核心重建）＋B（纯宿主 claim 级动作）的默认关闭、纯离线准备；C（Shadow 调度与校准）和 D（正式处置/默认发布切换）各有独立进入门。不能把 A+B 的 E2 记作 Phase 5/6 完成。
-- A+B 已提交 `39246fc`、`b7e1f98`：同一 packet 的可信核心预览、当前回执范围、artifact-only 图表、受同指标 `compare_periods` 宿主复算约束的描述性假设关系，以及 `publication_effect=none` 的动作模拟。正式 AgentLoop/发布默认未接入离线投影，离线 packet 禁止进模型 prompt。最终 fresh `tmp/tprb20`：2913 passed、1 skipped、16 warnings、0 failures，JUnit SHA256 `1506832913636E32A2569E7C54D46149C60B806D7865F70100704DFE3025AA18`；Provider transport forbidden，实际 Provider initiated 0。无当前 HEAD 的完整浏览器 E3、真实 Provider E4、staging/production 证据。
-- 当前两侧未闭合：现行完整候选可放行有效 binding 旁独立无据 `99%`；直接改用现有可信核心，又会清空 R11 正确 D7/无 D30 句、R4 M03 六来源业务说明/M04 部分关系、R16 完整批次已通过的 M05 方法上下文。R4 是中断批次，不能独占 oracle；R7—R21、R16 完整批次及本地旧会话须共同校准。AC17 模型自述“缺少分母”没有宿主证明，不计作正确缺口损失。
-- 详细当前证据与边界：`docs/audit/2026-09-24-trust-reset-dual-track-calibration.md`、`docs/audit/2026-09-24-trust-reset-phase6-entry-assessment.md`、`docs/audit/2026-09-24-trust-reset-offline-core-projection.md`、`docs/audit/2026-09-23-trust-reset-implementation-handoff.md`。旧 §2.3、§11、§12 是**编写时历史快照/原始启动指令**，不代表当前仍有那两份未跟踪文件，也不撤销用户后来明确授予的 A+B 离线实施范围。
-- 下一切片的跨历史正反矩阵、R4 M03 “综合结果存在但终局 packet 未选中”结构缝隙与测试/停止门，见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md`；该旧轨迹须在当前 HEAD 的最小化形状复现，不能预判为现行缺陷。
-- 在 `ac84dd8` 后的 A+B 小切片，当前构包器也证实 `synthesize_time_series` 被允许工具集合排除；仅在显式选中回执的默认关闭离线 packet 中纳入综合事实组，普通构包/AgentLoop 不变。RED、17 项定向与最终 fresh `tmp/tprb22` 2914 passed/1 skipped/16 warnings 见上述跨历史记录 §6。该结果只是 E2，原始字段不授权 `answered`，也不证明 R4 旧终局选择机制已全修。
-- 后续 A+B 离线数值切片发现综合回执本身只有覆盖/版本元数据、没有两日金额；只在显式 `offline_workspace` 的默认关闭离线 packet 中核对六源及派生帧当前身份和实际指纹，再读取既有 copy-on-write 派生结果复算逐源变化，不解析旧 `preview_data` 文本、不跨来源合计、不授权 `answered`。RED/GREEN 与 fresh `tmp/tprb23` 2918 passed/1 skipped 见跨历史记录 §7；AgentLoop/正式发布/Shadow 均未改变。A 的价值保留和正式误放双门仍未完成。
-- 跨历史反查 R16 **已通过** M05：`transform_data(group_aggregate)` 也只把派生数据集名、列名、行数写入旧回执，旧终局 packet 的两条 `preview_data` 均 facts=0；六源专用离线表不能据此视为一般价值保留。继续前先审查现有 packet 内的通用、身份闭合的派生结果快照契约及正反 RED，防止按工具/失败逐张补表；建议与未授权边界见跨历史记录 §8。
-- 用户随后认可通用方案；A+B 第五离线切片已把 `synthesize_time_series` 与 `transform_data` 的同版本派生值放入**同一个**默认关闭 packet 的受预算 `derived_snapshots`，旧六来源表改为消费该快照再做工具专属复算。RED、结构边界和跨历史未闭合项见跨历史记录 §9。R16 型 12/120 目前仅是 `context_only` 原始字段，不能据此宣称 M05 方法/指标身份、R11 正确边界或 A 门已保留；正式 99% 误放仍在。普通发布、AgentLoop、Shadow C、处置 D 不变。
-- 上述第五切片对身份已闭合但超预算的快照在同 packet 记录 `snapshot_omissions` 并在预览说明；最终 fresh `tmp/tprb25` full-offline **2921 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `06D71A3A7B812D80B5C98FE9E36D1C9D31296FF12D9731CF136801629E8A8900`，`provider_calls=forbidden`、实际 Provider initiated 0。`tmp/tprb24` 是遗漏说明前的历史全绿，不得冒充最终时点。E3/E4、正式发布切换、push/部署均未发生。
-- 第五切片后在 `main@f2ea7e3` 只读对照 R11、R16、R4 M03/M04 与独立 99%：R11 `curve_fitting` 已执行点对给出原始 D7=0.1 但无百分比单位授权；R16 聚合值在派生帧、方法明细未入出版 facts；R4 M04 v2 趋势事实存在但旧 evidence 假设别名与真实 ID 不一致。详见跨历史记录 §10。下一步应先裁决“同一 packet 内的通用已执行结果身份及敏感字段/单位披露边界”，而非加第三张工具专用表；这尚未进入代码或正式门。
-- 用户已批准上述方向；第六 A+B 离线切片把 `curve_fitting` 点对及 `analyze_time_series` 描述字段的执行身份按回执/参数/数据版本/实际指纹投影进同一默认关闭 packet，R16 聚合方法参数还需与派生 identity 的表达式闭合。任意文本单元格默认遮蔽；单位未证实只显示原始尺度。RED 和仍未闭合的价值/发布门见跨历史记录 §11。它不授权 `answered`、假设关系、真实 Shadow、正式策略或 Provider。
-- 第六切片最终 fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`，Provider transport forbidden、实际 initiated 0。该 E2 不证明 R11 的 10% 单位、R16 旧方法表等价保留或 M04 关系已授权，也不替代 E3/E4；正式独立 99% 误放仍待默认策略门。
-- 用户批准在现有 `answer_bindings.v1` 上做**默认关闭、纯离线目标选择器试验**。第七 A+B 切片从 `main@83dac2fb3d97c8d45c7a704517b4de31f4763577` clean 状态进入：模型提议回执/数据版本/横纵列/点/期望原始值，宿主与同 packet 的已执行结果及原回执事实逐项核对；通过只记 `verified_result_identity`，`answer_coverage=unassessed`、`publication_effect=none`。无可信用户子问题绑定时不标 `answered`；正式 parser 仍拒绝该试验字段。RED、跨历史边界和最终 fresh `tmp/tprb27` **2930 passed/1 skipped/16 warnings/0 failures** 收据见跨历史记录 §12。R11 10% 单位、R16 方法价值、M04 假设 ID、正式独立 99% 仍未闭合；不可把试验等同 A 门通过或 Phase 7 开始。
-- 后续 B 预算切片从 `main@3d5f6ea` clean 状态进入：两个证据绑定的 finding 可使现有纯离线模拟返回两个待修订 claim，违背 Phase 6 “最多一次”。RED、宿主限额、未退役旧门及 R11/R16 真实复合/多轮请求的 A 门证据缺口见跨历史记录 §13；fresh `tmp/tprb28` full-offline **2931 passed/1 skipped/16 warnings/0 failures**。该修复仅限制离线修订 ID 数量，不调模型、不改变正式发布。R11 旧 `answer_requirements=[]` 且当前提取器对其复合句也返回空，不得补拆句词表或把模型 `analysis_spec` 当用户意图权威；仍保持 `unassessed` 并检查上游契约是否已有可验证身份。
-- 用户批准后，第八 A+B 离线切片从 `main@93b652e` clean 状态进入，只在已有宿主持久化要求时用 canonical history 验证其来源消息、稳定 ID/active 状态与同名工具列，仍不证明跨轮语义继承或单位；RED/当前边界及最终 fresh `tmp/tprb31` full-offline **2935 passed/1 skipped/16 warnings/0 failures** 见跨历史记录 §14。R11/R16 旧要求记录均为空，R11 契约也没有百分比尺度；因此这个协议原型不能被报成两例价值已等价保留，更不能切默认。下一上游单位/业务决定生产链须先以真实场景审查，不能让任意 Workspace metadata 或模型标签充当权威。
-- 用户随后批准默认关闭的上游单位/尺度契约切片。第九 A+B 切片在既有 `data_understanding.v1` 的 dataset 项离线添加当前数据版本/源指纹，并只从同 session/版本/列、已解决且选项可见的类型化确认记录重建单位映射；默认数据理解、自动暂停、正式发布、Shadow 与 Provider 均不接线。真实 R11/R16 旧记录无版本锚点和已解决单位决定，不能升级成 10% 等结论；单测正例不是历史正例，真实确认生产链与源文件明确单位声明仍未验证。RED、定向 **302 passed**、最终 fresh `tmp/tprb34` full-offline **2949 passed/1 skipped/16 warnings/0 failures** 与旧收据弃用原因见跨历史记录 §15。该收据仅 E2，A 的价值保留、正式 99% 误放和 C/D 独立授权门仍未闭合；不因新字段进入 Phase 7。
-- 用户选择下一 A 切片优先做多轮身份链、单位继续未确认。第十切片只在已有 `answer_bindings.v1` 的默认关闭离线提议上，核验早期用户消息**逐字片段**、canonical history 严格前缀、旧 packet/回执、同名工具输入列和当前数据版本；R16 的 `amount` 可作为结果身份线索，中文订单记录数与英文 `order_id`、R11 留存与 `retention` 均不推断同义。粗粒度意图分类不授权子问题继承，仍为 `answer_coverage/continuation_intent_status=unassessed`、原始尺度、`publication_effect=none`；正式 parser 拒绝试验字段。旧 R16 包没有该离线投影，因此测试协议正例不是历史真实通过；RED、最终 fresh `tmp/tprb35` full-offline **2953 passed/1 skipped/16 warnings/0 failures**、退役目标与剩余语义缺口见跨历史记录 §16。Phase 6 A/C/D 和 Phase 7 状态不因此升级；若下一步仍只有 `unassessed` 协议外壳，先与用户讨论语义权威来源。
-- 用户随后批准先做 Phase 5/C 的**设计与跨历史离线校准**，未批准真实 Shadow 调度/Provider 或 D 发布处置。见 `docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md`：R4 M02/M03/M04、R11 M02、R14 M05、R16 M05、R21 M02/M04 八个归档会话合计 16 份 packet、0 个现行 typed block，旧自然答案不能直接作为当前审计误删/漏检分母。当前纯函数离线复现显示，合法 M02 claim/receipt 引用旁的虚假语义理由仍可获得 `claim_evidence_bound` 并在**离线模拟**建议 `remove`，但 `publication_effect=none`；所以引用归属不等于 finding 真实或 D 行动安全。设计中的宿主只读 `audit_view` 尚未接线；下一门须同时建立真实候选可核验定位与正反价值校准，不能继续堆 `unassessed` 选择器或把 Shadow 变总门。真实调用仍须新精确冻结与显式授权；Phase 5/C、Phase 6 A/D、Phase 7 不因此宣称完成。
-- 用户批准下一步最小只读 `audit_view` 后，在 `main@603dc11` 上沿用现有持久化 publication packet、canonical history、tool receipts、typed binding 校验与宿主 renderer，重建已接受正文中**唯一同文**的 claim 位置；需求原句只作逐字来源锚点，不授跨轮继承/`answered`。离线函数默认无人调用、`publication_effect=none`，归档 R16 旧包因没有 typed binding 返回 unavailable/0 claim；独立自由散文仍不受该 view 审核。RED、结构替代、旧门、来源证明局限、定向 **26 passed** 与 fresh `tmp/tprb36` full-offline **2959 passed/1 skipped/16 warnings/0 failures** 见 Phase 5/C 校准记录 §6；Provider transport forbidden、真实 initiated 0。正式误放、A 的价值保留、C 的真实调度/质量、D 与 Phase 7 都未因此升级。
-- §6 唯一同文定位还不等于宿主原位插入证明，且会把同文两处都排除。下一小切片从 `main@0fd91d1` 进入，在既有 `answer_bindings.v1` renderer 替换时记录 typed claim ID/原位字符范围/片段 SHA，同最终答案 SHA、快照 digest 绑定到**同一已接受 packet**；离线 `audit_view` 只消费经规范历史/回执验证的 trace，旧包和恢复部分答案保持 unavailable，`publication_effect=none`。完整 RED、替代物、未退役旧门和历史双向限制见 Phase 5/C 校准记录 §7。此元数据不使自由散文 99% 可信，也不完成 Phase 5 Shadow、Phase 6 A/C/D 或 Phase 7；不应为了赶阶段把真实 Provider 审计接成总审批门。
-- 上述原位 trace 切片最终定向 **28 passed**，fresh `tmp/tprb37` full-offline **2961 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `CDBFEC1E100026895F0A3F43DE8FF44C40591331AC73E1568EC5DBBC64597B1E`；Provider transport forbidden、实际 initiated 0，仅 E2。Phase 5/6/7 完成条件见下文各阶段和交接记录 §28，E3/E4、默认处置与逐族退役均未发生。
-- `main@e05d957` 的既有 Provider-disabled `iab` 全矩阵已在 `tmp/trust-reset-e3-20260924-e05d957-r1` 按 B01—B06、IC-B01—B06、CONTENT-B03/B07 顺序执行，16 个会话的最终 run_state 为 14 completed、预期预算 failed 1、预期保存 unknown 1；刷新/压缩/导出、控制台与健康检查记录见 `docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md`。`forbidden_provider_transport=0`、实际 Provider initiated 0。此 E3 只证明脚本模型下的本地路径；未持久化逐轮 SSE terminal 序列，不能独立断言“恰好一次”，也不验收尚未启用的 Phase 6 D。真实 E4 契约的 M02“D7=10%”与当前单位未确认的用户裁决冲突，M04 的 failed-upload oracle 缺对应操作；**先讨论并修订精确冻结，不能按旧 oracle 发真实调用**。Phase 5 Shadow、Phase 6 A/C/D 和 Phase 7 的剩余门仍按本计划及交接记录 §28，不因这批 E3 自动升级。
-- 用户已批准修订上述契约，并对**本次修订后精确冻结的完整真实 Provider 批次**给予显式授权，不要求对同一冻结再次暂停请示。M02 oracle 改为 D7 原始尺度 0.10/单位未确认、仅明确单位证据可百分比转换；M04 将未安排的 failed-v2-upload 从主矩阵 hard oracle 移出，保留独立负路径回归。先完成测试、当前提交、零调用 preflight、模型/端点/夹具/提示/oracle/预算/账本核对；仅在全部一致时启动既有 `run_p08_real_matrix.py --authorized`。授权不覆盖改变冻结身份、追加探针或局部重跑；记录实际调用成本、普通失败继续全矩阵，停止条件沿用现有 P08 方案。真实结果只提升 E4 证据层，不自动宣布 Phase 5/6/7 完成。
-- 上述修订发现旧 P08 审计器 M02 仅按 `55`/`10` 子串给机械通过，无法区分原始 `0.10` 与未授权 `10%`；现将该单项标为 `unassessed`、非阻断，真实批次须逐项核对源/回执/包/正文。定向 25 passed，最终 fresh `tmp/trust-reset-fo-20260924-contract-r2` full-offline **2963 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `4AD327F5EC398580B74B2178495FC51E50869087033C9CD25B2F4C6855E942FD`，Provider transport forbidden。该 E2 不能升级为真实 M02 通过。M04 阶段上传协议仍待用户裁决后才能最终冻结；不得让一次性预加载 v2 冒充后续换版本。
-- 用户已确认 M04 唯一两阶段上传例外；`p08_real_matrix_contract.json` 明确 `v1 首轮前上传 → 首轮终态 → 同会话 v2 第二轮前上传`，每阶段仍用可见标签和一次 filechooser，其余场景一次上传。此协议修订须在新 HEAD 完成离线验证、提交和零调用 preflight 后才启动真实 Provider；旧 `1f4327e`/`r2` 收据不再是最终冻结时点。普通 M04 上传失败只记录为场景失败，不追加未冻结替代上传或局部重跑。
-- 上述协议最终定向 **26 passed**，fresh `tmp/trust-reset-fo-20260924-contract-r3` full-offline **2964 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `ACF02767CD5613CC8AAD6B021CB94DB6D362CCB6BB2DBFB687948311876C4E7F`，Provider transport forbidden。仍仅 E2；冻结 identity 以随后提交及 `freeze.json` 为准，真实调用尚未发生。
-- **随后时点的 E4 实际结果，不得再沿用上一条“尚未发生”作为当前状态**：`main@b70fbc35` 零调用 preflight 与精确冻结通过后，用户授权的 M01—M06 真实 Provider 批次已在 `tmp/trust-reset-p08-real-20260924-r1` 全顺序执行；M06 的 B 代选又获得用户对当前隔离会话的单独明确授权。最终账本 82 started/82 dispatched/0 failed（上限 120），既有场景审计 `verdict=failed`：M02 无效 answer binding/单位未确认却写百分比，M04 结构化假设关系未闭合。M01/M03/M05/M06 完成不代表语义验收：M03 正确两日表旁错写“七天跨度”，M06 单一步骤旁另给第二路径，四个成功发布 packet 的 typed trace 均为空。R4 旧 M04 有关系形状但实际假设 ID 不匹配、状态仍 inconclusive，也不能作为新 M04 已具可信关系的正例。服务已停止、端口关闭，未局部重跑、未改冻结输入；完整身份、会话映射、导出/刷新、正反价值及下一 RED/替代物/旧门见 `docs/audit/2026-09-24-trust-reset-p08-real-batch-r1.md`。该 E4 是**执行完成、验收失败**，Phase 5 真 Shadow、Phase 6 A/C/D 与 Phase 7 均不升级。下一步先按 R7—R21、R11、R16、R4、本批做双向结构校准；不得围绕本批一个词或格式放宽整篇正文，下一真实 Provider 批次须新冻结与授权。
-
-- 后续 Phase 4 纠偏从 `main@26c223d` 进入：R4 M04 的 `h_trend/h_level_shift` 提议没有匹配真实假设 ID，旧“关系数组非空”门却视为完整；本次 E4 模型又指出 guard 声称已展示的 ID 不在可见提示中。这违反 VP P5 的有效关系审计要求。Phase 4 的“完成”收窄为“task 非全局阻断已收口，**有效关系与真实 ID 展示已完成 E2 纠偏，E3/E4 仍待验**”。沿用既有同 plan、新鲜证据的宿主关系校验、晚到 plan 时刷新同一假设生产者并显示真实 ID，不改普通任务、正式自由散文策略、Shadow 或 Provider。RED、跨历史正反边界、长路径失败收据及最终 fresh `tmp/tp4a2` **2969 passed/1 skipped/16 warnings/0 failures** 见 `docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md`。`main@5467897` 的 Provider-disabled E3 服务健康，但官方 `iab` 桥接加载 policy 失败，**矩阵开始前阻断**；服务已停、Provider 0，不得写成 E3 通过或重用该 run-dir。这不更改总阶段顺序或 Phase 6 A/C/D、Phase 7、新 Provider 授权的独立门。
-- `main@5b3c75c` 只读补充复核完整 E4 与 R4/R11/R16/R21 分层：E4 四个成功发布场景共 9 份 packet、0 个现行 typed block，六个场景 `answer_requirements` 均为 0；M02 尝试的 binding 同时缺现行 `blocks`/claim ID、fact/derived refs 与单位授权，不能靠放宽 JSON 外壳修复。R4 M03 旧 `answer_bindings` 种子不等于当前 schema 已通过。另需区分 M04 **关系结构有效**与 EvidenceRecord 中模型填写的 measurement **已由工具原值复算**：现行正式校验只保证前者，后者未普遍闭合。跨历史正反证据和下一裁决见 `docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md` §8。建议暂停继续堆默认关闭字段，先裁决可验证的最小可信核心价值切片与语义身份所有权；在此之前不启动空输入的真实 Shadow，不升级 Phase 6 A/C/D 或 Phase 7，也不重用已消费的真实 Provider 授权。
-- 用户批准上述最小切片后，从 `main@3539067b` 进入：Phase 6 A 的**默认关闭**同 packet 时段比较预览可按原回执、来源 SHA、数据版本/实际帧指纹复核 R4/E4 M03 型逐来源数值，保持原始尺度、单位未确认、覆盖 `unassessed`、`publication_effect=none`；Phase 4 正式假设状态则只在原 `compare_periods`/`analyze_time_series` detail 回执的指标数值和版本闭合时授权描述性 `supported/refuted`，模型自填测量/因果标签不再足够，未证实但真实 ID 的候选保持可审计 `inconclusive`，避免无限修复。RED、跨 R4/R11/R16/E4/独立 99% 的正反限界、初次旧夹具失败及最终 fresh `tmp/tp4a4` **2972 passed/1 skipped/16 warnings/0 failures** 见 Phase 5/C 校准记录 §9 与交接记录 §32。此收据只有 E2；正式自由散文误放、R11/R16 完整价值、Phase 5 真 Shadow、Phase 6 A/B/C/D 验收、Phase 7 均未完成。旧 E3 官方桥接故障发生在矩阵前，不能算新 HEAD 的 E3；已消费的 E4 授权不可复用。
-- 用户随后批准优先补 Phase 2/M02 的**默认关闭、离线回执生产闭环**，同时保持用户子问题覆盖 `unassessed`。从 `main@3d71bfa` 进入；宿主显式选中当前曲线回执时生成既有 `answer_bindings.v1` 的描述拟合/可选情景 block，按同包原 x/y 点对、版本/指纹、原始尺度和拟合契约由现有 finalizer 原位渲染。当前 E4 归档 M02 回执的只读重放形成 2 个 typed blocks/trace entries，不把旧无效模型候选改写为已通过；普通 AgentLoop 默认未调用该生产者，正式独立 99% 误放、R11/R16 完整价值和自然模型 typed 产率仍未闭合。RED、旧门状态、最终 fresh `tmp/tp2m3` **2979 passed/1 skipped/16 warnings/0 failures**、Provider 0 和剩余停止门见交接记录 §33；没有新的 E3/E4、Shadow、正式发布切换或 Phase 7 退出。
-- 后续从 `main@9932118` 进入，Phase 5/C 增加默认无人调用的纯离线 `build_shadow_audit_request`：只以同会话已接受 packet、canonical history、回执及宿主原位 trace 中可定位的 typed claim 构造版本化且有 prompt/input/view digest 的受限输入；旧/篡改/无定位包 fail closed，输入受 24 KB 上限。初始导入 RED、定向 30 passed，fresh `tmp/tp5c-request-r1` full-offline **2981 passed/1 skipped/16 warnings/0 failures**、Provider 0，见交接记录 §34。它不调度 Shadow、不改变正式发布；历史旧会话仍无现行 typed 分母，引用合法却语义误删的 RED 仍在。A 的正确价值保留和正式 99% 误放、C 的真实调用/成本/正反校准、D 的用户策略裁决和 E3 都未由此完成。
-- 用户随后明确选择先补可验证语义身份、保持正式默认不变；对于会改变结果且现有请求/来源不能确定的业务映射，仅使用既有确认流程问一次、同版本复用，skip 保持未评估。新宿主生产者经 `ask_user_question` 的显式三指针提议核对用户原文、当前列与实际数据身份，并覆盖模型自写问题/选项；已解决的确认须从原事件存储读取并与现行历史/版本重建，才可给离线 data-understanding 列尺度映射。见交接记录 §35。此路径尚未让 R11/R16 旧会话或当前回答自动取得 `answered`，也未启用 Shadow、正式处置或真实 Provider。
-- 后续第十一条 Phase 2/A 默认关闭切片将上述确认扩为同一次问题中的数值横轴与连续整数范围；只有真实 resolved 决定、原曲线回执输入列、同版本实际帧、全段 x/y 事实和拟合范围闭合时，既有 `descriptive_fit` 宿主 claim 才对逐字观测 span 标 `answered`。skip/旧会话/错列/过期/缺点继续未评估，D30 情景不继承观测覆盖。RED、结构化替代、旧门与阶段边界见交接记录 §36；正式默认、Shadow C、处置 D 和真实 Provider 均未开启。
-- 同一已确认观测 claim 的 Phase 5 离线 audit view 修正了旧单位/覆盖投影矛盾：仅在既有宿主绑定再次有效时带入确认 ID、`confirmed` 与逐字观测 span 的 `answered`。RED、同包边界和未完成的真实 C/D 门见交接记录 §37。该请求构造仍未调 Provider 或改变可见发布。
-
-## 0. 本次重置要解决什么
-
-项目原始目标是一个**可用的中文数据分析 Agent**：能够基于上传数据给出有价值、
-可信、不过度打扰用户、可审计的分析结果。
-
-此前多轮优化没有持续逼近这个目标。系统逐渐形成了以下错误闭环：
-
-1. 模型先生成开放式自然语言；
-2. 宿主用关键词和正则反向猜测模型语义；
-3. 计划、任务、确认、发布门和验收 oracle 对散文层层设卡；
-4. 真实模型每产生一种合法新措辞，就触发新的误拒或误放；
-5. 每轮再补词、补模式、补状态，进而制造新的冲突和失败路径；
-6. 离线测试数量持续增长，但真实浏览器批次通过率没有随之提高。
-
-这不是继续补几个 Bug 就能解决的问题。根因是**权威所有权放错了层**：自然语言散文
-被当作事实载体，宿主又试图用封闭类工具理解开放语义。合法措辞空间不可枚举，因此
-这种实现和验收方式不可能通过追加词表收敛。
-
-本轮重置的核心决定是：
-
-> **结构化证据与 claim 是权威事实源；宿主验证并渲染权威内容；模型散文负责解释；
-> LLM 审计负责开放语义质量检查，但不能覆盖确定性证据，也不能成为新的随机总审批门。**
-
-## 1. 三份原始需求仍是上位约束
+# Data Agent 可信交付重构总计划
 
-本计划不推翻三份原始计划，而是纠正实现对它们的偏离。
-
-### 1.1 分析价值保留
-
-来源：`docs/superpowers/plans/2026-09-06-analysis-value-preservation-plan.md`
-
-必须继续满足：
-
-- 允许发布有依据且明确标注的待验证解释；
-- 允许发布有证据支持的条件性、可逆建议；
-- 严格区分已观察事实、描述拟合、情景外推和经过验证的预测；
-- 反证、新数据和版本变化能够使旧结论降级或失效；
-- 不重建第二个 planner、EvidenceStore 或 Workbench runtime；
-- 不得因为模型没有满足某种散文措辞而删除正确、可复算的结果。
-
-### 1.2 意图澄清
 
-来源：`docs/superpowers/plans/2026-09-07-intent-clarification-plan.md`
 
-必须继续满足：
+版本：2026-10-19。**这是唯一实施计划和阶段状态入口。** 每次更新直接改写当前状态、要求与剩余工作；阶段流水、原始日志和旧计划只放审计归档，不在文末追加另一份“当前计划”。
 
-- 只有会改变计算或业务含义的真实业务缺口才可暂停用户；
-- 方法许可、数据性质猜测、措辞偏好和技术字段不成为用户决策负担；
-- 同一业务决定可在相同范围复用，范围变化才重新确认；
-- skip 不构成授权；
-- 不能靠关键词把用户原始请求缩窄；
-- 确认系统不得形成一方法一审批或反复暂停的死循环。
 
-### 1.3 回答内容优化
 
-来源：`docs/superpowers/plans/2026-09-08-answer-content-optimization-plan.md`
+## 1. 当前身份与结论
 
-必须继续满足：
 
-- 用户明确提出的每个子问题都有回答，或有具体、诚实的缺口；
-- 数值与口径绑定回执，正文保留必要的方法上下文；
-- “未计算”“证据不足”“计算结果为零”严格分离；
-- 关键词出现、任务 completed、模型自报不能作为覆盖证明；
-- 规则不能可靠判断的自然语言语义应为 `unknown/unassessed` 或进入语义审计，
-  不能伪装成确定性硬门；
-- 新检查不得清除原本可以安全发布的观察事实。
 
-## 2. 已确认的历史证据与边界
+- 当前实施树：`D:\Project\Daily\data-agent`；分支 `main`。2026-10-19用户授权“冻结C→保全D→main按清单接管”；当前接续见§9。
 
-### 2.1 Git 与代码形态
+- 来源候选：C树 `codex/trust-rebuild-20260927@f7210e170d4dd1945abec15d57e364e04942eae4` 的完整工作区，不只HEAD；678项物料见 `artifacts/mt02/candidate-materials.json`。C原HEAD、索引和228项状态封存保持；后续普通实施转D/main。
 
-- `d41d242` 一次横跨 23 个文件，增加 1248 行、删除 59 行，同时修改 loop、
-  publication、LLM client、task manager、upload、SSE 和多组测试，是门层和恢复逻辑
-  快速膨胀的明显节点。
-- 编写本文件时，`src/data_agent/agent/publication_synthesis.py` 为 2136 行，源文件中有
-  43 处 `re.compile`，并直接解析曲线、外推、显著性、同比、货币、未来窗口、来源、
-  缺失值、覆盖和数值绑定等自然语言语义。
-- `9dbba60` 后隔离 full-offline 曾达到 2812 项测试零失败，但随后的 R4 真实运行仍立即
-  复现 M01、M02、M03 问题。离线绿已不能单独证明产品可用。
+- main旧HEAD `b181646ff66ea9ea3b0e6a38ffcd3d16b6687312` 保留为本地接管提交父历史。D六项旧材料已按清理前SHA全部恢复保全；用户永久清理D历史tmp造成的不可完整恢复缺口明确保留，并已获“保留历史清理缺口，继续提交和回归”的直接确认。
 
-### 2.2 R4 是部分证据，不是完整验收
+- 采用**现有模块内的跨边界合同重构**：统一业务需求、执行计划、工具业务结果、计算依赖和最终回答的接口；保留工具能力、证据权威、来源版本、确认、假设和会话基础。
 
-目录：`tmp/p08-glm-operator-20260922-r4`
+- S1/S2本地合同已核；S3按127四包签收，7930/0/2且含128。原180仍118完整/62局部/0待审，不是完成率。S4当前426源dc78093b，完整full3 7953通过/0失败/2skip、7955节点全部保留，m09正常HTTP47/90零失败、原六链52/52、生命周期13/13；S4本地有限验收已于2026-10-19完成收口。AC17方法正文、主LLMClient具名连接、实际1440/747/表公式图/精确HTML按同生产字节具名核定；新MD：2026-10-19用户具名确认已实际打开精确新b3a23f文件，表格120/12、公式120/12=10及图表显示符合（tmp/s4manual01/md-actual-open-user.json）；当前原件SHA再次一致，AC37该本地实际打开条件已核。此前工具内容/原图复核及queued限制仍保留，旧c802确认未被继承。原74失败及修正轨迹保留，105不重开；F5、自然语义/方法/符号链接/性能未核保持。p04不可执行零调用包按131保留干净树/配置/新预算阻断，全部物理调用0，S5未进入、未授权。 D/main已承接678项候选并移除23个旧文件；当前代码/资源与C逐字节相同。新的main完整离线回归待完成，不用C旧通过代签。
 
-冻结身份：
+- 最新自然批次只运行 M01 部分：18 次启动、17 次返回、1 次 Timeout；M01 第三轮产品失败，M02—M06 未启动。旧授权已结束，不能补跑或继承额度。
 
-- source commit：`5176c41103ee1b1c77b4b44331d8225fb49890be`
-- model：`openai/deepseek-flash`
-- endpoint：`https://api.deepseek.com`
-- call cap：90
+- 本轮Provider调用0；Provider 批次须重新精确冻结并单独授权。当前本地证据见 §8。
 
-R4 中途由用户叫停，不能报告为完整 M01—M06，也不能把 M05 报告为完整六轮或把 M06
-报告为已验证。可以确认的证据如下：
 
-- M01：分析内容基本满足原始目标，但“占位/演示数据还是真实值”的数据性质问题触发了
-  不必要的确认挂起。继续补“真实值”词表不是根治。
-- M02：两个候选的 D1—D7、三族参数、R²、验证缺口和 D30 情景值均有证据支持，却因
-  “提到无数值的对数族”触发散文配对误拒，正确答案被删除。
-- M03：conversation/publication 双产物恢复有效；但旧边界把单个完整用户轮的 27 条消息切成
-  `early=1 + recent=26`，摘要只看到用户请求，因而失实声称没有助手输出。现有 R4 证据没有证明
-  内存历史短于持久历史；Phase 1 应修完整 turn/reply group 边界以及 canonical revision/hash/CAS。
-- M04：结构化竞争假设链路成功，证明结构化状态和宿主维护可以工作。
-- M05：停止前的三轮保持 12/120 和单位边界；不是完整 M05 验收。
-- M06：未执行。
 
-### 2.3 编写时未提交文件的处理（历史快照）
+## 2. 当前规范及优先关系
 
-编写本文件时已有两个用户/GLM 未提交文件：
 
-- `docs/superpowers/plans/2026-09-22-trust-architecture-restructure.md`
-- `tests/test_p08_trust_restructure.py`
 
-当时它们必须原样保留，不得覆盖、删除或擅自提交；用户后来明确允许放弃/删除，现已不在工作树。本计划吸收其历史分析，但不接受以下两项
-具体设计：
-
-1. 不通过补 `真实值|真实业务值` 等词表修复确认挂起；确认必须按结构化业务缺口类型裁决。
-2. 不允许正文保留“差异不显著”“缺失成本为零”“未来将持续上升”等无依据断言，随后仅靠
-   末尾附录免责。宿主说明不能抵消正文中的错误或内部矛盾。
-
-### 2.4 历史测试证据必须作为累积背景
+| 文件 | 唯一责任 |
+| --- | --- |
+| [产品 PRD](../../product/data-agent-product-requirements.md) | 用户旅程、九类意图、全部能力与生命周期 |
+| [可信回答 PRD](../../product/trusted-answer-publication-requirements.md) | PUB-01—12、事实/解释权威、覆盖与局部失败 |
+| [VP 需求基线](2026-09-06-analysis-value-preservation-plan.md) | 分析价值、方法边界、假设与受众 |
+| [IC 需求基线](2026-09-07-intent-clarification-plan.md) | 必要确认、主目标与有效决定复用 |
+| [CP 需求基线](2026-09-08-answer-content-optimization-plan.md) | 完整事实组、覆盖、数值与同一答案 |
+| [现行设计](../specs/2026-09-30-trusted-answer-pipeline-redesign.md) | 责任边界、状态转移、DAG、错误合同与删除范围 |
+| [现行验收](../validation/2026-09-30-trusted-answer-pipeline-acceptance.md) | 硬门、原 180 项映射、完整用户链和自然验收 |
+| [系统回顾](../../audit/2026-10-10-project-retrospective.md) | 代码因果证据、历史失败分类、冲突裁决、审查局限 |
+| [能力清单](../../audit/2026-10-10-capability-coverage.md) | 77 个注册入口及逐族/逐模式承接清单，不是通过声明 |
+| [当前S4交接](../../audit/2026-10-18-s4-handoff.md) | 已核文件、当前基线、S4入口与具名未核项；旧S3交接只作历史证据 |
 
-阶段判断不得只引用最近一次 full-offline 或最近一个未完成 Provider 批次。实施与验收必须同时读取
-仓库中可追溯的历史收据，并保持证据层级：
 
-| 历史阶段 | 可复核测试背景 | 不能升级成什么 |
-|---|---|---|
-| 2026-08-25 Slice 0—7 | 全量 2181 passed/11 skipped；各切片定向 50—446 passed；本地 Flask/浏览器上传、持久化、Workbench、导出和 console 收据；Slice 3 全量曾挂起，旧 Web 脚本也曾在收集期失败 | 真实 Provider、当前源码发布候选 |
-| 2026-08-27/28 本机全量收口 | 先出现 6 failed/2216 passed/9 skipped，再修复到 2342 passed/9 skipped，并完成 Provider-disabled 本机浏览器旅程 | 后续 source digest、自然模型质量、部署 |
-| 2026-09-06 运行时基线 | 隔离 full-offline 2393 passed/3 skipped；Provider 网络强制禁用 | 浏览器或 Provider 验收 |
-| 2026-09-08—20 内容与确认整合 | 2585、2569、2644、2713 等多次隔离全量，以及 129/268/285+/301 等定向回归；Provider-disabled B/IC/CONTENT 矩阵 | 历史或未来 E4 通过 |
-| P08 R10/R11/R14/R16/R19/R21 | 多轮真实 Provider 失败轨迹，分别暴露散文误拒、结构化状态缺口、任务权威竞争、单位污染、上传/终态问题；完整失败或不完整批次均不得改写为通过 | 其他 commit、其他模型、staging/production |
-| 2026-09-19—22 收口与 R4 | 2708、2717、2812 等 full-offline；R4 82 次已调度调用形成 M01—M05 部分真实轨迹，M06 未执行 | R4 完整矩阵或发布验收 |
-
-这些记录是回归面和架构风险的背景，不是把旧绿灯平移到当前 HEAD。每阶段仍须在当前精确源码上产生新的
-RED、定向 GREEN 和隔离回归收据；历史失败不得因后续局部绿灯被覆盖。
 
-## 3. 根因与必须终止的旧模式
+用户最新明确裁决优先；AGENTS.md 约束运行、证据路线和授权。PRD 定义行为，设计落实责任，验收检验同一行为。本计划只管理实施。原主题设计为追溯指针，原验收的行为 ID 保留；已替代条款在现行验收明示。发现新冲突先登记、讨论，不通过改 oracle 配合代码来消除失败。
 
-### 3.1 根因
 
-当前系统让四种不同职责互相越界：
 
-- 模型自由散文承担了事实存储职责；
-- 正则承担了自然语言理解职责；
-- 模型承担了宿主计划/任务簿记职责；
-- 验收器把内容风格、流程合规与确定性正确混成一个阻断结论。
-
-这造成了“正确答案被门删除、错误答案靠附录免责、模型忘记记账就无法发布、离线测试绿但
-真实路径失败”等问题。
+旧文档原字节（含本轮前的 dirty）见 [归档清单](../../audit/archive/2026-10-10-plan-reset/manifest.json)。历史失败收据保持不变。
 
-### 3.2 从本轮起禁止
 
-- 禁止新增依赖自然语言同义词枚举的发布硬门；
-- 禁止通过补一个新词修复确认类型；
-- 禁止把 LLM 审计的一句 `pass/fail` 当作最高裁决；
-- 禁止让审计 LLM 直接自由重写整篇终稿；
-- 禁止用末尾免责声明抵消正文错误断言；
-- 禁止模型必须先写对 plan/task JSON 才能发布独立、已验证事实；
-- 禁止无限“审计→修订→再审计”循环；
-- 禁止把真实 Provider E4 当作日常集成调试场；
-- 禁止在一批 E4 中途修代码或局部重跑后冒充完整批次；
-- 禁止增加新的浏览器框架、重复账本或隐藏模型调用。
 
-## 4. 目标架构
+## 3. 已确认且不可在实现中弱化的决定
 
-### 4.1 单一规范会话历史
 
-持久化 transcript/conversation 是唯一规范历史源。loop 内存只能是带 revision 的缓存，不能成为
-第二事实源。
 
-压缩流程必须：
+1. 保留无文件知识/分析方案咨询、有文件纯咨询、混合咨询与执行。数据存在或某个方法名不等于执行授权。
 
-1. 从规范历史读取完整消息和工具轨迹；
-2. 记录输入 history revision/hash 和消息数量；
-3. 生成摘要；
-4. 写回前再次检查 revision；
-5. revision 不一致时放弃本次压缩，不修改历史；
-6. 摘要必须携带确定性 execution ledger；
-7. 压缩失败不得破坏原对话、reply identity 或导出。
+2. 原业务目标和表达偏好分开；原消息、对象、窗口、分母、口径、revision 可追溯；同义续问显式 reuse，不同目标独立覆盖。非法范围保留未决项，不静默删除。
 
-### 4.2 结构化 claim 是权威内容单元
+3. 允许有限探索先于正式计划；探索只在已有权限内了解结构、预览、质量。正式计算派发前绑定目标、交付、步骤、来源版本和业务参数，禁止事后倒填完成归属。
 
-不新建第二条 claim 通道。现有 `answer_bindings.v1` 已提供模型可生成、宿主可校验的
-`blocks + exact_text + requirement_refs + fact_refs + derived_refs` 种子；Phase 2 必须在这个协议上向后兼容扩展，
-而不是另起平行 schema。R4 M03 已产出 schema-shaped binding，现有源码也已有 prompt、parser 和数值一致性测试；
-其确切 fence/digest 字段与宿主接纳状态须由回放测试固定，不能只凭转录文本推定。
+4. 同目标、来源和业务范围不变时允许有记录地追加必要交付；保留旧 ID、已有证据和未完成义务。撤回、替换、换窗口/版本走显式原子变更。
 
-每个 binding block 增加最小 claim 字段：
+5. 计算 DAG 的成功依赖只消费已核事实、产物、结构化关系；解释、限制、行动在最终覆盖及已有一次审核中完成。计算完成不等于回答完整。
 
-```json
-{
-  "claim_id": "claim_001",
-  "exact_text": "可唯一定位的正文片段",
-  "claim_type": "scenario_extrapolation",
-  "status": "unvalidated",
-  "requirement_refs": ["req_01"],
-  "fact_refs": ["fact_01"],
-  "derived_refs": ["quantity_d30_power"],
-  "unit_status": "unknown",
-  "provenance_status": "observed_from_uploaded_file",
-  "validation_status": "no_holdout_no_backtest",
-  "scope_id": "scope_01"
-}
-```
+6. 保留全部注册工具和现有方法。工具生产者或唯一封闭适配合同声明业务结果语义；宿主建目录，模型引用目录 ID。非事实工具核验合法效果，不强造统计 claim。
 
-`claim_type` 至少覆盖：
+7. independent 仍为显式 1—16 个有界输入；synthesis 只读证据、不读原表。实际读取、父源、版本、确认逐项核验。
 
-- `observed_fact`
-- `derived_metric`
-- `comparison`
-- `descriptive_fit`
-- `scenario_extrapolation`
-- `validated_prediction`
-- `causal_explanation`
-- `conditional_recommendation`
-- `unassessed`
+8. Python 执行前 business_parameters 与真实读取进入回执；仍标探索性计算。参数声明不证明代码实现了该方法或预测有效。
 
-数值、单位、时间范围、来源、显著性、外推/预测状态等高风险事实必须来自结构化 claim 与回执，
-不能只存在于自由散文。
+9. 结构化 claim 是数据事实唯一通道；不增加解析模型散文的词表、正则或“可信总分”。合法统计推断、因果设计、验证预测保留其真实能力和限制。
 
-### 4.3 宿主做确定性验证
+10. 可定位的局部错误只拒相关片段；全局身份错误拒整草案。数据相关开放片段每轮最多一次有界审核；按完整答案及必要局部限定核对，不增加第二次语义审核。
 
-宿主只裁决可封闭验证的事实：
+11. 大改不兼容、不保留双链。旧会话只读；新协议会话续问、确认、压缩、刷新和导出完整保留。分支只继承聊天，父答案不能直接充当分支事实。
 
-- claim/receipt/fact ID 是否存在；
-- 数值是否能从回执或参数重算；
-- 单位、时间范围和来源状态是否已确认；
-- scope 与数据版本是否一致；
-- 工具调用、终态和事件是否配对；
-- 导出、刷新和持久化产物是否存在；
-- 权威 claim 是否有绑定；
-- 压缩是否基于规范历史 revision。
+12. 不设机械净增行数上限；每个新责任必须有唯一所有者并删除被替代规则。不得增加第二规划器、调度器、事实库、完成账本、付费 judge 或浏览器框架。
 
-确定性失败不能被 LLM 的“通过”覆盖。
+13. **2026-10-10 用户确认：同一候选、同一 M01—M06 输入和判据，连续两次完整自然批次均通过。** 源码修复后重新计算；部分批次不算。每批独立精确冻结与授权，这条要求不授权任何调用。
 
-### 4.4 宿主渲染权威事实
 
-以下内容由宿主根据结构化字段生成正文块、表格或紧邻 claim 的披露，而不是事后追加宽泛
-免责声明：
 
-- 数据范围与来源状态；
-- 数值和单位；
-- 拟合族、参数、R²；
-- 留出、回测、外部验证状态；
-- 观察/拟合/情景/预测等级；
-- 显著性检验是否执行；
-- 条件建议的触发、停止和监控字段。
+14. **2026-10-10用户确认：forecast保留实际auto/backtest有序回测能力，退役simple/prophet误导别名，明确拒绝这两个参数，不新增对应算法。** 保留实际能力，不把别名数量当功能。
 
-如果高风险 claim 未绑定，宿主必须选择以下之一：
 
-- 不渲染该 claim；
-- 将其结构化降级为 `unassessed`；
-- 进入一次定向修订。
 
-不得先显示确定语气的错误正文，再在末尾补一句“尚未验证”。
+15. 原R3/R4/R5联合目标和15项DoD继续有效：事实可用、开放内容合法保留/错误限制、旧责任退役共同通过，具体映射见统一验收§5。
 
-### 4.5 模型散文负责解释，不承担事实数据库职责
 
-模型可以组织叙事、解释业务含义、连接已验证 claim、给出条件建议，但数值和高风险结论应通过
-claim 引用或宿主占位符进入最终正文。模型自由文本不得成为唯一权威事实源。
 
-### 4.6 确认按业务缺口类型裁决
+16. **2026-10-10用户确认：曲线长/宽表均先逐条按zero_values筛选，再聚合。** exclude排除零、keep保留零；有效记录数/排除数如实记录，零值业务含义仍unknown，不从排除推断未观测或未到期。
 
-允许暂停的类型只能是会改变计算或业务含义的封闭选择，例如：
 
-- metric definition
-- denominator
-- time window
-- file/data scope
-- currency/cost scope
-- destructive cleaning decision
 
-以下问题不得仅因措辞命中而暂停：
+17. **2026-10-10用户确认：相关三方法的常数列或不足两条有效观测系数统一为null（未知），包括Kendall对角线；正常列自身相关仍为1。** 保留pearson/spearman/kendall原算法与既有精度，完整矩阵不被高相关摘要替代。
 
-- 是否演示/模板/真实数据；
-- 是否允许某种分析方法；
-- 如何称呼或如何排版；
-- 模型自我保护式确认；
-- 其他不影响当前已验证事实交付的问题。
 
-这些问题应转成条件式说明，并继续交付当前可确定内容。
 
-### 4.7 plan/task 变成宿主执行台账
+18. **2026-10-10用户确认：保留现有四格均值DID；缺任一处理组×期单元不计算效应，不补零；四格齐全但任一格不足两条只交付点估计，区间/p值未知。** 明示独立组正态近似与未验证平行趋势；基线水平差不判趋势差，不新增面板/聚类方法。退化方差不制造显著性；不同产物缺口按既有completion_gap分别保留。
 
-宿主从工具调用、回执和数据版本自动推导执行 journal、claim 状态和未完成项。模型计划仅用于推理
-和解释，不作为已验证事实发布许可证。
 
-这里的“自动推导”有硬边界：journal 只能做**事后簿记**，记录已经执行的调用、已产生的回执、
-已闭合/未闭合的证据义务和数据版本；可以复用 `turn_receipt_ids`、`analysis_state` 收据以及
-`4a6493f`/`89623e6` 已建立的 plan authority/互斥体系。journal 不得生成目标、选择方法、安排步骤、
-创建未来任务、决定下一工具或改变执行顺序；这些行为属于规划，若加入 journal 就会形成被禁止的第二 planner。
-“journal 中存在未闭合项”本身也不是启动新工作的许可证，只能影响对应 claim 的 completed/gap/degraded 状态。
 
-独立 claim 可以分别完成、降级或声明缺口；一个未完成任务不得无差别杀死全部已验证结果。
 
-## 5. LLM 语义审计设计
 
-### 5.1 定位
+19. **2026-10-10用户确认：A/B只接受恰好两组；单位先按sum/mean聚合，同一单位跨组则固定配对。** 配对不足不回退独立行检验；auto/ttest可使用既有配对t，显式Mann–Whitney或chi2与配对设计冲突时明确拒绝，不换方法。
 
-LLM 审计是**受证据约束的语义审稿人**，用于发现宿主难以用封闭规则判断的问题。它不是事实
-来源、不是第二 planner、不是最终最高法官。
+20. **2026-10-10用户确认：退化t检验保留可计算均值与差值，统计量/p值/区间为未知。** auto在不足三条或退化样本时不宣称已验证正态性；保留可用秩检验并公开选择依据。
 
-它适合检查：
+21. **2026-10-10用户确认：分类统一标签编码并公开原标签映射。** 二分类正类为排序后的末类，仅统计默认，不代表业务好坏；保留每类与宏平均指标。
 
-- 相关性是否被写成因果性；
-- 描述拟合是否被写成可信预测；
-- 样本结论是否被扩大到总体；
-- 结论强度是否超过证据等级；
-- 正文与限制、验证状态是否矛盾；
-- 用户明确子问题是否遗漏；
-- 建议是否能从 claim 推出；
-- “未计算/证据不足/结果为零”是否混淆；
-- 表达是否清楚、可执行、保留必要边界。
+22. **2026-10-10用户确认：SHAP保留TreeExplainer，逐类保留mean(abs(SHAP))，完整分类总体明确取各类等权平均；回归按样本平均。** 模型只返回单分类输出时保留实际解释类别，其他类别及完整各类平均未知，不造第二类或升级为因果。
 
-它不得最终裁决：算术、文件存在、调用账本、回执 ID、单位确认、工具是否执行、事件是否配对等
-确定性事实。
+23. **2026-10-10用户确认：SHAP只匹配本会话当前数据版模型；model_kind=auto/regression/classification。** auto只接受唯一匹配；两种有效模型都存在时要求选择，不静默优先回归，旧模型不挡住当前唯一匹配。
 
-### 5.2 输入
 
-审计模型只接收最小、明确分层的上下文：
 
-- 用户原始问题和已确认的业务决定；
-- 候选答案；
-- claim registry；
-- 经过裁剪的 evidence packet 与回执摘要；
-- 版本化发布政策；
-- 已由宿主确定的验证结果。
+24. **2026-10-10用户确认：optimize保留份额/逐次剪裁为约束分配候选，严格复核全部边界与目标。** 越界不交付，未找到不宣称数学不可行；零/负分组基数拒绝，不新增优化器或最小二乘声明。
 
-上传数据内容、工具输出和候选答案必须被标记为不可信数据，不得被解释为审计指令，防止 prompt
-injection。
+25. **2026-10-10用户确认：非事实操作在现有计划/回执目录/回答协议内以操作效果交付。** 核实际对象/父版本/参数/权限，不进入数据claim、不另建账本；派生/清洗/文件/扩展共用。
 
-### 5.3 输出协议
+26. **2026-10-10用户确认：Skills加载/卸载与注入按会话，安装与启禁/删除全局管理。** 全局禁用/删除使所有会话对应加载失效，启用不自动复活。
 
-审计结果必须使用版本化结构，不接受仅有散文的“通过/失败”：
+27. **2026-10-10用户确认：sensitivity保留算术情景和完整分组。** 零总量非零目标保留基线/目标/缺口，比例和分组反推未知；维度按唯一字符串身份匹配，缺失或歧义拒绝，不增加分配算法或因果/预测验证。
 
-```json
-{
-  "schema_version": "publication_audit.v1",
-  "overall": "pass_with_findings",
-  "findings": [
-    {
-      "finding_id": "finding_001",
-      "claim_id": "claim_007",
-      "dimension": "claim_strength",
-      "severity": "high",
-      "recommended_action": "downgrade",
-      "evidence_refs": ["curve_receipt_01"],
-      "reason": "仅支持描述拟合，尚无留出验证或回测"
-    }
-  ],
-  "missing_requirements": [],
-  "contradictions": []
-}
-```
 
-宿主必须验证：
 
-- claim 与 evidence 引用真实存在；
-- finding 的 dimension/action 属于封闭枚举；
-- 审计没有新增数值或业务事实；
-- 推荐动作不越过宿主确定性结论；
-- 无有效引用的意见只能进入 advisory。
+28. **2026-10-10用户确认：清洗按列记录真实填补数、剩余缺失和无法处理原因。** 保留原算法与实际新表；mean/median仅数值，无法求值不静默换策略；所选范围存在未解决缺失时，既有操作效果合同标部分完成。
 
-### 5.4 允许的动作
 
-- `keep`
-- `downgrade`
-- `remove`
-- `mark_unassessed`
-- `add_host_disclosure`
-- `request_targeted_revision`
-- `advisory_only`
 
-价值保留优先级固定为：
+29. **2026-10-10用户确认：类型转换保留各方法原有转换及坏值处理，补齐已公开category转换。** 逐列记录原缺失、成功转换、无法转换及新增缺失；未转换完沿既有操作效果部分完成，保留实际新表，不静默换策略。
 
-```text
-保留原强度 → 降级并说明 → 标为未评估 → 最后才删除
-```
 
-仅与证据直接冲突、明显虚构或无法安全降级的 claim 才删除。
 
-### 5.5 修订与循环上限
+30. **2026-10-10用户确认：聚合count统一为指定列非缺失数，size为行数。** 旧JSON count未指定列时要求选择列或使用size，保留两个公开入口并由同一参数解释函数承接，不默认行数。
 
-发布链最多允许：
 
-1. 初稿确定性验证；
-2. 一次语义审计；
-3. 如有高风险 finding，进行一次定向修订；
-4. 修订后进行一次确定性复核；
-5. 如确有必要，再进行一次最终语义复核；
-6. 到此终止，不继续循环。
 
-第二次仍有问题时：
+31. **2026-10-10用户确认：重采样空桶/全缺失sum未知，真实观测零为零。** 保留频率、原日期解析与其他聚合方法，公开有效/排除记录数；日期排除导致原范围不完整时保留实际新表和已计算结果，沿既有事实/操作效果合同部分完成。
 
-- 无证据 claim 降级、标为未评估或移除；
-- 风格问题记录为 advisory；
-- 确定性失败只阻断对应 claim 或依赖路径；
-- 不允许整场会话永久卡死。
 
-### 5.6 故障降级
 
-- 审计 LLM 超时、限流或 Provider 不可用，不能覆盖已完成的确定性验证；
-- 对已通过结构化安全检查的答案，应允许降级发布，并在内部记录
-  `semantic_audit_unavailable`；
-- 如果仍存在未处理的高风险、未绑定 claim，则仅隐藏/降级相应 claim，不得以未经审计的形式
-  强行发布；
-- 审计调用必须进入统一 Provider 账本和总预算，不能隐藏计费；
-- 未得到新一轮精确授权前，不得为了开发或校准调用真实 Provider。
+32. **2026-10-10用户确认：分布保留可计算描述量和未知推断。** 原均值、ddof=0总体标准差、偏度/峰度与Shapiro算法保留；退化/不足的量null；Shapiro仅3≤n<5000且非退化，p>0.05仅表示未拒绝正态，不证明正态。
 
-### 5.7 模型独立性
 
-初期可以使用同一基础模型的独立审计角色，但必须：
 
-- 使用独立、版本化审计提示；
-- temperature 固定为 0 或最低可用值；
-- 不提供分析模型的说服性思维过程；
-- 只提供证据包、claim、候选答案和政策；
-- 保存审计模型、端点、提示 digest、输入 evidence digest 和结果。
+33. **2026-10-10用户确认：分布显式选列错误拒绝，有限观测范围公开。** 不存在/重复/非数值列不静默忽略；逐列披露原行数、缺失/非有限排除数；非有限排除时保留已计算量并标原范围部分完成，普通缺失不赋予业务解释。
 
-如果历史回放显示同模型审计存在稳定共盲，再评估不同模型审计；不能未经证据直接增加第二模型、
-额外 Provider 或新的预算体系。
 
-## 6. 分层发布与验收标准
 
-### 6.1 阻断层：只允许封闭类
+34. **2026-10-10用户确认：补齐已公开的分位数详情承诺。** min/25%/50%/75%/max采用pandas默认线性插值，只用同一有限范围；无有效观测为null，沿原回执持久化并交付，不增加图表或检验。
 
-以下任一失败才可阻断对应发布路径：
-
-- run_state/terminal event 不唯一；
-- Provider 账本不闭合或超过冻结上限；
-- 工具调用与回执不配对；
-- 会话、数据版本或 scope 污染；
-- 权威数值不能由回执复算；
-- 权威 claim 无有效绑定；
-- 宿主渲染事实内部矛盾；
-- 导出、刷新或持久化必需产物缺失；
-- canonical history revision 不一致；
-- 审计或修订引入新数字、新事实或无效引用；
-- 真实业务确认未解决且确实改变计算结果。
-
-### 6.2 非阻断质量层
-
-以下进入 advisory/趋势统计，不得单点毙掉整个场景：
-
-- 行文风格和详略；
-- 是否使用某个近义词；
-- 是否只有一个下一步；
-- 一般性的表达顺序；
-- 已被宿主结构化披露覆盖的轻微措辞问题；
-- 没有可靠自动判定依据的灰区语义。
-
-### 6.3 结构化完整性层
-
-- 用户每个明确子问题映射到 answered claim 或 typed gap；
-- 每个高风险事实映射到 claim/evidence；
-- observation/fit/scenario/prediction 等级可检；
-- 已计算/未计算/证据不足/结果为零可检；
-- 部分结果允许独立发布，不被无关未完成任务吞掉。
-
-### 6.4 语义审计质量层
-
-在启用审计影响发布之前，必须用历史候选建立固定校准集，至少包含：
-
-- R4 M02 两个正确候选：不得误删，应识别为情景外推；
-- “未执行检验却声称差异不显著”：应要求降级或移除；
-- “缺失值未计算却声称为零”：应要求降级或移除；
-- “描述相关却声称因果”：应识别强度越界；
-- 有依据、已标注的待验证解释：应保留；
-- 正确数值但单位未知：保留数值，宿主渲染单位状态；
-- 多种合法同义表达和语序变化：裁决不得因词面变化而反转。
-
-必须记录：正确 claim 保留率、高风险越界检出率、动作正确率、审计新增事实数、超时率、平均延迟
-和调用成本。不能只报告一个总通过率。
-
-## 7. 实施顺序
-
-### Phase 0：建立准确基线，不改产品行为
-
-1. 阅读 `AGENTS.md` 和三份原始计划；
-2. 运行 `git worktree list --porcelain`；
-3. 核对实际 HEAD、dirty/untracked 文件和 R4 目录；
-4. 编写时保留两个既有未提交文件（后经用户授权放弃/删除；现须按实际工作树保护任何新 dirty）；
-5. 以真实失败轨迹建立回放 fixture，不另建测试框架；
-6. 记录当前正则检查族、调用点、硬/软行为和对应历史失败；
-7. 不调用真实 Provider。
-
-### Phase 1：根修 canonical history
-
-先处理 M03，因为会话历史不可信时，后续审计输入也不可信。
-
-状态（2026-09-23）：`completed_local`，实现提交待创建。R4 M03 的旧 split=1 已由完整 turn 边界修为
-split=0/保留原历史；新增聚焦测试最终为 10 项（修正前版本 11 passed），受影响完整文件 312 passed。fresh full-offline
-`tmp/trust-reset-phase1-full-offline-2` 为 2821 passed、1 skipped、16 warnings、0 failures；该运行明确排除
-用户保留且本计划已否决的未跟踪 `tests/test_p08_trust_restructure.py`，Provider calls forbidden。
-
-- 复现 R4 M03 单个完整用户轮被错误切成 `early=1` 的 web 集成路径；不伪称已证明内存历史短于持久历史；
-- 建立单一规范历史和 revision/hash；
-- 压缩、刷新、导出共用同一规范源；
-- rewind 继续是显式授权截断，但必须从 canonical snapshot 读取并用 revision/hash CAS 写回；
-- 回放 M03 R4 轨迹；
-- 验证摘要含执行结果且不污染 reply identity；
-- 验证 conversation/publication 双产物。
-
-### Phase 2：建立 claim/renderer 垂直切片，以 M02 为第一样板
 
-状态（2026-09-23）：本地垂直切片完成 E1/E2，尚未执行 E3/真实 Provider 验收。
-实现前 HEAD 基线 `cdfcc1a`；fresh full-offline `tmp/trust-reset-phase2-full-offline-1` 为
-2831 passed、1 skipped、16 warnings、0 failures，明确排除被保留但已否决的未跟踪测试；
-`provider_calls=forbidden`。不得把它升级为浏览器或自然模型结果。
 
-开工审查（2026-09-23）：须先读 `docs/audit/2026-09-23-trust-reset-phase2-cross-history-review.md`。
-该审查跨 R7—R21、R4、`2dafc69`/`bd42678` 和历史本地回归，发现现有 `render_verified_appendix()`
-只被测试调用、生产 packet 的情景字段又在 `publication_scope` 而非 renderer 所读的 `sources`。
-因此“宿主披露已进入正文”不能作为既成事实。用户已于 2026-09-23 确认：R4 旧候选用于证明旧门误拒，
-通过条件是内容等价的 typed-binding/宿主渲染版本，而非旧文本原字节绕过散文门；单位未确认时只显示
-原始数值尺度，不从列名猜百分比。实现与当前证据见上述审查第 5 节；Phase 2 已有隔离全量 E2，
-尚未完成浏览器 E3 或真实 Provider 验收。
+35. **2026-10-10用户确认：事件漏斗采用最早有效顺序路径。** 后续步骤选择不早于上一已选事件的最早事件，window_hours仍限制相邻步骤；无时间列只报告集合包含，不声称已验证时间顺序。
 
-- 从现有 `answer_bindings.v1` 向后兼容扩展最小 claim 字段，不新增平行通道；
-- 保留 `blocks/exact_text/requirement_refs/fact_refs/derived_refs` 和当前宿主校验，增加 `claim_type/status/unit_status` 等 typed 状态；
-- 工期按四个增量面估算：schema/parser 兼容、M02 binding 生产、宿主 renderer、回放与旧门退役；不再估算新的传输、存储或模型协议通道；
-- 把 curve fitting 回执、族参数、R²、D30 情景值和验证状态绑定为 claim；
-- 宿主重算并渲染表格与披露；
-- 不再解析族名与数值位于哪个中文子句；
-- R4 两个正确候选的等价内容必须发布；
-- 错误 D30 数值仍必须被确定性拒绝；
-- 先完成结构化替代物，再退役对应散文硬门。
 
-### Phase 3：确认政策类型化，以 M01 为样板
 
-开工审查见 `docs/audit/2026-09-23-trust-reset-phase3-confirmation-review.md`：已跨 IC0—IC4、
-R8/R10/R11/R16 M06、Codex/R20/R4 M01 与内部 `risk_fields` 生产者对照。
-用户已裁决：模型直接提出而无宿主计算风险证据的 `data_quality_confirmation` 降为条件式指引；
-内部带 `risk_fields + affected_routes` 的清洗门及明确成本/分母/窗口等业务缺口仍暂停。
-Phase 3 离线切片已改用来源和宿主风险证据，删除数据性质两极词表；跨历史确认/路由回归
-196 passed；最终 fresh fail-closed full-offline 为 2844 passed、1 skipped（详见审查记录）。
-浏览器和真实模型证据仍分别独立记录。
+36. **2026-10-10用户确认：漏斗总体从完整原范围独立计算，完整保留各组。** aggregate同步骤先求和只输出一次；自动顺序仍按聚合计数降序并注明推断；请求却缺失的步骤和零分母未知；非法负数/非整数计数拒绝，不补零假完成。
 
-- 用 confirmation kind 和结构化 business gap 决定是否暂停；
-- 数据性质问题转条件式指引，不因“真实值”等词语挂起；
-- 真正会改变计算值的成本、窗口、分母、scope 决定仍可暂停；
-- 回放 R4 M01；
-- 加同义词和语序变形测试，证明状态不依赖词面。
 
-### Phase 4：宿主任务台账收口
 
-原边界复核见 `docs/audit/2026-09-23-trust-reset-phase4-journal-boundary-review.md`：
-R21 M02 scope 降级和 M04 未完成 task 全局阻断已有修复；现有 receipt、
-publication packet 与 TaskManager 已是事后事实源，当时相关离线回归 214 passed。
-用户确认显式竞争假设任务仍需结构化 plan 与假设/证据关系；只是未完成 task 状态
-不能阻断独立可信 claim。其后 R4 与本次 E4 对照发现关系形状不等于宿主有效关系、
-guard 未展示真实 ID，因此 Phase 4 在该义务上列为**纠偏验证中**，不再笼统标为完成。
-最小 RED/替代物/待退役旧门见 `docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md`；
-不会另建 journal、planner 或更改普通任务的独立可信 claim 发布。
+37. **2026-10-10用户确认：rates漏斗只交付比例算术。** 保留逐列等权均值，有限0—1累积率、后一步不高于前一步；缺失披露有效数，删除虚构人数，步骤比值为列均值之比，零分母未知，不声称真实用户转化或加权总体。
 
-- 仅从已发生的工具调用、`turn_receipt_ids`、analysis-state 收据和数据版本事后推导 journal；
-- journal 不产生目标、方法、步骤、未来任务、工具选择或执行顺序，禁止演化为第二 planner；
-- 模型 plan/task JSON 不作为所有独立 claim 的全局发布许可证；显式竞争假设任务仍需原始 P5 要求的结构化 plan 和假设/证据关系；
-- claim 可独立完成、声明缺口或降级；
-- 移除“一个任务未完成导致全部已验证内容无法发布”的耦合；
-- 保留审计需要的可追踪性，不重建第二 planner。
 
-### Phase 5：LLM 审计 Shadow 模式
 
-离线协议首切片见 `docs/audit/2026-09-23-trust-reset-phase5-shadow-protocol.md`：
-当前仅验证 `publication_audit.v1` 的快照/答案身份、typed M02 claim 与同 claim 的
-evidence refs；无绑定意见 advisory，`overall` 不影响发布。尚未接入审计模型调度，
-未调用 Provider，也未完成全类型 claim 校准；聚焦 178 passed、full-offline 2851 passed / 1 skipped。
-不能标为完整 Shadow 验收。
+38. **2026-10-10用户确认：cohort完整月份轴与观测范围。** 保留首次观测月/逐月去重用户留存，补齐0至观测末月的年龄轴：已到达无事件为0，尚未到达为null；首次观测不等于真实首次，末月可能不完整。逐项公开缺失用户/缺失或坏日期及联合排除数，有排除标原范围部分完成；显式event_col不存在拒绝。
 
-- 实现 `publication_audit.v1` 协议和宿主验证；
-- 默认只记录 finding，不改变用户可见发布；
-- 使用历史候选校准误删、漏检、动作和成本；
-- 所有真实 Provider 调用仍需新的精确冻结与用户授权；
-- 审计不通过不能在 Shadow 阶段改变正式结果。
 
-### Phase 6：受限处置与一次定向修订
 
-2026-09-25 状态：A+B 仍默认关闭；A 的当前 AgentLoop 受控 typed 最终化入口已有 E2 和单案例 Provider-disabled E3，C 的自然模型层与 D 的正式处置均未启用。当前入口和 RED/结构化替代/退役目标见
-`docs/audit/2026-09-24-trust-reset-phase6-entry-assessment.md`、
-`docs/audit/2026-09-24-trust-reset-offline-core-projection.md`。四道门不得合并为一次“Phase 6 已完成”：
+39. **2026-10-10用户确认：聚类只交付实际非空簇、未知标准差与明确范围。** 保留StandardScaler＋KMeans(random_state=42,n_init=10)；公开请求/实际簇数，单记录簇样本标准差null，不制造客群差异；披露特征缺失联合排除数并标原范围部分完成，重复/非数值特征及非有限值明确拒绝，不新增填补或聚类算法。
 
-| 门 | 交付和退出条件 | 目前状态 |
-|---|---|---|
-| A 可信核心 | 在同一 packet/回执上重建可信事实、**宿主证实**的具体缺口、必要范围/单位/方法边界、产物与假设审计；跨历史正反候选同时检查价值保留与无据结论移除。原始字段、图表存在、模型标签均不自动授权 `answered` | 默认关闭的 R16 型新请求在一次真实业务确认、同版本回执/源帧/派生帧与宿主复算后，可将 12/120 及聚合方法作为两个 `derived_metric` 原位渲染（交接 §44）；旧 R16 没有确认，不能倒填 `answered`。E4 M03 型六份 `compare_periods` 可作为六个逐来源 `comparison` 原位渲染，但无请求覆盖或跨源解释权威（交接 §45）。当前 AgentLoop 的显式 opt-in 只向最终化轮提供有限宿主核验的 claim/回执身份；Provider-disabled E3 六块已原位渲染并持久化，普通路径不启用（交接 §47）。用户选择 M04 关系留在真实 ID/同版本测量的现有结构审计，解释覆盖保持 `unassessed`（交接 §46）；R4 合成图表及 R11 原句等价仍未闭合，不得切默认 |
-| B 离线动作 | 仅同快照有效 typed claim/evidence 可模拟 claim 级 keep/downgrade/unassessed/remove/定向修订；独立可信 claim 保留、故障回退可复核，`publication_effect=none` | 纯函数初切片具备；不代表真实审计或处置完成 |
-| C 真 Shadow | 独立版本化提示、输入/输出 digest、统一 Provider 账本/预算、显式开启/超时降级；历史正反候选校准误删、漏检、动作、成本；整个 Shadow 不改可见发布 | r4 经独立精确授权后四例全部可评：2/2 受控正例保留、2/2 受控负例命中正确维度且仅 `advisory_only`，4 次实际发起/11113 token、正式无效果（交接 §43）。这只覆盖同一人工构造 claim 的局部内容等价层；旧自然包 0 现行 typed 分母。§47 的受控入口已接线但 E3 使用脚本模型；§48 的自然 M03 正反协议/同账本启动器仅完成零调用 E2，须新提交冻结与新授权。§52 已有自然 typed 产出，但尚无以这些自然 claim 为分母的 Shadow 误删/漏检样本；C 自然层及整阶段均未退出 |
-| D 正式处置 | 用户另行裁决默认发布切换；仅受限 claim 动作，确定性复核与最多一次定向修订；完整 Provider-disabled 浏览器 E3，E4 另冻结/授权 | 未授权、未开始 |
 
-**2026-09-25 顺序纠偏（用户确认保留有依据的解释后）**：上表是最终验收门，不应被解释为“完成全部自然 Provider 校准后才允许开始 Phase 7/8”。当前已观察到六个自然 typed 比较块与正确解释并存，也观察到邻接无据断言；纯宿主核心会丢掉正确解释。接下来先把 Phase 6 限定为可集成的默认关闭机制：继续复用现有 packet、`answer_bindings.v1`、原位 trace、一次定向修订和已验证事实回退；保留有依据的模型解释，不为每句解释新增 claim 类型或把未绑定散文一律删除。停止扩展工具专用投影、词表、确认流程和离线选择器，除非跨历史正反证据证明现有结构无法承载必答结果。
 
-随后立即做 Phase 7 的旧散文门逐族退役及 Phase 8 的分层验收契约；每族须同时证明正确解释/方法上下文保留和无据强断言受限，不能靠单个测试词句或纯核心删文过关。完成这两阶段后，再按三份原始计划复核产品价值与复杂度，统一执行当前 HEAD 的离线、Provider-disabled 浏览器及经新精确冻结授权的真实 Provider 系统矩阵。Phase 5/C 的自然质量、Phase 6/D 的正式默认切换和整个 Phase 6 的“已验收”状态均留在系统矩阵之后裁决；实现就绪不得写成阶段退出。此前自然调用只是定位生产缺口的诊断，不以连续追加 E4 来驱动局部补丁。
+40. **2026-10-10用户确认：TopN明确排行范围、原值与真实派生效果。** 保留按输入记录排序与默认首个数值列，公开实际排序列/方向；n仅正整数，显式不存在/重复的返回列拒绝，交付原值不先舍入；save_as仍创建真实派生表，沿既有操作效果合同核对，不新增聚合或排行算法。
 
-当前收敛检查：Phase 6 已有默认关闭的局部机制和自然 typed 正反产出，但完整 A/C/D 验收没有退出；因此 Phase 7/8 当前工作只能记作实现准备，不能反向宣称 Phase 6 通过。两个未进入 AgentLoop、正式 parser 拒绝其试验字段且只能返回 `unassessed` 的离线选择器及专属测试已退役，历史 E2 记录保留作为当时试验的证据，不再作为当前可用能力。Phase 7 同时把模型自述缺口的 `coverage_check` 降为 `unassessed`，保留可见缺口与 `not_computed`/`evidence_insufficient` 类别；只有宿主核验的 typed binding 才能标 `checked`。这不是散文门全族退役或正式默认切换。
 
-此收敛改动的覆盖状态 RED 为 2 failed/19 passed；修正与删减后的相关测试 50 passed。fresh `tmp/tpconverge1` full-offline 为 **3019 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `BCC8174AD86DA182C4F8E1C921BBC89448BE57458DB6846ABAE120CFDB6461FA`，runner 标明 `provider_calls=forbidden`。本次提交总体净删减 693 行，其中源码和测试净删减 697 行；该结果仅 E2，不补 A/C/D 的退出证据。
 
-Phase 8 的首个已知 RED 是 `p08_scenario_audit.py` 把 M01/M03/M05/M06 的答案数字 token 出现当成 blocking 数值 oracle，而 M02 已因原始 `0.10` 与 `10%` 尺度歧义标为 `unassessed`。token 出现既不能证明数值/口径正确，缺失也不能证明结论错误；调整前不得用现有总 `passed` 作为答案质量验收。替代物须读取同版本回执、binding 和原位 trace 的可核数值，并把无法机器判定的解释单列待评，不以放宽 token 列表或给全部未知项直接判通过收尾。
+41. **2026-10-10用户确认：贡献分解保留原算法与未知均值、真实范围。** 保留sum加法及mean加权分解；缺席组均值null，实际权重0，合并贡献使用等价已观测加权项，不推断缺席均值。披露两期/各组有效条数、排除数及现有百分比分母，有排除则原范围部分完成；不升级因果归因。已实施，当前定向/共同回归状态见§8，不重复询问。
 
-后续 E4 时点（交接 §49）：用户另行授权的 `0c579a2` 自然 M03-P/N 冻结批次已按序执行，账本 12 started/12 dispatched/0 failed；两例均完成浏览器会话、刷新和导出，却只选出 `preview_data` 等工具，两个最终 packet 均为 **0 binding / 0 trace**。P 的正确六源正文是未绑定散文，N 的可见拒绝误导不构成宿主 typed 负例通过；此批 `executed_not_accepted`，A 的自然生产、C 的自然审计分母和 D 的默认处置均未升级。下一 RED 先检查已执行 `preview_data` 是否足以由宿主证明完整两行和同版本数值；否则维持不授权，不能用提示词或旧散文补证。该批授权已消费。
 
-后续本地切片（交接 §50）：经用户选择，默认关闭的 AgentLoop 现仅对完整两行、同版本/哈希、单来源、两日各一行、有限数值 `amount` 的 `preview_data` 建立宿主事实与 scope，复用既有 `comparison` block 原位渲染。E2 全量 3024 passed/1 skipped；§49 自然 M03-P 原回执和帧经**新代码离线回放**可得六个 block，但旧正文仍未变。Provider-disabled E3 的服务健康且零 Provider，官方 IAB 新标签被自动审批拒绝，矩阵未开始，不能算 E3。新的自然模型 typed 产率、C 自然层、D 默认处置及 A 全历史价值均待后续独立验收；§49 授权不能复用。
 
-后续 E3 时点（交接 §51）：用户批准 IAB 新标签后，`main@522c21d` 的 Provider-disabled M03 预览正反两会话已在 fresh 目录全部完成，各 6 个 `comparison` block/trace，刷新和导出持久化，脚本反例没有在 assistant 正文发布七天、独立性或跨源合计；Provider initiated 0。此结果只升级本地 E3，不能推断自然模型会采用模板或 C 的自然质量。下一真实试验的合同 oracle 允许完整同版本 `preview_data` 作为比较输入，须以新提交精确冻结，并保持正式默认不变。
+42. **2026-10-11用户确认：因素分析保留原方法，明确泄漏和未知推断。** 保留标准化OLS＋HC3、Holm和VIF；目标自包含、重复或不存在的显式特征拒绝；常数目标及不可计算推断为null/具体缺口，真实筛样和特征排除公开，不升级因果。
 
-后续自然 E4 时点（交接 §52；独立报告 `docs/audit/2026-09-25-typed-preview-natural-m03-r2.md`）：`main@2f09e70` 的精确冻结经用户本轮提前授权执行 M03-P/N；账本 11 started/11 dispatched/0 failed/0 denied。两例自然答案各形成六个同版本 `preview_data` 比较 block 与六条可核 trace，P 保留六源正确两日值，N 拒绝 99%、独立和七天的错误正断言。但两篇在 typed 之外仍发布未绑定汇总、置信度、方法解释；N 含任意“9 天以上”建议。局部自然 typed 产率有实证，整批仍 `executed_not_accepted`，A 的完整价值/邻接安全、C 的自然 Shadow、D 正式处置及 Phase 7 不升级。下一步须先裁决默认关闭试验如何处理正确但未绑定的解释和无据邻接文字，不能用一条有效 binding 放行整篇散文。
 
-下一 A+B 切片继续做**跨历史离线双轨输出对照**，不要再单凭一个最近失败新增 claim 家族。第一条综合回执入包 RED/GREEN 见 §0.1/跨历史记录 §6；接下来逐样本写 `可复核事实/解释/缺口/产物/关系` 的宿主所有者、可重建结果与未重建原因，分别记录正确价值保留和独立无据事实剔除；R11/R16 正例、R4 部分正例、R7—R21 反例和旧本地会话均纳入，但旧文本不等于新 parser 的合法 binding。尤其要区分“六源原始字段可见”与“两日金额/绝对和相对变化已由同版本工具身份授权 `answered`”。无法从当前权威结构证明的解释保持 `unassessed`，不可从原文回填；若该限制导致原始 VP/CP 价值目标无法达成，应在继续改正式策略前与用户讨论。每次实施仍先记录 RED → 结构化替代物 → 将退役旧门；退役目标是“一条有效 binding 让整篇散文获得事实权威”，**不是**削弱回执/数值/版本硬门。
 
-- 只允许对结构化 claim 执行受控动作；
-- 禁止审计器整篇自由改写；
-- 修订后必须再次确定性验证；
-- 审计不可用时验证降级发布；
-- 强制最大循环次数和总调用预算。
+43. **2026-10-11用户确认：单位/时间仅范围说明，明确未校正。** 显式单位/时间列必须存在，披露实际有效观测范围与重复情况；保留原按行HC3，不按单位聚类/聚合或处理时间相关性，独立性未验证，不新增面板/时序算法。42/43已授权实施，不再等待旧问题回复；当前验证状态见§8。
 
-### Phase 7：逐族退役散文硬门
 
-每个旧检查器只能在其职责已有结构化替代物后删除或降级。逐项记录：
 
-- 原检查器；
-- 旧误拒/误放历史；
-- 新 claim/renderer/audit 所有者；
-- 回放证据；
-- 删除的正则和测试；
-- 新增的封闭不变量测试。
+44. **2026-10-11用户确认：时间序列保留原算法并明确时间、启发和未知边界。** 保留逐记录线性回归、滑窗均值差与原序列自相关；斜率为每条排序观测变化、p值未校正时间相关。自相关阈值只作启发候选，不证明季节性；完整交付滑窗结果，零前均值的百分比/阈值判定未知，绝对差保留，不新增去趋势/季节检验。
 
-禁止一次删除全部门，再依靠附录或审计模型兜底。
 
-当前退役清点：`_period_label_issues` 已是一次修订后的软提示，但尚不能证明自由散文的“同比”绑定了宿主表格；`_extrapolation_issues` 与 `_currency_unit_issues` 仍可能对未绑定散文形成硬判断。对应的 `comparison`、`scenario_extrapolation` 和宿主单位渲染只覆盖原位 typed 块，不覆盖旁侧独立句。因此本轮不删除这些正式发布门；下一退役切片必须先让无据强断言可定位并局部处置，同时保住 R4/R11 的正确边界解释，再按族删除旧硬规则。
 
-2026-09-25 收敛清理：`render_verified_appendix()` 只有测试调用，但旧情景放行与来源修订的注释、测试均误把它当作正式正文的披露保证。两个正式终局 RED 分别证明正确的回执匹配 D30 情景缺少可见验证边界、修订后通过的来源判断缺少“未经证实”宿主标注。现在实际终局对已通过算术门的旧式情景和来源修订追加宿主边界，原位 `scenario_extrapolation` 继续由既有 renderer 自行披露，来源事实仍由现有来源说明 artifact 呈现；删除未接线的旧附录函数及只验该死路径的测试。正确情景保留、错误 9.9% 仍拒绝、typed 披露不重复；定向 170 passed，fresh `tmp/trust-reset-dead-appendix-20260925-r2` full-offline 3015 passed/1 skipped/16 warnings/0 failures，JUnit SHA256 `6D63D48E18E26A6EE36F13F0363D0A58D312C0D4A619C53D059A1530DC8DD2C9`，Provider transport forbidden。产品代码净减 20 行、源码与测试合计净减 11 行。`_extrapolation_issues` 等自由散文门仍在；宿主边界说明不能为错误的预测语气或邻接解释授予权威，Phase 7 没有退出。详见 `docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md` 末节。
+45. **2026-10-11用户确认：时间序列有限范围与输入身份。** 保留原日期解析/可转float口径；逐项公开缺失、坏日期、非有限及联合排除，有限有效记录计算，有排除标原范围部分完成。显式错列/转换失败及value_col/target_col冲突拒绝；重复日期继续逐记录，实际推断列公开，不静默聚合。因素分析冻结验证已完成；时间序列从反例开始实施，不重复等待旧回复。
 
-### Phase 8：验收契约与判定器重写
 
-- 将 oracle 分为 blocking、structured completeness、semantic audit、advisory；
-- 每条 blocking oracle 必须引用原始需求原则和可机器判定的证据；
-- 移除依赖特定自然语言措辞的硬 oracle；
-- 判定器输出各维结果，不再用单一 6/6 掩盖失败性质；
-- 保持现有 runner、浏览器工作流和账本，不新增重复机制。
 
-首个收敛切片：P08 审计器不再用答案数字 token、散文“同比”加任意跨年回执、或 D 日百分比与拟合值的词面碰巧一致，给出自动通过/阻断。三项均显式 `unassessed`；没有其他 blocking 失败时总判定为 `needs_review`，不能被写成验收通过。完整矩阵另要求 M01–M06 场景实际出现，零识别或缺场景为结构化失败。前三组 RED 分别为 3 failed/19 passed、2 failed/1 passed、2 failed/2 passed；最终定向 26 passed，fresh `tmp/tp8o1` full-offline **3030 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `84BEE529EF99A049D9669A7870D901BA6BEFF540573DC3E118903AAF596BB101`，runner 标明 Provider transport forbidden。只读回放旧完整 P08 目录仍识别六场景并维持失败，自然 M03 试验目录从错误的 `passed/0 sessions` 变为 `failed/0 sessions`。这只是移除伪精确 verdict，尚未实现同版本回执、binding、trace 的正向数值验收，也没有改变正式发布或调用 Provider。
+46. **2026-10-11用户确认：预测保留原方法和完整时间、有限范围。** 保留auto/backtest有序留出、末值/线性候选及重复时间求和；未来点保留完整时间戳。公开缺失、坏日期、非数值、非有限排除及重复时间求和真实范围；有排除标原范围部分完成，筛选后仍核原点数/等间隔前提，不补值或新增模型。
 
-后续收敛退役了两个仅靠散文词面识别 D 日百分比和“同比”的非阻断伪证据项：缺少关键词时旧审计器会记录 `passed`，但这并不能证明未发生无据外推或跨年口径错误。数字正确性仍由统一 `answer_numeric_oracles=unassessed` 承担待核验状态，不能因删掉词面提示而自动通过。定向测试 21 passed；旧完整 M01—M06 真实目录只读回放仍识别六场景、总判定 `failed`、六项数字均 `unassessed`、三个 blocking 失败。正向同版本回执／binding／原位 trace 验收和开放解释评估仍未完成。
 
-该删减后的 fresh `tmp/tp8converge2` full-offline 为 **3014 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `01BFAE487DC9AB2A90CF6EBA2B376AD1A8ED922BA0D86612B3C41736D5821A7F`，runner 标明 `provider_calls=forbidden`；只是 E2，不改变产品正式发布或 Phase 6 退出判定。
 
-现有 `build_offline_audit_view` 已接入 P08 只读报告的 `structured_evidence`：只记录已持久化同版本 packet／回执／原位 trace 可定位的宿主 claim 数量，需求完整性固定 `unassessed`，旁侧自由散文固定 `not_audited`，不参与总判定。自然 M03-P/N 归档各得 6 个可定位 claim、0 个不可定位；旧完整 P08 的 M03 仍为 unavailable/0。相关两组定向 39 passed。此举给 Phase 8 一个可复用的结构证据输入，但没有实现数字口径正向 oracle 或开放解释质量判定。
+47. **2026-10-11用户确认：预测残差启发带与未知边界。** 保留点预测及原1.96乘留出残差样本标准差，只称未校准的残差启发带，不宣称95%预测覆盖；不足两条残差或标准差不可算时上下界null、不补0；可算零宽带保留，未来不确定性未经验证。丢失时间/非有限计算/单残差补零属于实现错误，直接修复；若目标要求已校准覆盖率，则现有启发带不能签收该目标，需讨论替代方法并独立验证。
 
-该报告接线后的 fresh `tmp/tp8structured3` full-offline 为 **3014 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `34B42BE1F4A6BC569F0A9C8EF2C433A93AF9266BC4589E589DA368A2984ACB33`，Provider transport forbidden；仍只是 E2。Phase 6 的 A 跨历史价值、C 自然 Shadow 和 D 正式处置均未因此退出。
 
-**当前顺序续接**：Phase 6 默认关闭入口曾漏选本轮 `curve_fitting` 回执，尽管现有 M02 `descriptive_fit` 生产者、同版本确认、`answer_bindings.v1` 与宿主渲染已能闭合观测序列。新增入口 RED 为 1 failed/6 passed；接线后同一测试 7 passed。受控入口只选一份本轮拟合回执，只提供观测拟合 claim；未确认的 D30 不自动生成为情景或预测，普通 AgentLoop 仍不注入。fresh `tmp/tp-m02-entry-20260925` full-offline **3015 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `4DF4CAD5A61CDC2C7ADAFADDDB1A202BCA530020ADD184321E834EF5D7317DA0`，runner 禁止 Provider 调用。该证据是 E2 接线，不证明旧 R11 原句等价、R4 图表价值、自然模型采用率或 Phase 6 A/C/D 退出。Phase 7 清点仍保留 `_extrapolation_issues`、`_currency_unit_issues` 等自由散文门：typed 渲染只证明原位块，旁侧无据句尚无结构化局部处置，不能为完成阶段而删门。Phase 8 的整篇数字与解释仍为 `unassessed`；已定位宿主 claim 数不得升级成整篇质量通过。
 
-**用户确认的后续次序取舍**：自然 M03 正反答案的原位 claim 与旁侧正确解释、无据建议并存；当前 packet/回执/trace 不能判定自由散文语义。保留现有散文门，先完成 Phase 8 分层验收和统一矩阵，再据真实正反证据决定 Phase 7 各族退役。Phase 7 的退出因此延后；Phase 6 默认关闭实现准备也不得改写为 A/C/D 验收完成。
+48. **2026-10-11用户确认：时段比较真实数值求和、范围审计与未知边界。** 显式非数值/错列/重复选择拒绝；可加指标仍求和，有限观测计算并公开每期/每组有效数与排除，原范围不完整则部分完成；无有效观测合计null，真实观测零保留0。原ratio_of_sums及非可加列公式要求保留，不静默换算法；新裁决已收到，从原反例开始实施。
 
-Phase 8 本地校准先复现一个证据断链 RED：原回执 `publication_facts` 从 100 漂移为 999、packet 与已接受正文仍保持旧值时，只读审计视图旧行为仍为 `ready`。现从同一持久回执复核被选择的事实组字段，并与 packet 可引用的事实字段逐项核对；变更后相关审计/M02/聚合/M03/P08 定向 50 passed，自然 M03-P/N 归档仍各 6 个可定位 claim、0 个不可定位，旁侧散文仍 `not_audited`。该校验只证明原位数字与持久回执一致，**不**证明原始数据、跨来源业务解释或整篇答案正确。P08 分维报告的 RED 为 2 failed/3 passed，现分别输出执行、证据、解释价值、导出、声明状态；开放语义固定 `unassessed`，未调用隐藏模型审核。旧完整 P08 只读回放仍识别六场景、总判定 `failed`，执行/导出 `failed`、证据/价值 `unassessed`。fresh `tmp/tp8-layered-20260925-r1` full-offline **3016 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `163A6F9BFFE8CFE5237929127EC192E478D8A8F2AB8DCAAF3400B202F01422F4`，runner 禁止 Provider 调用。下一步按根 `AGENTS.md` 在当前提交上跑完整 Provider-disabled 内置浏览器矩阵；该矩阵的脚本模型结果不能替代自然模型或 Phase 5/C、Phase 6/D 裁决。
 
-Phase 8 的当前 HEAD `fbbc147` 完整 Provider-disabled E3 已在 `tmp/tp8-e3-20260925-r1` 执行：16 会话，14 completed、保存故障 1 unknown、预算耗尽 1 failed；浏览器 warn/error 0，`forbidden_provider_transport=0`、实际 Provider initiated 0。B03/CONTENT-B03 六源续轮、压缩、刷新与持久导出，B04 同会话 13 步，IC 具体确认/复用/变更与 CONTENT-B07 富文本窄屏均有收据；详细身份、会话、导出和停止核对见 `docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md` 新节。旧完整真实 P08 在当前分维审计器下仍为 `failed`，执行/导出失败、证据/价值未评估；自然 M03-P/N 的局部 typed 正例不能审计邻接散文。因此 Phase 8 的**本地分层契约与 E2/E3 执行已完成，整体真实验收未通过**；按用户裁决 Phase 7 保留旧门，待对照真实正反证据和结构化局部处置能力再逐族裁决，不从脚本 E3 绿灯推导 Phase 6/7 退出或启动新 E4 补丁循环。
 
-### Phase 9：验证顺序
+49. **2026-10-11用户确认：画像列级诊断与具体方法裁决。** 通用缺失率、重复行或样本量阈值不裁决整个分析可行性；空表明确无可分析记录，其他问题逐列披露为诊断警告。具体方法及实际使用列的前提决定可行性；基础检查不得宣称方法前提已验证。已授权，从实际空表/非有限/无关列反例开始；同形状旧缓存属于真实实现错误直接修复。
 
-1. 单元与真实轨迹回放；
-2. 相关子集；
-3. 隔离 full-offline；
-4. Provider-disabled 内置浏览器完整矩阵；
-5. 修复结束并重新完整执行本地矩阵；
-6. 冻结精确 commit、模型、端点、fixture/prompt/oracle digest、矩阵、预算和账本路径；
-7. 等待用户新的显式授权；
-8. 使用内置浏览器一次完整执行 M01—M06，中途不修代码、不局部重跑。
 
-本地/offline/Provider-disabled 证据都不能升级成真实 Provider、staging、production 或 deployment
-证据。
 
-## 8. 测试原则
+50. **2026-10-11用户确认：采用按当轮必要交付及解释上下文投影，并允许提高预算。** 每个已请求来源、指标、图和必要限制保留；未请求且重复的完整审计详情留在同一宿主快照、原回执及可恢复详情，不能缩小必答分母或改变完成裁决。用户随后批准实施完整请求token预算：65536 tokens软目标，必要交付可扩展到实际剩余上下文；按当前模型/端点输入、上下文及输出上限预留输出与10%余量，系统提示/历史/工具定义/响应格式全部核算。优先本地tokenizer，无匹配时明确标注UTF-8保守估算；MAX_TOKENS为空时保留Provider管理语义并预留已知最大输出。实际输入/输出/缓存用量和按显式价格估算的费用写原日志，未知不补零。超硬容量在传输前拒绝，不增加重试、审核或调用额度，不授权真实Provider调用。
 
-### 8.1 使用真实失败轨迹，不继续造词表样例
 
-最低回放集：
 
-- R4 M01：`5df75d57da84`
-- R4 M02：`c3f4c190384c`
-- R4 M03：`50e734df7af7`
-- R21 Codex M02 scope 死亡轨迹；
-- R21 双批 M04 工具发现/任务门轨迹；
-- 历史正确答案被否定词、表头、范围句、跨子句配对误拒的候选；
-- 历史“同比例”“块/块钱/元”“模板/占位符”等正则修补案例。
+51. **2026-10-11用户确认：明确1—50行预览边界。** n仅接受1—50整数，默认10；不静默截断超限请求，成功披露请求/实际返回/源表总行数，预览不代表完整数据。
 
-### 8.2 变形测试优先
 
-同一 claim/evidence 下进行：
 
-- 同义词替换；
-- 主被动变化；
-- 子句拆分或合并；
-- 表格与行内表达转换；
-- 族名与限制说明换序；
-- 中文/英文显示名变化。
+52. **2026-10-12用户确认：采用有限观测质量诊断与明确未知。** 保留缺失/重复及1.5×IQR；常量须至少一条非缺失且唯一值1，单列披露非有限数；IQR只对有限观测，公开有效/排除数和未舍入边界，无范围/IQR=0说明未作判定；诊断不宣布就绪或记录必然错误。已实施，见§8指定切片证据。
 
-如果这些变化会改变确定性发布状态，说明实现仍在解析散文，应视为架构失败。
 
-### 8.3 不把 mock 绿等同于真实能力
 
-- mock 验证协议和宿主动作；
-- 录制轨迹验证历史回归；
-- Provider-disabled 浏览器验证完整产品路径；
-- 真实 Provider 只验证自然模型路径和外部传输；
-- 各证据等级分别记录，不互相替代。
+53. **2026-10-12用户确认：单次记忆提取原子提交。** 候选创建及去重刷新共用同一SQLite事务，失败共同回滚；原识别、上限、去重键、状态门和已保存会话/证据保留，自动提取失败不影响正常数据回答。
 
-## 9. 完成定义
 
-本任务只有同时满足以下条件才可称为完成：
 
-1. 三份原始计划的核心原则均有明确代码所有者和测试；
-2. M01 是否挂起不再依赖“真实值”等自然语言 token；
-3. M02 的权威外推数值完全由 claim/回执重算和宿主渲染，不解析散文配对；
-4. M03 压缩只使用规范历史，刷新和导出不丢执行结果；
-5. 模型无需正确维护第二套 planner/task JSON 才能发布独立已验证 claim；显式竞争假设任务的结构化 plan 与假设/证据关系仍需满足原始 P5 审计要求；
-6. 高风险正文不再依靠末尾免责声明纠错；
-7. LLM 审计输出结构化 finding，不能覆盖确定性失败，不能新增事实；
-8. 审计最多一次定向修订和一次最终复核，不形成循环；
-9. 审计故障有明确降级路径，不造成全局永久阻塞；
-10. 历史正确候选不再因同义词、语序或表格布局被误拒；
-11. 历史无依据高风险结论被结构化降级、移除或标为未评估；
-12. full-offline 与 Provider-disabled 完整浏览器矩阵通过并有隔离证据；
-13. 新的真实 Provider 批次只有在精确冻结和用户重新授权后执行；
-14. 完整 M01—M06 真实批次中，确定性正确与交付项全部通过，advisory 单独报告；
-15. 没有覆盖、删除或误提交用户原有未提交文件。
+54. **2026-10-13用户确认：独立创建/确认记忆沿既有操作效果合同及精确记忆绑定。** 增加实际记忆条目ID/完整行摘要，执行前核请求、会话、配置库、完整参数及目标旧状态，执行后和提交前重核实际行；仅候选→已确认或已确认不变幂等支持，其他状态写入前拒绝。全局记忆管理语义保留，记忆不成为当前数据事实，不新增账本。
 
-补充防漂移门：第 10/11 项不能只靠“核心删掉 99%”证明，还须证明 R11/R16 的正确结果及 R4 M03/M04 的可验证价值没有因默认切换而静默消失；不能以 R4 中断批次代表所有历史。A/B 的 E2、C 的 Shadow、D 的正式发布、E3、E4 分别记账，不得把前一层绿灯平移成后一层。
 
-## 10. 实施中的停止条件
 
-遇到以下情况应停止扩展实现，回到设计层：
+55. **2026-10-13用户确认：检索数量仅接受整数，非正整数为空结果。** 不接受bool、浮点或字符串，不隐式转换；非正数不读取条目。存储、registry及上下文服务共用原排序与范围，无新检索或发布链。指定验收见§8。
 
-- 为修一个合法新措辞而准备新增关键词；
-- 审计模型的意见无法绑定 claim/evidence；
-- 为让测试通过而降低确定性数值或回执约束；
-- 宿主附录与正文产生明显矛盾；
-- 一个局部任务状态再次阻断无关已验证结果；
-- canonical history 仍存在两个可写事实源；
-- 需要新增隐藏 Provider 调用或突破冻结预算；
-- 新设计需要另一套 planner、浏览器框架或账本；
-- 只能靠真实 E4 才能发现可离线复现的状态机问题。
 
-## 11. 原始新对话启动指令（历史，勿作为当前阶段命令）
 
-在全新 Codex 对话中粘贴以下内容：
+56. **2026-10-13用户确认：工具发现返回完整匹配与明确摘要截短。** 取消隐藏20项上限，返回全部匹配名称/原摘要/分数及总数/返回数；摘要仍最多200字符并逐项标明截短。保留原评分、排序、分组激活及完整请求预算守卫，不新增搜索算法、分页链或发布账本。指定验收见§8。
 
-```text
-请接手 D:\Project\Daily\data-agent 的“中文数据分析 Agent 可信发布架构重置”任务。
 
-先完整阅读：
-1. 仓库根目录 AGENTS.md；
-2. docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md；
-3. 该计划引用的三份原始计划。
 
-然后只做 Phase 0 的证据复核：检查 git worktree、实际 main/HEAD、dirty/untracked 文件、
-R4 目录和真实失败轨迹，确认计划中的事实是否仍成立，并报告差异。不要立即修改代码。
+57. **2026-10-13用户确认：既有table合同承接Skills目录元数据。** 绑定当前会话、配置全局目录、宿主核验目录/文件摘要及本会话加载状态，允许真实空目录；读取及提交重核，不将目录升级为数据事实，不新增账本。指定验收见§8。
 
-特别约束：
-- 保留现有未提交文件，不覆盖、不删除、不 bulk-stage；
-- 不补自然语言关键词，不把末尾免责声明当作正文纠错；
-- 不新增 planner、浏览器框架、重复账本或隐藏模型审核调用；
-- 先修 canonical history，再做 M02 claim/renderer 垂直切片，再做确认类型化，最后引入
-  LLM 审计 Shadow 模式；
-- LLM 审计必须受 claim/evidence 约束，不能成为新的随机总审批门；
-- 未经新的精确冻结与我的显式授权，不得调用真实 Provider；
-- 在每个实施阶段前先给出 RED 轨迹、结构化替代物和将退役的旧门，确认没有回到词表修补。
 
-完成 Phase 0 后向我报告：当前确切 HEAD、工作树状态、证据复核结果、计划需要修订之处、
-第一阶段的最小实现边界与测试清单；等我确认后再实施。
-```
 
-## 12. 编写时交接边界（历史）
+58. **2026-10-13用户确认：既有操作效果承接MCP配置操作。** 新增/替换、启用、禁用、删除在执行前绑定明确请求、当前会话、配置全局路径、旧SHA和完整参数；执行后及最终提交核真实文件SHA与解析配置。只证明实际配置变更，不证明连接、断连或远端执行；未声明/参数不符写入前拒绝，不新增账本或连接生命周期机制。指定验收见§8。
 
-以下列的是本计划在 2026-09-22 **尚未获用户后续授权时** 的边界；现行授权和精确 HEAD 以 §0.1、Phase 6 四门及后续用户裁决为准。不得把这段旧文字解释为可重做 Phase 0 或否定已获准的 A+B 离线工作。原文当时不授权以下行为：
 
-- 不授权修改产品代码；
-- 不授权删除或修改两个既有未提交文件；
-- 不授权提交、推送或部署；
-- 不授权真实 Provider 调用；
-- 不授权开始新的浏览器矩阵。
 
-下一对话必须从 Phase 0 复核开始，以实际仓库状态修正文档中的任何漂移信息。
+59. **2026-10-13用户确认：既有table合同承接MCP目录，分别核验配置与连接记录快照。** 绑定当前会话、配置全局路径、实际文件SHA及解析配置，另绑定本进程已有连接记录；无管理器时状态未知，允许真实空配置。读取及提交重核，不主动连接/探活/远端调用，不把保存配置当作连接生效，不升级数据事实或新建账本。指定验收见§8。
 
-现行续接规则：先重查 `AGENTS.md`、三份原始计划、§0.1、HEAD/dirty 与上述审计记录；复核历史正反样本和本阶段三联门，再在获准的 A+B 离线边界内推进。未经另次裁决，不启动 C/D、正式发布切换、真实 Provider、push 或部署。
+
+
+60. **2026-10-13用户确认：既有操作效果承接独立会话导出。** 执行前绑定明确请求、当前会话、已持久化公开历史版本/SHA、标题/格式/图表选项和原答案来源；执行后及提交核真实文件与SHA。原历史范围冻结，后续工具/回答追加不进入已导出范围；未声明或参数不符写入前拒绝，不升级数据事实或新增账本。
+
+
+
+61. **2026-10-13用户确认：保留PDF并统一到原导出实现。** 网页API复用原PDF转换器；未知格式写入前拒绝，退役旧HTML重复导出路径。PDF依赖/转换失败只交付明确HTML备用件与部分完成，不称PDF成功。
+
+
+
+62. **2026-10-13用户确认：显式多问题明确拒绝，保留每次1—4题上限。** questions须为有效非空JSON数组且不超限，问题对象含非空文本；非法输入在挂起或写入确认前拒绝，不静默截断或退回另一条单问题。合法单题/多题沿原确认流程，选项/顺序/用户回答保留；未扩大权限、事实权威或新建确认链。
+
+
+
+63. **2026-10-13用户确认：兑现自然日聚合并明确时区边界。** 无时区输入按自然日求和；带时区输入仅同一时区时按该时区自然日求和；混合有/无时区或不同业务时区明确拒绝，不猜转换规则。
+
+
+
+64. **2026-10-13用户确认：多来源综合采用有限范围审计与明确拒绝。** 保留原数值转换、求和与外对齐；仅有限有效观测，逐来源公开排除原因/条数，原范围不完整为部分完成；未观测日期未知、不补零；重复来源或指标声明读取/写入前拒绝。
+
+
+
+65. **2026-10-13用户确认：写入前名称与路径冲突拒绝。** 共享Workspace写入前拒绝非单段名、平台保留/ADS名及按文件系统规则冲突的名称；不自动改名、不覆盖其他对象，旧快照读取规则保持不变。
+
+
+
+66. **2026-10-14用户确认：沙盒超时为整数秒且执行前明确拒绝。** timeout仅接受1—30的整数，不接受bool、浮点或字符串；非法值在启动子进程前拒绝，默认30秒，原隔离执行和超时终止机制保留。
+
+
+
+67. **2026-10-14用户确认：仅成功Python结果产生待处理义务。** 仅在run_python成功返回后标记pending_fallback_resolution；失败仍计原调用次数、fallback次数及重复错误预算。保留成功结果必须处理的约束及原权限。
+
+
+
+68. **2026-10-14用户确认：图表显式来源拒绝，仅省略时默认。** 以data明确选源时，不存在或不可读就明确拒绝，不自动换来源；仅省略data时保留原main/最大表纯工具默认选择。
+
+
+
+69. **2026-10-14用户确认：明确图值来源及身份断言。** data_json不与data/result_ref并用，仅为不绑定数据事实的探索图；result_ref可附data断言，但须与回执唯一来源一致，省略时由回执确定，Loop不另猜；冲突写图前拒绝。
+
+
+
+70. **2026-10-14用户确认：未知聚合缺口与饼图拒绝。** sum无有效值为null，真实零保留；折线/柱图保留未知缺口和有效数；饼图有未知组写图前拒绝，不以已知子集冒充完整占比。
+
+
+
+71. **2026-10-14用户确认：图表count为原列非缺失计数。** 文本和数值均可，不先转数值；全缺失组为0，不去重或解释为用户人数。
+
+
+
+72. **2026-10-14用户确认：热图为整体Pearson及明确参数/范围。** 至少2个不重复数值列，显式color_col/aggregation写图前拒绝；公开逐列有限范围和每对有效数，未定义未知，排除非有限值时原范围部分完成，不新增分组热图或算法。
+
+
+
+73. **2026-10-14用户确认：四种单指标图明确拒绝多列。** histogram/box/pie/stacked_bar显式y_col仅1列，多列写图前拒绝；省略时保留原默认或缺参拒绝，不自动挑掉一列。
+
+
+
+74. **2026-10-14用户确认：折线完整时间戳及明确聚合粒度。** 默认按原完整时间戳排序，仅同一时间戳×颜色组的重复记录要求并执行原聚合；日/月桶先用原transform_data明确生成，不从标题猜粒度，不新增重采样算法。
+
+
+
+75. **2026-10-14用户确认：图表真实数值范围及部分完成。** 保留原数值转换和各图种缺失处理，逐实际字段披露原行数、原缺失、转换失败、非有限值与有效数；坏值或非有限值造成原范围不完整时沿既有图表合同部分完成，普通缺失按原规则处理并披露，不新增填补或插值。
+
+
+
+76. **2026-10-14用户确认：散点显式双轴、全省略时原默认。** 显式指定任一轴时必须同时指定x_col和y_col，否则写图前拒绝；两个轴均省略保留原前两数值列。line/bar/box仅显式y时沿原按记录或无分组算法尊重选列，修复已公开合同，不新增方法。
+
+
+
+77. **2026-10-14用户确认：保留原算法并拒绝不支持的显式参数。** box/histogram/pie写图前拒绝color_col；scatter/box/histogram写图前拒绝aggregation，box保留原x_col分类箱图，其他已支持图种的分组/聚合不变，不新增绘图算法。
+
+
+
+78. **2026-10-14用户确认：line/bar显式x须同时指定y。** 写图前拒绝仅显式x；仅y沿原行号绘制，两个轴均省略保留原默认，不自动猜测或替换显式轴。
+
+
+
+79. **2026-10-14用户确认：直方图单变量选列与冲突拒绝。** 可仅x或仅y；两者同时显式指定须同一列，否则写图前拒绝；均省略保留原首个数值列，不新增双变量算法。
+
+80. **2026-10-14用户确认：漏斗有限非负整数计数。** 保留原数值转换，100.0可接受；非法计数写图前拒绝，原步骤顺序、金额语义守卫及原全零拒绝不变，不新增用户去重或时间顺序判断。
+
+81. **2026-10-14用户确认：漏斗选列兑现与未支持参数拒绝。** 显式单列x/y优先，省略一侧沿该侧原别名；多y、color_col、aggregation写图前拒绝，需聚合使用原transform_data，不新增绘图链。
+
+82. **2026-10-14用户确认：非时间折线复用原聚合器。** 显式聚合按相同x×颜色组，数值x升序、分类x首次出现顺序，原sum/mean/median/count及时间轴规则保留，不新增重采样或统计方法。
+
+83. **2026-10-14用户确认：箱图显式x须配单列y。** 缺y写图前拒绝；原仅y无分组与全省略默认保留，不新增绘图算法。
+
+84. **2026-10-14用户确认：line/bar分组或聚合须有明确分析轴。** 显式aggregation或color_col须提供x_col或原label_columns，否则写图前拒绝；未请求分组/聚合的仅y或全省略保留原行为，不猜整体聚合规则。
+
+85. **2026-10-14用户确认：数值折线x拒绝正/负Infinity。** 在写图前明确拒绝，普通缺失仍按原规则处理并披露，不新增删行、填补或坐标推断。
+
+86. **2026-10-14用户确认：饼图sum/mean/median须明确单列指标。** 缺y在写图前拒绝；原仅x分类频数及等价count保留，不猜数值指标，不新增算法。
+
+87. **2026-10-14用户确认：原Renderer内业务表格及完整详情。** TopN、时段比较按既有类型化合同呈现排序/分组/日期/天数/合计/差值/日均/有效数及百分比分母；完整审计、来源和未知限制继续绑定原回执及详情，不改计算、不解析散文、不新增渲染链。
+
+88. **2026-10-14用户确认：HTML正文原值与原渲染器安全责任。** 移除渲染前全正文正则改写，沿现有Mistune的HTML转义及危险协议拒绝，正文原值保留；不新增库或渲染链。实体处理复用该库safe_entity，原始HTML仍转义、URL仍核safe_url。
+
+
+
+89. **2026-10-15用户确认：部分答案与执行终局分别裁决。** 保留原工具/耗时/回退预算；容量耗尽关闭后续工具，仅用既有收尾额度交付当前已核事实及逐项缺口。成功保存部分答案时终局completed、目标覆盖partial；传输/会话/保存失败仍failed。不增加调用或重试额度。
+
+
+
+90. **2026-10-15用户确认：原Renderer内的分布业务表格。** 逐列展示原描述量、五数概括、有效/排除范围及Shapiro未拒绝/未知，保留原精度、方法和限制；完整审计留原回执。不改计算、不猜结构或解析散文、不新增渲染链。
+
+
+
+91. **2026-10-15用户确认：保留单张多题卡、一次提交。** 只展示真正未决的题，沿原确认记录逐题绑定、裁决、保存回答归属及合法复用；方法许可降级，不增加模型调用、账本或另一条确认链。
+
+
+
+92. **2026-10-15用户确认：普通业务回答须宿主精确绑定后跨轮复用。** 宿主从当前需求/任务唯一核定相关对象、实际版本与原权限；无绑定只用于本次请求，不自动沿用到下一次请求。相关换版重新检查适用性，无关文件变化不失效；不增加模型调用或账本。
+
+
+
+93. **2026-10-15用户确认：新请求使未绑定旧待决确认过期。** 仅使旧确认发生过期，保留原记录、原需求和历史答案；新请求按当前范围提问。已精确绑定且仍适用的旧卡继续复用，不新增模型调用或账本。原反例tmp/b87三RED/九对照和tmp/b94双对象温/冷正常链两RED保留；f5完成后已沿原请求身份/expire/检查点/resume实施，tmp/b97定向16通过，tmp/b99正常23通过，tmp/b100独立523核对，当前完整f6为6834/0/2且同批523独立核对通过。
+
+
+
+94. **2026-10-16用户确认：宿主证明无关的模型问题不阻塞。** 先限当前原需求/正式交付明确为全表记录数、无时间筛选，而模型提出时间窗口题的已复现边界；宿主不能证明无关的真实未决题仍沿原确认。跨直接/registry两RED和真实上传/正式计划/AgentLoop一RED、一正常对照保留tmp/b105/b106；不新增散文解析、模型调用或账本。已实施；f7同批6901/0/2及929原件核对，当前95候选f8完整6906/0/2及995同批核对已完成，完整模式未签收。
+
+
+
+95. **2026-10-16用户确认：旧v2回复ID碰撞只读呈现分组。** 保留原AcceptedAnswer身份、原记录/事件字节；读取时以原接受终点分组，后续碰撞失败说明沿既有兼容算法生成稳定呈现ID，保存/刷新不回写迁移。真实旧快照反例见tmp/b122，批准见approved-boundary.json；f7已实际结束并核1069/1186原件和原171状态；正式跨接口/正常RED为b124四失败/一对照，仅原public_messages读投影实施后b125五通过。当前b127联合72/q128完整文件769/b129正常41/b126独立995及h9完整HTTP52通过，f8完整6906/0/2及995同批核对已完成；不增模型调用/账本。
+
+
+
+96. **2026-10-16用户确认：真实生产者原件精确核定。** b133沿真实_record_trust_workflow持久引用→detect_question_need复现漏掉实质amount字段风险，同一原件展开对照正确；不把此kernel证据称正常AgentLoop。沿现有宿主原件访问，只有当前对象/版本/原权限可核时使用字段依赖；无法核则保留原记录，依赖交付未评估/证据不足，可证明无关的交付继续。不凭模型标签或旧引用放行，不加模型调用/账本。已沿真实生产者绑定原件SHA、对象版本和原权限；检测/入口/能力共用原件核定，拒绝内联自报及伪dataset标签。27个跨三接口生产者正反例、4条正常AgentLoop链与原IC相邻条件纳入P3相关模块，tmp/b153/pc6共520通过。f9实际6916通过/4失败/2跳过，四个执行控制旧夹具已改真实生产者且原断言未变，完整模块35通过；最新96生产边界不撤回，不重复询问。
+
+
+97. **2026-10-16用户确认：先收敛S3与测试/证据策略。** 当前f8实际结束、同批原件及材料保全后，先冻结有限剩余必过清单，复用原180/77入口已有证据，审核重复全链测试与可重建运行材料；整库仅相关改动整体收敛和阶段出口执行，不每小切片自动启动。裁决96授权保留，不进入S4/S5；历史材料先列保留/退役清单，未经新授权不删除。耗时及磁盘实测见tmp/b134，有限清单见tmp/b135/convergence-scope.json。
+
+
+98. **2026-10-16用户确认：窄屏顶部工作台入口打开侧边抽屉。** 已实施，仅现有index/app.css/app.js；一个原工作台DOM/数据链，桌面布局及原AcceptedAnswer保留。b155默认747px不可达反例、b159实际Alpine混合数组类绑定失败均保留；修正为字符串绑定后b162/h12完整HTTP52/52、90原片段、747/1440宽窄、Tab/ShiftTab首尾、Escape/遮罩焦点返回、详情/浏览器刷新及M04分类指定观察通过。原八事实正常链与相关3完整模块共67通过（b163/u98b）；原八事实精确视觉、picker和VP-U03全部可读性仍未签收。Provider/远端MCP0。
+
+99. **2026-10-16用户确认：原Renderer只格式化新答案的结构化日期窗口。** 历史AcceptedAnswer、原消息/事件原字节只读；工作台仍用原接受片段，保存/刷新/导出仍同一正文，不加散文解析、模型调用或账本。b164三接口真实比较回执RED均复现JSON窗口；沿原_period_heading增加日期呈现，事实值/结构化scope不变，未知/其他scope不猜测或丢字段。b165六完整模块144通过；b166用当前reader核此前19答案/477历史文件字节不变。新正常h13完整52/52及固定M03可读窗口42检查、浏览器刷新已核；其余结构化scope及不透明假设标签尚未签收。
+
+100. **2026-10-16用户确认：内核完整枚举、正常AgentLoop按共同边界保留代表链。** 首批已审24实例退役，保留16正常实例、122对应内核及全部函数断言；同源ph8验证。继续逐组核独有算法、产物、序列化与权限断言，禁止按文件大小/名称自动删除。唯一run_regression.py支持tests内具名节点；默认quick改用核心合同及代表链，full-offline默认仍完整tests。105正常命名组已审4组、余101待审；拆文件本身不改善执行耗时，不承诺整库恢复3—5分钟。
+
+101. **2026-10-16用户确认：原决定ID显式引用、宿主精确核定后复用。** ask_user_question单题可给reuse_decision_id=原确认ID；多题各题内给原question_id。模型只提引用，宿主核同会话、原需求/对象/版本/原权限、原问题种类/选项身份；普通业务回答仍归属原题原回答，不因新文案生成新含义或状态动作。原多题父ID不能冒充某一题。缺引用、不唯一、跳过/未绑定/失效或范围冲突时走原必要提问，不增加同义散文解析、模型调用或账本。原R01三接口RED、跨会话隔离与正常同步/流式/恢复闭合均保留。
+
+102. **2026-10-16用户确认：F2显式人数列、最大已观测日龄列与同一正式交付绑定。** 沿同一个curve_fitting加入weight_col/mature_through_col，先核成熟范围再按裁决16逐记录处理零值，再普通/人数加权聚合；逐点有效数、权重合计、未成熟/零/无效排除数和原参数均保留。未提供列保持探索口径/未知说明，不从零值或模型标签推断成熟度；三拟合族及不外推边界保留，不新增模型调用/账本/双链。接口缺项RED b225六项，可空pd.NA在中间实现绕过验证RED b234六项保留；显式notna核定已修。实际观测x范围和已计算逐点残差沿原回执/Renderer保留。当前正常/内核收据见§8；已知比例声明呈现和独立敏感性比较后续边界由103—105明确。
+
+103. **2026-10-16用户确认：已知单位作为同一正式计划的声明呈现口径。** value_scale绑定当前原需求、对象/字段、版本/原权限和正式交付；原工具数值及单位证据不改。原Renderer可显示10%，保留原值.10与“源单位未独立核定”；未声明未知，与有效原确认冲突受控拒绝。声明不升级源数据已验证单位，不新增文字解析、模型调用或账本。三入口六RED b245保留，当前结果见§8。
+
+104. **2026-10-16用户确认：同一curve_fitting可选敏感性比较。** compare_weights复用同一成熟/零值筛选观测，输出普通均值、指定人数加权均值、逐点绝对差及全点最大差/日龄，并与同一正式交付绑定；存储内部复核原观测，不暴露原表、不重复拟合、不增加新拟合方法/模型调用/账本。原回执表与最大差分别绑定当前必要交付，当前结果见§8。
+
+105. **2026-10-16用户确认：宿主核定全部敏感性交付无窗口依赖才非阻塞。** 原F2日期列使旧period_compare路线在工具前暂停的正常链RED b253及三接口RED b261保留。宿主核当前原需求结构化范围、真实对象/字段/版本/原权限及原生曲线合同；全部交付不依赖日期窗口才降为非阻塞。含真实时段、混合、范围或列未核定仍沿原确认；不加文字解析、模型调用或账本。当前同源验证见§8。
+
+106. **2026-10-16用户确认：复合当前报告先保存唯一AcceptedAnswer，再自动精确导出。** b317三入口已复现当前分析180完成而export_conversation只导出此前消息。当前报告沿同一工具的结构化reply_target=current_answer及既有原回复导出路径，由宿主核已保存的精确reply_id/AcceptedAnswer终点；成功或失败沿既有原执行回执/终端呈现，原正文及保存时交付状态不回写、不重算，不以旧会话文件代签本次报告。未可靠保存不导出；导出、原回执或预算失败保留原答案并据实报执行终局，不自动重试，不加模型调用或账本。历史conversation默认参数和身份保留。当前证据见§8。
+
+107. **2026-10-16用户确认：坏表下仅保留宿主可核的零有效数值分布诊断与未知值。** b326完整责任包1991通过/1失败/1跳过，确认I07质量门把全空amount原件的缺失/排除范围及未知统计量也一并挡住。仅当当前原件、原回执、版本与原权限可核，且原生分布审计证明相应指标无有效数值时，保留真实诊断和未知统计量，不据此宣称数据可用于正式分析；实际数值/推断、缺原件/篡改/换版及其他坏表依赖继续受原门约束。不加文字解析、模型调用或账本，当前原生回执再次按宿主观测核定，不能凭模型标签放行。当前证据见§8。
+
+108. **2026-10-17用户确认：新答案呈现宿主核定的原假设内容及证据状态。** Q14在direct/registry发布投影及正常AgentLoop原正文独立核出四个原假设只有不透明ID与状态，三项内容oracle失败（tmp/b344/q14-content-independent-oracle.json）。沿同一发布投影与原Renderer，仅新答案展示当前原假设内容、中文证据状态及缺口；当前原件/计划/版本/原权限不能核定时保留证据不足，假设内容不升级为已验证事实。历史AcceptedAnswer/消息/事件原字节不改，不加文字解析、模型调用或账本。当前实施/验证见§8。
+
+109. **2026-10-17用户确认：两个原生工具保留宿主可核的有限基础诊断。** b343完整1876通过/2失败/1跳过证实detect_data_quality全空列与quick_profile无关全空列的诊断被质量门一并挡住；b345四个direct/registry反例复现。仅对这两工具已声明的质量问题、缺失/排除计数、列诊断及基础检查状态，在当前原件/版本/原权限/原回执可核且与现有宿主独立诊断一致时保留。检查状态不升级为统计、分类、预测或因果方法就绪；实际分析数值与推断继续原质量门。缺原件、篡改或换版继续拒绝，不扩大到其他工具，不加文字解析、模型调用或账本。当前实施/验证见§8。
+
+110. **2026-10-17用户确认：按原结构化要求呈现逐假设待检验动作。** H12在direct/registry及正常AgentLoop原正文复现只有未决/原测量缺口，没有具体区分性检验（tmp/b382、b383）。沿原假设的结构化字段要求、类型和角色，在当前原件/计划/版本/原权限可核时展示同窗口指标对照、分组占比及组内变化、可比历史重复窗口基线核对；均明确尚未执行，描述比较不证明因果或显著性。未知角色或原件不可核只列具体缺口，不从列名猜角色、不从旧回执代签当前角色。原假设生产者与同一native缺口/Renderer承接，不新增统计方法、执行、模型调用或账本，历史AcceptedAnswer/消息/事件原字节只读。批准见tmp/b380/approved-h12.json，当前验证见§8。
+
+111. **2026-10-17用户确认：通用许可复用现有重复无效额度收敛。** 仅宿主已裁定非阻塞、同轮同语义的重复方法许可，按当前原需求/计划/版本范围计入现有max_repeated_tool_errors；耗尽沿原共享终局关闭工具、保留真实独立结果与未决缺口，同批未派发工具补齐原响应。真实业务确认、有记录的决定复用及合法记录工具继续原规则，不新增预算、模型调用、散文解析或账本。原批准tmp/b409/approved111.json，当前反例/验证见§8。
+
+112. **2026-10-17用户确认：同一原回执保完整stdout，上下文沿现有预算。** direct/registry已复现原stdout在生成回执前被20000字符截断、尾部无法恢复（tmp/b418）。取消原件截断，在同一原回执output中保完整stdout；模型仍沿现有摘要和完整请求预算，不升级stdout为测量事实，事实继续要求结构化result_data。不新增存储链、解析、模型调用或账本，历史材料不回写。批准原记录tmp/b417/approved112.json，当前验证见§8。
+
+113. **2026-10-17用户确认：本轮表达覆盖，会话偏好保留。** 同一原需求记录区分turn/session；本轮覆盖不撤回session，后续恢复有效会话偏好，未明确持续的新要求默认turn。历史记录不迁移回写；同一次分类提议范围，宿主核原文唯一位置、会话及生效request_id，不加散文解析、模型调用或账本。临时add/replace共用该边界；首个提示与基础受众共读原需求，退役运行中的独立受众词法入口。批准tmp/b441/approved113.json，当前验证见§8。
+
+114. **2026-10-17用户确认：旧图带身份引用精确核对。** 旧引用含文件名、路径或六位图ID时只按原身份精确核对，不去ID模糊补配；无身份旧显示名保留现有唯一匹配，歧义/异会话拒绝、邻段保留。沿现有前端兼容读取，历史AcceptedAnswer/正文/事件/原件不回写，不新增散文解析、模型调用或账本。批准tmp/b460/approved114.json，当前跨接口及正常链验证见§8。
+
+115. **2026-10-17用户确认：SQLite初始化仅凭原身份与schema版本复用。** 同一路径、同一实际数据库文件及schema_version均可核且未变时，复用已完成初始化；进程内有界缓存不持有连接或事务。换库、删库重建、迁移、核验失败及失败重试沿原初始化，显式initialize强制原迁移；真实读写、索引、事务、fsync及故障测试保留，不新增持久化存储链/账本。批准见tmp/p6e01/approved115.json；本批性能与原件保全见§8。
+
+116. **2026-10-17用户确认：源单位字段与同一正式交付显式绑定。** 原需求/正式交付用source_unit_columns声明度量→源单位字段，宿主核当前对象、版本、原权限及实际使用范围；同币且完整保原单位，混币/单位缺失仅相关金额保留缺口，独立行数及原始数值记录保留。先贯通describe_dataset与compare_periods简单原生范围，不猜币种、不换汇、不凭模型自报单位放行，不借此签其余工具/复合方法完整；历史原件只读，不新增解析、模型调用或账本。批准见tmp/acu01/approved116.json，本批证据见§8。
+
+117. **2026-10-17用户确认：原注册计划的只读精确复用。** 同一原需求/交付ID/范围及当前对象/版本/原权限仍适用时，允许从本会话已注册且SHA可核的原计划产物，核原plan_id/hash、原步骤及原交付。原计划只证明原执行声明，不重新授予执行权；缺原件、篡改、改绑或新目标不能借此完成，不重算、不加模型调用、迁移或账本。自动审核曾要求先讨论此新跨轮边界，用户已明确确认；原问题/批准及可审diff见tmp/acu02/approved117.json，本批证据见§8。
+
+118. **2026-10-17用户确认：top_n当前子对象独立核定合同。** 仅真实top_n生成、原持久化快照/父来源原回执/版本/原权限可核的当前子对象，沿现有数据检查与合同产物路径登记当前结构/质量；不直接继承父质量、单位、字段角色或方法就绪，不把父范围/复合范围自动换成子范围。缺原件、换版或不能核定保持缺口，不新增模型调用、存储链或账本。批准原记录tmp/acu05/approved118.json，当前实施与责任包见§8。
+
+119. **2026-10-17用户确认：仅select的独立当前子合同。** 沿118的同一原成功回执、父版本/原权限及当前持久化子快照核验和原合同路径，仅扩到实际transform_data(select)，独立检查当前子结构质量；单位仍由当前子交付显式绑定，不继承父质量/单位/角色/方法，不自动改绑父或复合范围，不扩到其他变换或多父单位运算，不新增模型调用、存储链或账本。批准原记录tmp/acu06/approved119.json，实际实施和责任包见§8。
+
+120. **2026-10-18用户确认：canonical唯一引用与明确元数。** 原EvidenceRecord内操作数身份必须唯一；difference/ratio/percent_change/percentage_point_change要求恰好两个引用，sum/product仍允许一个以上，显式重复引用同一唯一操作数仍可用。歧义或多余操作数写前原子拒绝，真实独立结果/原回执保留；不新增运算、解析、模型调用或账本。批准原记录tmp/acu07/approved120.json，原4项RED与当前责任包见§8。
+
+121. **2026-10-18用户确认：原件可核的变换当前子合同。** 沿118/119同一原件核验与原子合同路径，扩到现有全部transform_data操作；必须核原成功回执、全部父来源/版本/原权限及当前持久化子快照，自动名称只取原效果对象。子结构/质量独立检查，单位仍由当前子正式交付逐字段显式核定；不继承父角色/单位/质量/方法，不改绑父或复合范围，不做多父单位代数或换汇，不新增模型调用、存储链或账本。批准原记录tmp/acu07/approved121.json，实际RED/正反例及正常链见§8。
+
+122. **2026-10-18用户确认：原分组sum的全范围单币核定。** 仅现有compare_periods分组sum，沿同一当前原对象/正式计划/版本/原权限与实际比较范围核整体单一源单位；混币或缺单位保留缺口，不按组拼单位，不扩公式、换汇或多父单位代数，不增加模型调用、解析或账本。原算法/Renderer不改，单位仍依原显式字段绑定。批准tmp/acu08/approved122.json，真实两入口RED/控制和当前正常链见§8。
+
+123. **AC25同一整表逐指标原单位证明（已批准）**：沿同一HostSnapshot/原Renderer，各claim只携带自身指标映射；整表原值保留，所有已声明单位核定才完成，任一失败整表留缺口，独立结果继续，未声明明确未知。历史单指标proof/答案只读兼容，不做公式或多父单位代数、不加模型调用或账本。
+
+124. **原ratio_of_sums两端显式同标签约分（已批准）**：同一正式交付显式formula_unit_columns绑定分子/分母原字段与同一comparison_formulas；仅当前原对象（含121已核当前merge子）、原件/计划/版本/原权限和实际全范围完整单一同标签可按原标签约分为无量纲，标签含义未外部验证。零分母/未知不由单位证明补值；旧输出别名单列映射不迁移，不改绑父/复合scope；不同标签、换汇及其他代数仍缺口，不加算法、模型调用或账本。
+
+125. **原贡献sum差额的精确源单位核定（已批准）**：仅contribute_decomposition原sum的total_change标量，沿同一正式交付source_unit_columns、原计划/步骤、当前原对象/版本/原权限/原回执，按原两窗口及有效日期/指标/维度规则核完整单一原单位。不扩整表、mean、日均化或其他生产者，混币/缺单位/换版仍缺口，独立行数继续。窗口外或原工具明确排除记录不参与，不改原差额、不换汇、不作因果归因，标签含义未外部验证，不加模型调用、存储链或账本。
+
+126. **原分布与时序描述量的有限源单位（已批准）**：分布仅mean/std/min/25%/50%/75%/max标量，时序仅显式日期/值列一致的statistics原四量表；沿同一正式交付、原计划/步骤、当前对象/版本/原权限及原回执，按原有效范围核完整单一标签。计数/p值/趋势/预测不借证明，混币/缺单位仍缺口，独立结果继续；同一Renderer显示已核标签，原值不重算、历史不改，不加方法/调用/账本。批准及前像反例见tmp/acu11。
+
+127. **四包有限S3出口与证据分层（已批准）**：按tmp/acu11/s3-exit-scope-proposal.md及逐行审核执行原计算/AC25、77公开模式/六入口/旧责任、九指标完整方法正文/历史只读、同源整库/保全四包。原180条款和评分不删，视觉及自然未知仍未通过、按既有S4/S5核；本地跨接口/方法/错误完成/版本权限/持久化缺陷仍阻塞S3。任意未来单位代数、未具名内部异常或笛卡尔故障组合不自动扩分母；105退役不重开。全部四包具证据方可签S3，批准不等于当前通过。
+
+128. **原count图的宿主精确核定（已批准、已实施）**：仅原create_chart显式count，在当前正式交付、对象/版本/原权限、成功原回执与图/元数据原件可核时，沿同一原聚合函数核分组、图值及有效计数，允许精确记录计数越过坏表分析门。元数据SHA绑定同一原回执，实际读取字节再次核同SHA；不授人数去重、数据可分析或方法就绪，sum/mean仍受质量门。缺原件/换版/改字节拒绝。原8项RED、14对照和最终63通过及当前整库身份见tmp/acu11/implementation128.json。
+
+129. **S4完整数据呈现（已批准、已实施）**：沿原Renderer将已核同源同口径结果组织成完整表格、共同限制集中一次，曲线参数/预测/残差与矩阵原字段全部保留；只对连续事实块按精确原回执/范围/单位/限制/原需求归属分组，不跨正文、图或错误边界，不改算法/权限/覆盖或历史AcceptedAnswer。原型及实际相关869通过和正常m05原件见tmp/s4present01、tmp/s4m05。
+
+130. **VP-U03原动作来源（已批准、已实施，当前完整验收收敛中）**：用户选择“按现有片段类型与一次审核方案继续”。只消费同原需求ID、既有一次审核接受的limitation/conditional_action原文，按类型显示已审说明/条件性建议并保留精确原区间与归属；宿主未计算/证据不足状态不因建议升级。无具名片段或拒绝/未核/换版/引用原件失效即明确未核，不解析散文、不加调用、不继承旧审批。工作台详情沿原Markdown/KaTeX呈现，但不授予HTML/链接/图片/图表执行权；仅详情空白改normal，保留容器/键盘滚动。批准、跨接口反例与相关1098/最终CSS101通过见tmp/s4act01、tmp/s4act02、tmp/s4css01及当前m07；历史原件保留。
+
+131. **本轮自然启动阻断保留（已批准）**：用户明确“本轮保留阻断，完成本地验收”。现真实launcher需clean commit与保留全部dirty/索引冲突、默认端点/输出与新预算未核，作为不可执行零调用候选包记录；不自动提交、改launcher或进入S5，不继承旧Provider授权。
+
+## 4. 为什么这样重构
+
+
+
+| 已证实断点 | 修复责任 | 能证伪修复有效的检查 |
+| --- | --- | --- |
+| 公布 schema 允许、实际 validator 拒绝 | 同一合同产生静态约束和公开 schema；动态身份另核 | 原六次自然计划提议；合法字段边界和未知字段的跨接口对照 |
+| 执行可无计划，发布却要求预绑定 | 既有阶段/权限统一，分清探索与正式计算 | 合法先探索再规划成功；先计算后补绑定不能签收 |
+| 工具结果形状被猜成业务类型，参数被过滤 | 工具族显式输出合同，保留原测量与方法信息 | amount 均值 15.5、三期预测 31/32/33 真正可交付 |
+| 开放解释进 DAG 但无事实完成状态 | 既有任务只依赖计算产物，最终另核开放义务 | 事实＋解释步骤之后的真实计算可执行；解释未核不被宣称完成 |
+| 非法业务范围被静默丢弃 | 意图解析保留原目标、结构化错误和独立有效项 | 无效 window 不得消失后按全量计算 |
+| 测试事后注入绑定或只检宽泛 table/value | 正常入口交叉验收与独立业务 oracle | 真实 record_analysis_plan → dispatch → receipt → 用户可见交付，全程无倒填 |
+
+
+
+上述是可定位的系统性失配机制，不是“所有将来失败都属于它”的结论。新方法缺陷、模型语义误判和外部 Provider 故障分别记录，不能不断扩张同一个根因名称。
+
+
+
+## 5. 阶段状态
+
+
+
+| 阶段 | 当前状态 | 进入/退出依据 |
+| --- | --- | --- |
+| S0 回顾与规范统一 | 已完成身份核对 | 当前规范、冲突裁决、原编号及能力清单齐全；不是源码验收通过 |
+| S1 合同与最小跨边界闭环 | 本地 E1/E2 指定正反例与正常 app 最小链完成 | 阶段源摘要4308aafb5fec000bade3370028842257fa58b7d4e2ba36f62b5bb456a6286436；17模块782通过、1个OS符号链接用例跳过；收据 tmp/s1-contract-20261010-r1/receipt.json |
+| S2 六条用户链与连续会话 | 本地E1/E2及Provider禁用HTTP应用路径完成 | S2当时r9矩阵52/52、生命周期13/13；历史收据tmp/s2-preparation-20261010-r1/receipt.json。S3前一23c547cc…完整六链52/52；当前cohort候选原六链52/52与39入口1625通过/1跳过/18警告，视觉未评估 |
+| S3 全能力族承接与旧责任退役 | 实施中，全部入口已有指定切片，完整模式继续 | 当前冻结身份与验证见§8；77入口有指定切片记录、0仅登记；全部77入口逐模式、180行为及实际引用退役仍未签收 |
+| S4 本地最终验收与自然测试准备 | 实施中；当前矩阵重验与出口整库待完成 | S3 已核，无必需能力 unassessed |
+| S5 两批自然验收 | 未开始、未授权 | S4 通过；每批分别重新精确冻结并获授权 |
+
+
+
+## 6. S1：合同与最小跨边界闭环
+
+
+
+**输入**：现行需求/设计；F1—F5 反例；当前 408 项源码/测试/运行资产身份；公开注册 schema 和 77 工具目录。
+
+
+
+**实施顺序**：
+
+
+
+1. 先用现有测试入口固定原问题 RED，区分静态 schema、动态身份和业务完整性。预期来自原需求/fixture，不调用被测匹配器生成 expected。
+
+2. 在既有合同模块统一业务范围、交付类型、错误代码及注册 schema；保留每种字段的类型、必填条件、枚举、上限、未知字段策略。消除提示与执行权限相反的要求。
+
+3. 修正意图局部错误与原子目标变更；有记录的追加、既有交付复用和预算边界；探索回执不得事后签收正式交付。
+
+4. 以 describe/分布/三期 forecast/已核派生作为最小生产者合同，贯通注册工具、实际读取、回执、目录与原位渲染；不能只把 validator 改宽。
+
+5. 修正计算依赖和最终开放义务的分工；成功依赖必须有真实产物，失败/closed_by_publication 不得冒充成功解锁后继。
+
+6. 在默认 AgentLoop 路径完成咨询→上传→12/120/含首尾12天→合法未来 AND 行动；包含正常计划建立和一次局部审核。固定模型只供结构提议，不注入事实、状态或最终答案。
+
+
+
+**硬出口**：
+
+
+
+- CONTRACT/INTENT/PHASE/EVOLVE/PRODUCT/DAG/GAP 全部通过，具体正负输入见现行验收§4。
+
+- 分布 amount/mean=15.5 必须成为所问测量；forecast_periods=3 与三期实际值逐项绑定；不得用宽泛表、错误“缺数据”或用户补充技术参数蒙混。
+
+- 事实＋解释的前序步骤能解锁依赖计算；无事实/错版本/伪 completed 均不能解锁。
+
+- 对非法范围、旧 revision、跨源、追加越界、参数不一致均有结构化可定位错误；独立合法目标仍能交付。
+
+- 当前源码默认配置、正常 app 的最小链通过；单元 fixture 中事后注入绑定不能签收这个出口。
+
+
+
+**当前 S1 结果与边界**：最终离线回归见 `tmp/s1-contract-20261010-r1/final-r2.xml` / `.txt`，782通过、1跳过；后者为Windows不允许创建符号链接的已有artifact用例，不能称已实测该OS路径。`receipt.json`记录原问题RED、17模块、应用会话/保存对象、源码摘要及Provider=0。其余测试均通过，原Pandas JSON日期格式弃用警告保留。
+
+
+
+| 门 | 当前机制及回归入口 |
+| --- | --- |
+| CONTRACT | 业务范围/交付/完整计划由共用 schema 校验；公开 plan_json 仅接受结构对象，历史直接 Python JSON 字符串调用解析后仍走同一校验。原六次自然提议：前四次静态不合法、第五次缺数据身份、第六次重复业务交付；见 zero-call-plan-replay.json。 |
+| INTENT | 非法范围保留原提议和定位错误；独立合法目标继续。replace/withdraw 批次原子；不默认为全量计算。 |
+| PHASE | 有限探索可先行；正式计算要求执行前计划。未预绑定回执只保留诊断来源；探索与正式派发的去重身份区分必要交付。 |
+| EVOLVE | 同范围追加保留原 ID/回执，旧回执不能覆盖新产品；完成任务因新交付重开，保存失败回滚。用户于本轮明确批准：替换新目标先待绑定，成功加载回执核验新版后、正式派发前冻结；普通旧目标保持原版。 |
+| PRODUCT | describe/分布/forecast/派生使用显式最小产品合同；amount/mean=15.5 及三期31/32/33可见。forecast 仅 auto/backtest，拒绝 simple/prophet 误导别名。 |
+| DAG | 计算只等待已核事实，开放解释保留最终义务；开放节点不生成虚计算任务，失败节点不冒成功解除依赖。 |
+| GAP | 已有预测但参数不符报告 failed/product_scope_mismatch；内部结果合同错误与未执行、无实际预测序列分开；未迁移能力族仍留在 S3 分母。 |
+| 正常 app | E2：默认 create_app/AgentManager/AgentLoop，经真实验票上传、正常意图与公开 record_analysis_plan、探索/正式回执、一次局部开放审核、12/120/含首尾12天与未来 AND 行动，核 SSE 单终端、AcceptedAnswer、重新读取及导出；审核局部拒绝不影响独立事实。固定模型只给结构，无状态/事实注入。 |
+
+
+
+真实上传接线另修现有业务别名事务：原理解合同记录精确 host_aliases，计划仅在同一当前来源身份下解析；旧身份拒绝，票据/元数据/analysis_state 保存失败回滚。历史诊断和自然批材料原样保留。
+
+
+
+S1当时没有启动rehearsal服务，不将其Flask test-client E2叫作真实HTTP或浏览器通过。后续S2实际HTTP结果见§7；S3整体/S4/S5、全仓全离线、E3视觉、真实Provider、部署均未因此签收。已取消的四项开放虚计算任务断言改为最终义务断言，真实事实依赖仍保留回归；未清空历史测试。
+
+
+
+**修改范围**：llm_intent / analysis_entry / prompts / analysis_plan_contracts / execution_scope / loop 的接线；tools/analysis_flow / registry / 对应生产者；publication 原合同/事实/目录/服务；workflow_projection 与现有 TaskManager。其余模块只在调用证据要求时修改并说明影响。不引入第二系统。
+
+
+
+## 7. S2：六条用户链与连续会话
+
+
+
+沿用冻结原 M01—M06 业务问题，先 Provider 禁用；使用真实工具、上传票据、HTTP/SSE、保存和导出。脚本模型提供合法不同顺序的结构响应，不替代宿主判断。
+
+
+
+| 链 | 必须实际完成 | 必测相邻失败 |
+| --- | --- | --- |
+| M01 | 咨询保留；当前12/120/12天；各必需事实组与未来条件行动 | AND 任一缺失、未知单位、未来窗当本期、审核局部拒绝 |
+| M02 | 聚合观测、拟合候选/公式/参数/误差/范围；D30 边界 | 用户级粒度误要求、零值未知、无验证外推、来源单位混用 |
+| M03 | 六来源10→11至60→66、记录数/变化、六图；压缩/导出 | 第一或第六来源遗漏、跨源加总、错图、不可恢复尾部 |
+| M04 | 至少两竞争假设；v1/v2 原测量与支持/反驳/冲突/未决公开 | 旧版、错指标、文字相似、方向关系升级因果 |
+| M05 | 原六轮表达真实改变组织/深度/受众；同一事实与必要边界 | 六份相同摘要、改写重算、风格覆盖业务目标、限制误拒 |
+| M06 | 缺文件给具体动作；冻结成本选项恢复一次；12/120/12天保留，成本未算与增量不足分开 | skip/旧版/重复 resume、缺成本归零、反复方法许可 |
+
+
+
+同时验收：唯一任务“继续”、等价复用、换窗口、原子撤回、唯一票据明确换版、真歧义确认、压缩后续问、回退重发、停止/保存失败、新协议重启、只继承聊天的分支、旧会话只读。
+
+
+
+**S2当时实施与证据**：控制路线local_http_api；原13 CSV、20提示、3恢复选项与历史原合同逐字节/结构核对未改。已有run_p7_browser_rehearsal.py只提供结构/引用，不注入事实或宿主状态；正常app/AgentLoop执行真实工具。最新完整运行tmp/s2-http-20261010-r9，独立业务oracle 52/52；lifecycle-r2完整13/13覆盖回退重发、压缩后续问、确认重放、旧会话只读、保存失败与实际HTTP停止。唯一目标“继续”、窗口/原子撤回、真歧义/换版、重启与聊天分支的当前正常应用/E1/E2入口逐项见tmp/s2-preparation-20261010-r1/s2-adjacent-coverage.json。终端、原AcceptedAnswer、artifact SHA、刷新和导出均保存证据；非视觉路线不签收E3。
+
+
+
+修复宿主上传库存受综合scope隐藏导致换版/回滚失真；真实别名投影共用artifact_refs且保留原件；派发只消费一次权威刷新；旧派生子版本先按精确身份筛选；独立来源GAP局部归属；回退保存协议身份；“继续”复用与意图层一致的正式计划ID。原失败批全部保留，r8的情景类型误作统计量回归已修复并全批重跑。r9首次停止控制发晚的记录保留，换为收到宿主响应头即停止的新标记完整生命周期批次；未将未执行成功的控制动作计通过。
+
+
+
+S2当时28个测试入口1091通过、1跳过（OS不允许创建符号链接）、1个pandas JSON epoch弃用警告；不是全仓回归。r9服务exec-session 95250/PID9948/8872已停止；runtime零forbidden_provider_transport，实际Provider启动调用0。完整收据tmp/s2-preparation-20261010-r1/receipt.json，所有失败/过程原始材料保留。
+
+
+
+**硬出口**：每个可计算必答项都有正确可见结果；每个预设缺口原因准确；无错误完成或错误缺数据；每轮恰好一个 durable terminal；重启/导出同一 AcceptedAnswer。完整矩阵普通失败继续收证，结束后再修；修后新目录完整运行相关矩阵。
+
+
+
+## 8. S3：有限收敛、全能力承接与旧责任退役
+
+**S3本地四包已签收**：同源官方完整批7930通过、0失败、2跳过，3062.85秒；跳过仅真实Provider禁用与Windows不能创建symlink。签收只适用于127已批准的本地有限出口。这是S3当时的有限签收边界；当前S4本地收口见§9，S5未进入。
+
+**S3签收候选（历史身份）**：C:/Users/duguy/.codex/worktrees/trust-rebuild/data-agent，codex/trust-rebuild-20260927，HEAD f7210e170d4dd1945abec15d57e364e04942eae4；424文件437f271efb906fafa9dcf422279aa888bafbba3efa6593a6fef3485ddb46d93f。原dirty/untracked、索引和全部材料保留；D只读，Provider/远端MCP0，无提交/推送/清理。
+
+| 127有限责任包 | S3当时本地交付及证据 | 状态 |
+| --- | --- | --- |
+| 1 原计算/AC25 | 原零分母/None/非有限/负基数/混币拒绝；126原分布七标量、时序statistics四量源单位及独立结果；128原count图精确原件诊断 | 当前整库通过 |
+| 2 77入口/六入口/旧责任 | 22族当前公开合同、具名原呈现/作用域/并发/只读；[有限原断言与当前执行对应](../../../tmp/acu11-final/mode-contract-proof.json)；替代旧私有责任无生产引用，必要输入校验/只读兼容保留 | 有限本地合同通过 |
+| 3 完整方法正文/历史只读 | 九指标两顺序完整方法、八原值/ARPU缺分母及因果缺对照，经真实工具/原正文/保存/冷读/精确MD；原历史只读机制 | 本地承接通过；自然生成/审核和缺失F5原件未核 |
+| 4 同源整库/保全 | 当前官方full3，原件/历史答案/索引/原条款/阶段边界审计；失败与未完成批分别保留 | 通过，见当前收据 |
+
+**128已实施及回归顺序**：首批tmp/acu11-full完整结束为7903通过/5失败/2跳过，48分58秒，期间源码不改。其后先8正向RED/14拒绝对照，再实施宿主按原规则核分组/原图值/有效数和元数据SHA、当前对象/版本/原权限。仅显式count精确记录诊断越过坏表分析门；sum/mean、人数去重及方法就绪不放宽。最终63项相关包与原正常链保存/冷读/精确导出通过，详见[实施收据](../../../tmp/acu11/implementation128.json)。
+
+**未完成批不算整库**：full2已包含128，但旧直接调用用例将ToolResult当字符串而TypeError；同源单例复现后，用户批准[已知失败批早停](../../../tmp/acu11/early-stop-approved.json)。在约34%停止，2745个已报告结果/1个已知失败，无JUnit终结；[现场](../../../tmp/acu11-full2/incomplete-result.json)完整保留。只应用已审str(result)观察修正，全部原图值/元数据断言及实例保留，再跑完整图表责任包后冻结full3。不拼接这些批次的通过数。
+
+**原180与后续未知（S3签收时）**：118原条件完整/62局部/0待逐项审核仍是原条款证据状态，不是阶段完成率。按127，[逐行阶段审核](../../../tmp/acu11/s3-exit-row-review.json)保留原输入、预期和评分；45项自然语义/内容、11项视觉、2项自然方法质量、缺失F5历史原件和后续整体门仍未通过。IC-B02/AC17本地完整方法正文已承接，真实模型生成/审核未核；AC33/37在S3当时的最终视觉未知，当前S4视觉增量见§9，不回写原180状态。未声明的未来Python公式、单位代数或任意组合不新增为S3分母；真实本地接口/方法/错误完成/版本权限/持久化缺陷仍必须在S3处理。
+
+**测试与材料**：105组退役审核不重开，runtime核心536行；本轮增加55个具名内核/边界实例、未删除原7877实例，新增代表正常链2条。两个补充流程旧夹具已改为真实reload_data合同，并在手动模拟失败后执行正常Loop已有刷新；自报注解不完成任务、真实计算才推进、独立结果/缺口原断言保留。首批完整耗时见tmp/acu11-full/complete-result.json，最慢方法联合条件约592秒；不能声称恢复3—5分钟。无新模型调用、业务账本、散文解析或同功能双链。
+
+**当前接续（2026-10-19）**：当前实施树为D/main。用户已授权按C完整工作区678项接管并移除23旧文件，C原HEAD/索引/228项状态、1249原件和15历史答案保持。新保全及身份收据在artifacts/mt02：D六项材料全部匹配清理前SHA；23旧文件保留Git版本，main父历史不改写。用户永久清理D历史tmp造成的完整恢复缺口已具名接受，不能宣称全部D历史材料均恢复。源码426 dc78093b及补充431身份与C一致；本地主线提交与完整离线回归待完成，见[主线接管收据](../../audit/2026-10-19-main-takeover.md)。原180/105/F5/自然内容与方法/符号链接/性能及A/B/C未批状态保持。Provider/远端MCP0，不推送、不进入S5、不继承授权。
+
+## 9. S4：本地最终验收与自然准备
+
+**S4本地有限验收已收口；主线迁移验证进行中（2026-10-19）**：C原426/dc78093b的full3 7953/0/2、m09 47组/90轮零失败、52/52、13/13及具名视觉和精确MD人工实看保持原签收身份。当前D/main已按用户授权承接完整678项候选、移除23旧文件，新的本地提交及完整full-offline待完成；见[主线接管收据](../../audit/2026-10-19-main-takeover.md)。D历史tmp遭用户永久清理，六项原件已全部按既知SHA恢复，历史tmp不可完整恢复缺口经用户确认保留；后续保全改存artifacts/mt02。下列六条门槛和硬出口不变。原C的p04只保留为不可执行历史包；main须重新核定清洁身份、模型/端点/输出上限/新物理预算，实际Provider/MCP0，不推送、不进入S5、不继承旧授权。
+
+
+
+1. 在当前候选新目录运行既有 full-offline；相关失败必须清零。skip 逐项列原因与覆盖影响，必需行为不能因环境 skip 计通过。
+
+2. Provider 禁用正常 app 完整矩阵覆盖六条链及相邻生命周期；原 47 组/90 回合只是历史结构基线，按当前明确用例签收，不把数量当目标。
+
+3. 按 AGENTS.md 先选 control_route、核服务身份/健康，再完成必要视觉检查：正文、表/公式/图、确认、刷新、1440px可读性、导出实际打开与键盘入口。HTTP-only 的视觉项保持 unassessed；可以继续独立工作，但不能签收整体 UI 通过。
+
+4. 回放本批可用真实结构反例；旧协议材料如需转换，记录原文/转换/能证明的范围，不当成新模型自然生成。ddb9daa/71e23d0 原材料缺失仍 unassessed，旧失败保留。
+
+5. 汇总按需求独立标注的必答项、可算事实、允许缺口、方法边界、内容评分；明确全部零调用结果。
+
+6. 冻结候选 HEAD、全部 dirty 源摘要、13 CSV/20 原提示/3 原恢复选项及 oracle/driver、默认配置、模型、端点、输出 token 上限、所有物理调用预算、ledger、控制路线和停止策略。不能用旧 cap 或历史授权自动启动。
+
+
+
+**硬出口**：当前身份 E1/E2/正常 app/必需视觉各门有收据；静态可发现跨接口断点不得留给付费测试；全部必需能力和原需求有明确状态。自然预检调用 0，冻结精确可审查。随后请求第一个精确批次授权。
+
+
+
+## 10. S5：连续两次完整自然验收
+
+
+
+- 同一候选和业务输入/判据，两个独立新 run_dir/session/ledger，串行执行；每批单独精确冻结、获授权后才能启动。第二批只改变运行实例身份，候选/方法配置/输入/oracle保持一致。
+
+- 每批完整执行 M01—M06、全部冻结轮次及有效恢复分支。普通场景失败记录后继续；Provider/流/会话隔离/记账/整服务异常按 AGENTS.md 停止。停止批不续跑、不补齐、不计完整通过。
+
+- 两批分别满足：全部可计算必答项 100% 正确交付，预设缺口准确，关键事实保留100%，关键错误升级/越域/错版本/误拒合规集为0；生命周期/账本100%闭合；内容评分见验收§6。
+
+- **两次完整通过才签收自然验收。** 任一产品失败即本轮不通过，先诊断，不能反复抽样筛选两批绿灯；源码、模型、配置、输入或判据改变后建立新身份并重新积累两次。部分失败只参考实际到达路径，不能报告未运行场景失败。
+
+- 两次通过仅证明冻结样本的重复通过，不推断任意措辞、其他模型、生产环境或部署。视觉证据另核，HTTP真实批次不能替代浏览器。
+
+- 失败按“原缺陷未修 / 相邻集成遗漏 / 新回归 / 模型语义问题 / 外部故障 / oracle错误”分类。若出现新的静态接口矛盾或同类修复再次失败，返回对应设计关口讨论；不自动追加调用和逐句补丁。
+
+
+
+## 11. 更新、停点与收据规则
+
+
+
+每个实施切片记录：原需求 ID → 原问题 RED → 修改责任与被删除责任 → 真实调用入口 → 正反例 → 源码/fixture/oracle/环境身份 → 实际结果和剩余问题。源码变更后只重跑被影响的必要证据，阶段出口按完整规定重跑。
+
+
+
+以下必须先与用户讨论：删除现有能力、改变指标/方法语义、缩小必答分母、扩大原始数据/外部权限、放宽事实/确认边界、增加模型审核层、改兼容策略、改自然验收标准。普通模块拆分、同合同重命名、已批准边界内修复不反复请求许可。
+
+
+
+系统根因尚有未覆盖面时，给出具体未核能力与证据缺口；不得把“JSON合法”“代码减少”“更多测试通过”“原文/ID存在”写成语义完整或重构完成的证明。全部完成后由本计划更新当前状态；旧报告只留审计，不覆盖现行规范。
+
+裁决97已生效：按§8分层与有限收敛执行。旧阶段过程保留于原审计及本次前像，不再追加到当前计划末尾；原规范、已确认语义、S4/S5门槛和证据层级不变。

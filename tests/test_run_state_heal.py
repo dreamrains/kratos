@@ -63,3 +63,16 @@ def test_terminal_state_is_returned_untouched(tmp_path, monkeypatch):
 
     assert snap["status"] == "failed"
     assert "reason" not in snap
+
+
+
+def test_shared_admission_busy_rejects_without_rewriting_original_run(tmp_path,monkeypatch):
+    import pytest
+    from data_agent.web.run_state import SessionBusy
+    runs=_runs(tmp_path,monkeypatch);runs.begin('s1','original');path=tmp_path/'s1'/'run_state.json';original=path.read_bytes()
+    for status in ('running','cancelling'):
+        if status=='cancelling':runs.cancelling('s1');original=path.read_bytes()
+        with pytest.raises(SessionBusy):runs.begin('s1','overlap')
+        assert path.read_bytes()==original and runs.snapshot('s1')['turn_id']=='original'
+    runs.begin('s2','independent');runs.finish('s2','independent','completed')
+    runs.finish('s1','original','completed');assert runs.begin('s1','after')['turn_id']=='after'

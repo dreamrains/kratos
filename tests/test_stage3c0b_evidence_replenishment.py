@@ -16,10 +16,10 @@ def test_synthesis_instruction_allows_bounded_evidence_replenishment_without_raw
 
     instruction = build_synthesis_instruction(policy)
 
-    assert "bounded_evidence_replenishment" in instruction
+    assert "necessary typed deliveries before execution" in instruction
     assert "record_analysis_plan" in instruction
-    assert "independent" in instruction
-    assert "do not read raw datasets during synthesis" in instruction.lower()
+    assert "current host catalogue and claim IDs" in instruction
+    assert "do not read raw data during synthesis" in instruction.lower()
 
 
 def test_synthesis_instruction_avoids_brittle_coverage_gates_and_magic_scores():

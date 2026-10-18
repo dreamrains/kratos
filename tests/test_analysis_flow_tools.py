@@ -5,6 +5,8 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
+from tests.support.plan_inputs import bind_plan_fixture
+
 from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.session.workspace import Workspace
@@ -16,6 +18,7 @@ def _make_ctx(session_id="flow_test"):
 
 def _stage3c0b_plan(depth=None):
     plan = {
+        "requirement_revision": 0,
         "contract_version": STAGE3C0B_CONTRACT_VERSION,
         "goal": "analyze banner performance",
         "method_plan": [
@@ -25,6 +28,11 @@ def _stage3c0b_plan(depth=None):
                 "dataset_inputs": ["banner"],
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
+                "required_deliveries": [{
+                    'requirement_id': 'rq_plan_fixture',
+                    'kind': 'measurement',
+                    'label': 'Analyze banner performance.: Banner evidence'
+                , "scope": {"datasets": ['banner'], "quantity": "rows"}}],
                 "evidence_requirements": ["click_rate"],
             },
         ],
@@ -166,7 +174,7 @@ class TestRecordAnalysisPlan:
         from data_agent.tools.analysis_flow import record_analysis_plan
         ctx = _add_banner_contract(_make_ctx("plan_test"))
         with use_agent_context(ctx):
-            result = json.loads(record_analysis_plan(json.dumps(_stage3c0b_plan())))
+            result = json.loads(record_analysis_plan(json.dumps(bind_plan_fixture(ctx.analysis_state, _stage3c0b_plan()))))
 
         assert result["type"] == "analysis_plan"
         assert result["analysis_plan_id"]
@@ -175,7 +183,7 @@ class TestRecordAnalysisPlan:
         from data_agent.tools.analysis_flow import record_analysis_plan
         ctx = _add_banner_contract(_make_ctx("plan_object_test"))
         with use_agent_context(ctx):
-            result = json.loads(record_analysis_plan(_stage3c0b_plan()))
+            result = json.loads(record_analysis_plan(bind_plan_fixture(ctx.analysis_state, _stage3c0b_plan())))
 
         assert result["type"] == "analysis_plan"
         assert result["analysis_plan_id"]
@@ -192,17 +200,18 @@ class TestRecordAnalysisPlan:
         from data_agent.tools.analysis_flow import record_analysis_plan
         ctx = _add_banner_contract(_make_ctx())
         with use_agent_context(ctx):
-            plan = _stage3c0b_plan(depth="invalid_depth")
+            plan = bind_plan_fixture(ctx.analysis_state, _stage3c0b_plan(depth="invalid_depth"))
             result = json.loads(record_analysis_plan(json.dumps(plan)))
         assert "error" in result
-        assert "invalid_depth" in result.get("error_type", "")
+        assert result["error_type"]=="invalid_plan_shape"
+        assert result["details"]["fields"][0]["path"]==["depth"]
 
     def test_valid_depth_values(self):
         from data_agent.tools.analysis_flow import record_analysis_plan
         for depth in ("lightweight", "standard", "comprehensive"):
             ctx = _add_banner_contract(_make_ctx(f"depth_{depth}"))
             with use_agent_context(ctx):
-                plan = _stage3c0b_plan(depth=depth)
+                plan = bind_plan_fixture(ctx.analysis_state, _stage3c0b_plan(depth=depth))
                 result = json.loads(record_analysis_plan(json.dumps(plan)))
             assert "error" not in result
 

@@ -109,7 +109,9 @@ class TestDecisionContract:
             "模型自报默认值不能把真实业务缺口降为 advisory"
         )
 
-    def test_q12_host_verified_default_origin_allows_advisory(self):
+    def test_q12_direct_origin_label_does_not_prove_a_host_default(self):
+        # The original fixture was a direct model request carrying a label,
+        # not a host-verified source. Actual host-producer policy controls remain.
         request = dict(COST_SCOPE_ASK)
 
         result = QuestionPolicy().evaluate(_candidate(
@@ -118,7 +120,7 @@ class TestDecisionContract:
             default_origin="user_request",
         ))
 
-        assert result.disposition is RequestDisposition.ADVISORY
+        assert result.disposition is RequestDisposition.CONFIRMATION
 
     def test_business_scope_normalization_keeps_negation_and_numbers(self):
         assert normalized_business_scope(" 包含  券成本 ") != normalized_business_scope("不包含券成本")
@@ -304,9 +306,8 @@ class TestLoopDirectAskIntegration:
         from data_agent.agent.loop import AgentLoop, UserConfirmationRequired
         from data_agent.agent.confirmation.decision import decision_context_from_payload
 
-        cfg = loop_module.get_config()
-        monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
-        loop = AgentLoop(client=None, session_id="ic2_reuse_ask")
+        from tests.test_confirmation_runtime import _s3_bound_question_fixture
+        loop, _ = _s3_bound_question_fixture(tmp_path, monkeypatch, session_id="ic2_reuse_ask")
         service = loop._confirmation_runtime()
 
         ask = {
@@ -322,11 +323,12 @@ class TestLoopDirectAskIntegration:
         }
         from data_agent.agent.confirmation.runtime import build_direct_question_candidate
 
-        first = build_direct_question_candidate(
-            session_id="ic2_reuse_ask", turn_id="t1", message_version=2, request=ask,
-        )
-        created = service.request(first)
-        assert created.record is not None
+        first = loop._suspend_for_confirmation_request(UserConfirmationRequired(
+            question=ask["question"], options=ask["options"],
+            confirmation_type=ask["confirmation_type"], blocking_reason=ask["blocking_reason"],
+            decision_context={"decision_kind":"metric_definition", "missing_value":ask["missing_value"],
+                              "affected_operations":ask["affected_operations"]}), turn_id="t1")
+        assert first.confirmation_id
         active = service.checkpoint("ic2_reuse_ask")
         assert active is not None
         service.respond("ic2_reuse_ask", active.confirmation_id, "include_coupon", active.version, "ic1_reuse_answer_1")

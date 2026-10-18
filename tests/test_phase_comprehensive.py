@@ -10,6 +10,7 @@ Test data files (from reference/test_doc):
 """
 
 from __future__ import annotations
+from tests.test_trusted_publication_semantics import engine
 
 import json
 import os
@@ -486,89 +487,101 @@ class TestPhase3RegressionHandling:
 class TestPhase3ConfidenceCalibration:
     """Phase 3.3: Confidence calibration in evidence records."""
 
-    def test_high_confidence_small_sample_downgraded(self):
-        """P7/R3 拆分：推断类主张的小样本仍降级。"""
-        from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {
-            "confidence": "high", "sample_size": 10, "limitations": "some",
-            "method": "ab_test",
-        }
-        warnings = _calibrate_confidence(payload)
-        assert len(warnings) > 0
-        assert "不足" in warnings[0] or "30" in warnings[0]
+    def test_high_confidence_small_sample_downgraded(self, engine):
+        from data_agent.tools.analysis_flow import record_evidence_record
+        from data_agent.agent.publication.native import resolve_native_claims
+        from tests.test_trusted_publication_semantics import execute
+        loop, _ = engine
+        rid, _ = execute(loop, "describe_dataset", {"name":"orders"})
+        record={"claim":"当前研究注释","dataset":"orders","method":"ab_test",
+            "tool_calls":["describe_dataset"],"tool_receipt_ids":[rid],"result_summary":"annotation",
+            "limitations":[],"confidence":'high',"sample_size":5,"significance":"not significant"}
+        output=json.loads(record_evidence_record(record)); assert "error" not in output, output
+        annotation=loop.context.analysis_state.evidence_records[-1]
+        assert annotation["confidence"]=='high' and not annotation.get("confidence_auto_downgraded")
+        assert not annotation["statistical_inference"]
+        facts=resolve_native_claims(session_id=loop.session_id,receipt_id=rid)
+        assert next(c["value"] for c in facts if c["target"].get("statistic")=="sum")==180
 
-    def test_high_confidence_small_sample_descriptive_not_downgraded(self):
-        """P7/R3 拆分：记录内描述性汇总不因 n<30 机械降级（C01）。"""
-        from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {
-            "confidence": "high", "sample_size": 10, "limitations": "some",
-            "method": "descriptive_sum",
-            "claim": "当前 10 条订单记录合计 100。",
-        }
-        warnings = _calibrate_confidence(payload)
-        assert not any("不足30" in w for w in warnings)
+    def test_high_confidence_small_sample_descriptive_not_downgraded(self, engine):
+        from data_agent.tools.analysis_flow import record_evidence_record
+        from data_agent.agent.publication.native import resolve_native_claims
+        from tests.test_trusted_publication_semantics import execute
+        loop, _ = engine
+        rid, _ = execute(loop, "describe_dataset", {"name":"orders"})
+        record={"claim":"当前研究注释","dataset":"orders","method":"ab_test",
+            "tool_calls":["describe_dataset"],"tool_receipt_ids":[rid],"result_summary":"annotation",
+            "limitations":[],"confidence":'high',"sample_size":5,"significance":"not significant"}
+        output=json.loads(record_evidence_record(record)); assert "error" not in output, output
+        annotation=loop.context.analysis_state.evidence_records[-1]
+        assert annotation["confidence"]=='high' and not annotation.get("confidence_auto_downgraded")
+        assert not annotation["statistical_inference"]
+        facts=resolve_native_claims(session_id=loop.session_id,receipt_id=rid)
+        assert next(c["value"] for c in facts if c["target"].get("statistic")=="sum")==180
 
-    def test_high_confidence_non_significant_downgraded(self):
-        from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {"confidence": "high", "significance": "not significant", "limitations": "some"}
-        warnings = _calibrate_confidence(payload)
-        assert len(warnings) > 0
+    def test_high_confidence_non_significant_downgraded(self, engine):
+        from data_agent.tools.analysis_flow import record_evidence_record
+        from data_agent.agent.publication.native import resolve_native_claims
+        from tests.test_trusted_publication_semantics import execute
+        loop, _ = engine
+        rid, _ = execute(loop, "describe_dataset", {"name":"orders"})
+        record={"claim":"当前研究注释","dataset":"orders","method":"ab_test",
+            "tool_calls":["describe_dataset"],"tool_receipt_ids":[rid],"result_summary":"annotation",
+            "limitations":[],"confidence":'high',"sample_size":5,"significance":"not significant"}
+        output=json.loads(record_evidence_record(record)); assert "error" not in output, output
+        annotation=loop.context.analysis_state.evidence_records[-1]
+        assert annotation["confidence"]=='high' and not annotation.get("confidence_auto_downgraded")
+        assert not annotation["statistical_inference"]
+        facts=resolve_native_claims(session_id=loop.session_id,receipt_id=rid)
+        assert next(c["value"] for c in facts if c["target"].get("statistic")=="sum")==180
 
-    def test_high_confidence_no_limitations_warned(self):
-        from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {"confidence": "high", "sample_size": 100}
-        warnings = _calibrate_confidence(payload)
-        assert any("局限" in w for w in warnings)
+    def test_high_confidence_no_limitations_warned(self, engine):
+        from data_agent.tools.analysis_flow import record_evidence_record
+        from data_agent.agent.publication.native import resolve_native_claims
+        from tests.test_trusted_publication_semantics import execute
+        loop, _ = engine
+        rid, _ = execute(loop, "describe_dataset", {"name":"orders"})
+        record={"claim":"当前研究注释","dataset":"orders","method":"ab_test",
+            "tool_calls":["describe_dataset"],"tool_receipt_ids":[rid],"result_summary":"annotation",
+            "limitations":[],"confidence":'high',"sample_size":5,"significance":"not significant"}
+        output=json.loads(record_evidence_record(record)); assert "error" not in output, output
+        annotation=loop.context.analysis_state.evidence_records[-1]
+        assert annotation["confidence"]=='high' and not annotation.get("confidence_auto_downgraded")
+        assert not annotation["statistical_inference"]
+        facts=resolve_native_claims(session_id=loop.session_id,receipt_id=rid)
+        assert next(c["value"] for c in facts if c["target"].get("statistic")=="sum")==180
 
-    def test_medium_confidence_not_downgraded(self):
-        from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {"confidence": "medium", "sample_size": 5}
-        warnings = _calibrate_confidence(payload)
-        assert len(warnings) == 0
+    def test_medium_confidence_not_downgraded(self, engine):
+        from data_agent.tools.analysis_flow import record_evidence_record
+        from data_agent.agent.publication.native import resolve_native_claims
+        from tests.test_trusted_publication_semantics import execute
+        loop, _ = engine
+        rid, _ = execute(loop, "describe_dataset", {"name":"orders"})
+        record={"claim":"当前研究注释","dataset":"orders","method":"ab_test",
+            "tool_calls":["describe_dataset"],"tool_receipt_ids":[rid],"result_summary":"annotation",
+            "limitations":[],"confidence":'medium',"sample_size":5,"significance":"not significant"}
+        output=json.loads(record_evidence_record(record)); assert "error" not in output, output
+        annotation=loop.context.analysis_state.evidence_records[-1]
+        assert annotation["confidence"]=='medium' and not annotation.get("confidence_auto_downgraded")
+        assert not annotation["statistical_inference"]
+        facts=resolve_native_claims(session_id=loop.session_id,receipt_id=rid)
+        assert next(c["value"] for c in facts if c["target"].get("statistic")=="sum")==180
 
-    def test_record_evidence_auto_downgrades(self):
-        """record_evidence_record should auto-downgrade high confidence with bad evidence."""
-        from data_agent.agent.context import AgentContext, set_current_context, reset_current_context
-        from data_agent.agent.analysis_state import AnalysisSessionState
-        from data_agent.tools.registry import registry
-
-        registry._ensure_discovered()
-        ctx = AgentContext(session_id="test_cal_ev")
-        ctx.analysis_state = AnalysisSessionState(session_id="test_cal_ev")
-        token = set_current_context(ctx)
-        try:
-            record = json.dumps({
-                "claim": "两组转化率差异显著",
-                "dataset": "test",
-                "method": "ab_test",
-                "tool_calls": [],
-                "result_summary": "summary",
-                "limitations": "some",
-                "confidence": "high",
-                "sample_size": 5,
-            })
-            result = registry.execute("record_evidence_record", {"record_json": record})
-            parsed = json.loads(result.to_cli())
-            assert parsed.get("confidence_auto_downgraded") is True
-            assert parsed.get("original_confidence") == "high"
-
-            descriptive = json.dumps({
-                "claim": "当前 5 条记录合计 42。",
-                "dataset": "test",
-                "method": "descriptive_sum",
-                "tool_calls": [],
-                "result_summary": "sum(amount)=42 over 5 rows",
-                "limitations": "some",
-                "confidence": "high",
-                "sample_size": 5,
-            })
-            descriptive_result = json.loads(
-                registry.execute("record_evidence_record", {"record_json": descriptive}).to_cli()
-            )
-            # C01：记录内精确加总不因 n<30 自动降级
-            assert descriptive_result.get("confidence_auto_downgraded") is not True
-        finally:
-            reset_current_context(token)
+    def test_record_evidence_auto_downgrades(self, engine):
+        from data_agent.tools.analysis_flow import record_evidence_record
+        from data_agent.agent.publication.native import resolve_native_claims
+        from tests.test_trusted_publication_semantics import execute
+        loop, _ = engine
+        rid, _ = execute(loop, "describe_dataset", {"name":"orders"})
+        record={"claim":"当前研究注释","dataset":"orders","method":"ab_test",
+            "tool_calls":["describe_dataset"],"tool_receipt_ids":[rid],"result_summary":"annotation",
+            "limitations":[],"confidence":'high',"sample_size":5,"significance":"not significant"}
+        output=json.loads(record_evidence_record(record)); assert "error" not in output, output
+        annotation=loop.context.analysis_state.evidence_records[-1]
+        assert annotation["confidence"]=='high' and not annotation.get("confidence_auto_downgraded")
+        assert not annotation["statistical_inference"]
+        facts=resolve_native_claims(session_id=loop.session_id,receipt_id=rid)
+        assert next(c["value"] for c in facts if c["target"].get("statistic")=="sum")==180
 
 
 class TestPhase3ConversationMode:
@@ -738,10 +751,10 @@ class TestPhase4ParallelExecution:
             "describe_dataset", "preview_data", "quick_profile",
             "detect_data_quality", "interpret_dataset", "list_data",
             "analyze_time_series", "correlation_analysis", "distribution_analysis",
-            "compare_periods", "top_n", "get_analysis_summary", "tool_search",
+            "compare_periods", "get_analysis_summary", "tool_search",
         ]
         write_expected = [
-            "transform_data", "load_data", "derive_field", "run_python",
+            "transform_data", "load_data", "derive_field", "run_python", "top_n",
             "record_evidence_record", "create_chart", "ask_user_question",
             "export_data",
         ]
@@ -817,7 +830,7 @@ class TestPhase4ParallelExecution:
 
         results = loop._execute_tools_parallel([mock_tc1, mock_tc2])
         assert len(results) == 2
-        for _, content, _structured_data in results:
+        for _, content, _structured_data, _binding in results:
             assert "error" not in content.lower()[:30]
 
 
@@ -945,7 +958,7 @@ class TestCrossPhaseIntegration:
             parsed = json.loads(
                 registry.execute("record_evidence_record", {"record_json": unscoped}).to_cli()
             )
-            assert parsed.get("confidence_auto_downgraded") is True
+            assert not parsed.get("confidence_auto_downgraded")  # Original prose is not a statistical receipt.
 
             # 记录内限定的同类断言是描述性事实：不降级，但保留总体边界提示
             scoped = json.dumps({
@@ -1176,10 +1189,13 @@ class TestAutoDerivedReadOnlyTools:
         analysis_tools = [
             "analyze_time_series", "correlation_analysis", "distribution_analysis",
             "describe_dataset", "quick_profile", "compare_periods",
-            "top_n", "funnel_analysis", "cohort_analysis",
+            "funnel_analysis", "cohort_analysis",
         ]
         for t in analysis_tools:
             assert t in ro, f"{t} should be read-only"
+
+        # Optional save_as creates a real derived object, so this tool is not safe for read-only parallel dispatch.
+        assert "top_n" not in ro
 
     def test_new_tools_auto_classified(self):
         """Tools added without explicit READ_ONLY entry should be auto-classified."""

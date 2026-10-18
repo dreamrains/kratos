@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from data_agent.agent.loop import AgentLoop
+from tests.test_trusted_publication_semantics import engine
 
 
 def _loop_with(tools_used, intent_type="directed_analysis", readiness="ready"):
@@ -127,7 +128,9 @@ def test_guard_round_prompt_replaces_preplan_hypothesis_ids(monkeypatch):
     monkeypatch.setattr(loop, "_execution_prompt_hint", lambda: "")
 
     prompt = loop._get_system_prompt()
-    assert "keep the analysis policy" in prompt
+    # Current requirements rebuild presentation;preplan injected text is not authority.
+    assert '<synthesis_policy ' in prompt and '<answer_discipline>' in prompt
+    assert "keep the analysis policy" not in prompt
     assert "id=set_plan_1_h1" in prompt
     assert "id=old_h1" not in prompt
 
@@ -231,7 +234,7 @@ def test_explicit_hypothesis_task_rechecks_gaps_after_guard():
     assert loop._should_continue_for_analysis_quality(
         "请提出并检验至少两种竞争性假设", "still prose only",
     ) is False
-    assert "analysis_audit_incomplete" in loop._analysis_quality_failure_after_guard()
+    assert loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设")
     assert sum(
         "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
         for message in loop.messages
@@ -247,7 +250,7 @@ def test_complete_repair_clears_post_guard_failure():
     assert loop._should_continue_for_analysis_quality(
         "请提出并检验至少两种竞争性假设", "structured answer",
     ) is False
-    assert loop._analysis_quality_failure_after_guard() is None
+    assert loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设") == []
     assert sum(
         "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
         for message in loop.messages
@@ -327,55 +330,41 @@ def test_failed_substantive_tool_does_not_unlock_finalization(monkeypatch):
     assert _wrap_up_count(loop) == 1
 
 
-def test_finalization_discards_unexecuted_tool_markup_then_allows_one_direct_answer(monkeypatch):
+def test_finalization_discards_unexecuted_tool_markup_then_allows_one_direct_answer(engine,monkeypatch):
+    import json
+    from tests.test_trusted_publication_runtime import AppClient,intent_for_app
     from data_agent.llm.client import Response
-
-    loop = AgentLoop(client=None, session_id="wrap_up_tool_markup_recovery")
-    original_reset = loop._reset_turn_tracking
-
-    def reset_with_finalization():
-        original_reset()
-        loop._turn_finalization_mode = True
-
-    loop._reset_turn_tracking = reset_with_finalization
-    loop._prepare_analysis_turn = lambda _user_input: None
-    loop._ensure_mcp_initialized = lambda: None
-    loop._should_continue_for_analysis_quality = lambda *_args: False
-    loop._verify_before_publication = lambda *_args: None
-    loop._maybe_archive = lambda *_args: None
-    loop._auto_save = lambda: None
-    calls = []
-
-    def scripted_round(round_num):
-        calls.append(round_num)
-        if round_num == 1:
-            text = '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="run_python">'
-        else:
-            text = "基于已验证结果的直接结论：1818。"
-        yield {"type": "text_delta", "text": text, "turn_id": None}
-        yield {"type": "_response", "response": Response(text=text), "streamed_text": text}
-
-    loop._stream_llm_round = scripted_round
-    events = list(loop.stream_turn("分析数据"))
-    published = "".join(str(event.get("text") or "") for event in events if event.get("type") == "text_delta")
-
-    assert calls == [1, 2]
-    assert "1818" in published
-    assert "DSML" not in published
-    assert _finalization_count(loop) == 0
-    assert any("<analysis_finalization_recovery>" in str(message.get("content") or "") for message in loop.messages)
-    assert not [event for event in events if event.get("type") == "error"]
+    from data_agent.agent.publication.runtime import snapshot_for_turn
+    loop,_=engine
+    content="说明分析方法"
+    intent_for_app(monkeypatch,"knowledge",content)
+    class RecoveringClient(AppClient):
+        def chat(self,*args,**kwargs):
+            self.called+=1
+            if self.called==1: return Response(text='<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="run_python">')
+            host=snapshot_for_turn(self.loop)
+            rid=host.as_dict()["requirements"][0]["id"]
+            return Response(text=json.dumps({"schema":"answer_bindings.v2","snapshot_digest":host.digest,"sections":[{"requirement_ids":[rid],"parts":[{"kind":"text","purpose":"knowledge","text":"先明确分析目标和可观察变量。","claim_refs":[]}]}]},ensure_ascii=False))
+    loop.client=RecoveringClient(loop)
+    events=list(loop.stream_turn(content))
+    body="".join(e["text"] for e in events if e["type"]=="text_delta")
+    assert loop.client.called==2 and "分析目标" in body and "DSML" not in body
+    assert loop._turn_finalization_recovery_used and loop._tools_for_current_round() is None
+    assert not [e for e in events if e["type"] in {"error","tool_result"}]
+    assert len(loop.context.analysis_state.accepted_answers)==1
 
 
-def test_finalization_tool_markup_recovery_is_bounded():
-    loop = AgentLoop(client=None, session_id="wrap_up_tool_markup_bound")
-    loop._reset_turn_tracking()
-
-    assert loop._contains_unexecuted_tool_markup('<｜｜DSML｜｜tool_calls>') is True
-    assert loop._contains_unexecuted_tool_markup('"tool_calls": []') is True
-    assert loop._contains_unexecuted_tool_markup("直接给出结论") is False
-    assert loop._recover_finalization_tool_markup() is True
-    assert loop._recover_finalization_tool_markup() is False
+def test_finalization_tool_markup_recovery_is_bounded(engine):
+    from tests.test_trusted_publication_runtime import request
+    from tests.test_trusted_publication_semantics import execute
+    from data_agent.agent.publication.runtime import publish
+    loop,_=engine
+    request(loop,"计算当前记录数",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'quantity': 'rows'}})
+    execute(loop,"describe_dataset",{"name":"orders"})
+    assert publish(loop,'<｜｜DSML｜｜tool_calls>')[1]
+    body,error=publish(loop,'{"tool_calls": []}')
+    assert error is None and "12" in body and "DSML" not in body and "tool_calls" not in body
+    assert loop._turn_finalization_recovery_used and loop._tools_for_current_round() is None
 
 
 def test_wrap_up_nudge_can_be_disabled(monkeypatch):
@@ -405,9 +394,13 @@ def test_wrap_up_nudge_resets_between_turns(monkeypatch):
 def test_streaming_turn_wraps_up_long_tool_loops(monkeypatch):
     from data_agent.config import get_config
     from data_agent.llm.client import Response, ToolCall
+    from tests.test_trusted_publication_runtime import intent_for_app
+    from data_agent.agent.publication.runtime import snapshot_for_turn
+    import json
 
     monkeypatch.setattr(get_config(), "wrap_up_round", 2)
     loop = AgentLoop(client=None, session_id="wrap_up_integration")
+    intent_for_app(monkeypatch,"knowledge","说明分析步骤")
 
     def scripted_round(round_num):
         if round_num >= 3:
@@ -416,6 +409,9 @@ def test_streaming_turn_wraps_up_long_tool_loops(monkeypatch):
                 for message in loop.messages
             )
             text = f"wrap-up visible before round 3: {seen}"
+            host=snapshot_for_turn(loop)
+            rid=host.as_dict()["requirements"][0]["id"]
+            text=json.dumps({"schema":"answer_bindings.v2","snapshot_digest":host.digest,"sections":[{"requirement_ids":[rid],"parts":[{"kind":"text","purpose":"knowledge","text":text,"claim_refs":[]}]}]})
             # The loop publishes final answers through delta events.
             yield {"type": "text_delta", "text": text, "turn_id": None}
             yield {
@@ -434,7 +430,7 @@ def test_streaming_turn_wraps_up_long_tool_loops(monkeypatch):
         }
 
     loop._stream_llm_round = scripted_round
-    events = list(loop.stream_turn("分析数据"))
+    events = list(loop.stream_turn("说明分析步骤"))
     streamed = "".join(str(event.get("text") or "") for event in events if event.get("type") == "text_delta")
     assert "wrap-up visible before round 3: True" in streamed
     assert not [event for event in events if event.get("type") == "error"]

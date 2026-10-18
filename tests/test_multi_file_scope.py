@@ -5,6 +5,7 @@ import pytest
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.multi_file_scope import (
     build_analysis_scope_plan,
+    build_material_ambiguity_groups,
     canonical_entity_fields,
     infer_file_grain,
 )
@@ -683,3 +684,25 @@ def test_explicit_exclusion_allows_connecting_words(profile, goal):
 
     assert plan["file_decisions"][0]["assignment"] == "not_needed"
     assert plan["file_decisions"][0]["reason_code"] == "explicit_user_exclusion"
+
+
+def test_executable_plan_reuses_resolved_contract_across_same_alias_versions():
+    state = AnalysisSessionState(session_id="resolved-version", data_state="data_loaded")
+    state.data_pool = [
+        _profile("old", dataset="hyp", dataset_contract_id="duc_old"),
+        _profile("new", dataset="hyp", dataset_contract_id="duc_new"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_old", "dataset": "hyp", "quality_status": "ready"},
+        {"id": "duc_new", "dataset": "hyp", "quality_status": "ready"},
+    ]
+    state.analysis_plan = {"contract_version": "stage3c0b.v2", "method_plan": [{
+        "step_id": "current", "dataset_inputs": ["hyp"],
+        "dataset_contract_ids": ["duc_new"],
+    }]}
+    assert build_material_ambiguity_groups(state, "analyze hyp") == []
+    scope = build_analysis_scope_plan(state, "analyze hyp")
+    assert [x["file_id"] for x in scope["used_files"]] == ["new"]
+    assert [x["file_id"] for x in scope["not_needed_files"]] == ["old"]
+    state.analysis_plan = None
+    assert len(build_material_ambiguity_groups(state, "analyze hyp")) == 1

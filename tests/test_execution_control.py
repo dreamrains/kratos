@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from data_agent.agent.analysis_flow_controller import AnalysisFlowController
@@ -17,6 +19,36 @@ from data_agent.llm.client import Response, ToolCall
 from data_agent.agent.loop import AgentLoop
 from data_agent.session.task_manager import task_manager
 from data_agent.session.workspace import Workspace
+
+
+@pytest.fixture(autouse=True)
+def isolated_execution_control_storage(tmp_path,monkeypatch):
+    # Bind the consumer before a test patches its producer. Lazy first import
+    # inside the patch would retain that lambda after monkeypatch restores it.
+    import data_agent.agent.analysis_entry
+    from data_agent.config import get_config
+    cfg=get_config()
+    monkeypatch.setattr(cfg,"sessions_dir",tmp_path/"sessions")
+    monkeypatch.setattr(cfg,"workspace_dir",tmp_path/"workspace")
+    monkeypatch.setattr(task_manager,"_dir",tmp_path/"tasks")
+    monkeypatch.setattr(task_manager,"_next_id_val",0)
+
+
+def _produce_current_execution_metadata(context, state, dataset, metric):
+    """Exercise loop integration with the actual producer and current owned data."""
+    import pandas as pd
+    from data_agent.tools.data_io import _record_trust_workflow
+    context.analysis_state = state
+    context.workspace.add(dataset, pd.DataFrame({
+        "date": pd.date_range("2026-01-01", periods=14), metric: list(range(1, 15)),
+    }))
+    state.set_active_dataset(dataset)
+    state.active_scope["active_mode"] = "data_loaded"
+    with use_agent_context(context):
+        _record_trust_workflow(session_id=state.session_id, state=state, dataset=dataset,
+            df=context.workspace.get(dataset), applied=[], needs_confirm=[], quality={},
+            interpretation_data={"columns_classified":{"time_columns":["date"], "key_metrics":[metric]}},
+            detail_path="")
 
 
 def _loaded_context() -> str:
@@ -54,6 +86,29 @@ def test_budget_soft_and_hard_thresholds():
         raise AssertionError("expected hard budget to stop further tool calls")
 
 
+def test_python_fallback_allows_native_versioned_receipts_without_clearing_gap():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis", max_tool_calls=10))
+    state.record_tool_call("run_python", {"code": "explore"})
+    state.record_tool_success()
+    assert state.pending_fallback_resolution
+
+    for tool, args in (
+        ("synthesize_time_series", {"datasets": "a,b", "save_as": "combined"}),
+        ("compare_periods", {"name": "combined"}),
+        ("transform_data", {"name": "combined", "operation": "group_aggregate"}),
+    ):
+        state.ensure_can_call(tool, args)
+        state.record_tool_call(tool, args)
+        state.record_tool_success()
+        assert state.pending_fallback_resolution
+
+    with pytest.raises(BudgetExceeded, match="Fallback Python result"):
+        state.ensure_can_call("preview_data", {"name": "unrelated"})
+    state.record_tool_call("record_evidence_record", {"record_json": "current evidence"})
+    state.record_tool_success()
+    assert not state.pending_fallback_resolution
+
+
 def test_chart_calls_are_not_limited_by_chart_count():
     state = TurnExecutionState(ToolExecutionBudget(profile="analysis", max_tool_calls=20, max_fallback_calls=2))
 
@@ -81,6 +136,22 @@ def test_duplicate_chart_call_is_treated_as_low_value_exploration():
         assert "duplicate" in str(exc).lower() or "low-value" in str(exc).lower()
     else:
         raise AssertionError("expected duplicate chart to be blocked")
+
+
+def test_transform_duplicate_is_scoped_to_source_version():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis", max_tool_calls=20))
+    args = {"name": "sales", "operation": "group_aggregate", "group_by": ["channel"]}
+    state.ensure_can_call("transform_data", args, source_version="dv_v1")
+    state.record_tool_call("transform_data", args, source_version="dv_v1")
+    state.record_tool_success()
+    with pytest.raises(BudgetExceeded, match="duplicate"):
+        state.ensure_can_call("transform_data", args, source_version="dv_v1")
+    state.ensure_can_call("transform_data", args, source_version="dv_v2")
+    state.record_tool_call("transform_data", args, source_version="dv_v2")
+    state.record_tool_success()
+    assert state.tool_calls == 2
+    with pytest.raises(BudgetExceeded, match="duplicate"):
+        state.ensure_can_call("transform_data", args, source_version="dv_v2")
 
 
 def test_elapsed_time_budget_blocks_more_tools():
@@ -217,6 +288,9 @@ class _OneToolClient:
         return self._calls.pop(0)
 
 
+from tests.test_trusted_publication_semantics import engine
+
+
 class _EvidenceThenFinalClient:
     def __init__(self):
         evidence = {
@@ -241,7 +315,11 @@ class _EvidenceThenFinalClient:
         self.system_prompts.append(system or "")
         if not self._calls:
             return Response(text="final answer")
-        return self._calls.pop(0)
+        response=self._calls.pop(0)
+        if not response.has_tool_calls and hasattr(self,"loop"):
+            from data_agent.agent.publication.runtime import snapshot_for_turn
+            response=Response(text=json.dumps({"schema":"answer_bindings.v2","snapshot_digest":snapshot_for_turn(self.loop).digest,"sections":[]}))
+        return response
 
 
 def test_p08_static_method_pending_does_not_block_tool(tmp_path, monkeypatch):
@@ -336,7 +414,7 @@ def test_structured_loop_auto_suspends_for_required_question(monkeypatch):
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
 
     class FailingClient:
@@ -348,10 +426,7 @@ def test_structured_loop_auto_suspends_for_required_question(monkeypatch):
     state = AnalysisSessionState(session_id="auto_question_gate", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"
     state.active_scope["active_mode"] = "data_loaded"
-    state.route_proposals = [
-        {"id": "route_trend", "dataset": "orders", "direction": "trend", "label": "Trend"},
-        {"id": "route_compare", "dataset": "orders", "direction": "period_compare", "label": "Compare"},
-    ]
+    _produce_current_execution_metadata(ctx, state, "orders", "amount")
     ctx.analysis_state = state
     loop = AgentLoop(client=FailingClient(), session_id="auto_question_gate")
     loop.context = ctx
@@ -426,12 +501,13 @@ def test_structured_loop_relationship_diagnostic_does_not_suspend(monkeypatch):
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
 
     class FinalClient:
         def chat(self, *args, **kwargs):
-            return Response(text="analysis continued")
+            from data_agent.agent.publication.runtime import snapshot_for_turn
+            return Response(text=json.dumps({"schema":"answer_bindings.v2","snapshot_digest":snapshot_for_turn(loop).digest,"sections":[]}))
 
     ctx = AgentContext(session_id="auto_file_relationship_gate", workspace=Workspace())
     state = AnalysisSessionState(session_id="auto_file_relationship_gate", data_state="data_loaded")
@@ -454,8 +530,10 @@ def test_structured_loop_relationship_diagnostic_does_not_suspend(monkeypatch):
     from data_agent.agent.loop import FinalResponse
 
     assert isinstance(result, FinalResponse)
-    assert result.content == "analysis continued"
+    assert "未计算" in result.content and "analysis continued" not in result.content
+    assert state.accepted_answers
     assert state.pending_confirmations == []
+
 
 
 def test_p08_method_pending_no_longer_blocks_the_turn(monkeypatch):
@@ -469,7 +547,7 @@ def test_p08_method_pending_no_longer_blocks_the_turn(monkeypatch):
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
     monkeypatch.setattr(
         "data_agent.agent.question_need_detector.detect_question_need",
@@ -629,7 +707,7 @@ def test_auto_suspend_falls_back_to_unsuspended_preexisting_confirmation():
     assert result.confirmation_id == result.suspension_id
 
 
-def test_confirmation_task_links_pending_and_resolution_updates_live_state(tmp_path, monkeypatch):
+def test_unregistered_method_confirmation_cannot_mutate_state_or_task(tmp_path, monkeypatch):
     import data_agent.agent.analysis_flow_controller as flow_module
     import data_agent.session.task_manager as task_module
     from data_agent.agent.loop import SuspendedForConfirmation
@@ -692,16 +770,13 @@ def test_confirmation_task_links_pending_and_resolution_updates_live_state(tmp_p
         related_spec_id=spec_id,
     )
 
-    loop._resolve_confirmation(suspension, "confirm_method")
-
-    assert state.pending_confirmations[0]["status"] == "resolved"
-    assert state.analysis_spec["method_confirmation"]["status"] == "approved"
-    assert manager.get(task["id"])["status"] == "completed"
-    assert manager.get(task["id"])["confirmation_ids"] == [
-        pending_id,
-        "auto_runtime_identity",
-    ]
-    assert manager.get(task["id"])["completed_by"] == "confirmation"
+    # An unregistered legacy suspension cannot simulate a user approval or complete a task.
+    before = state.to_dict()
+    prior_task = manager.get(task["id"])
+    with pytest.raises(KeyError):
+        loop._resolve_confirmation(suspension, "confirm_method")
+    assert state.to_dict() == before
+    assert manager.get(task["id"]) == prior_task
 
 
 def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear(monkeypatch):
@@ -715,7 +790,7 @@ def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr(
         "data_agent.agent.question_need_detector.detect_question_need",
         lambda user_input, intent, state: {"status": "clear"},
@@ -723,7 +798,8 @@ def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear
 
     class FinalClient:
         def chat(self, *args, **kwargs):
-            return Response(text="analysis continued")
+            from data_agent.agent.publication.runtime import snapshot_for_turn
+            return Response(text=json.dumps({"schema":"answer_bindings.v2","snapshot_digest":snapshot_for_turn(loop).digest,"sections":[]}))
 
     def prepare_turn_with_rich_confirmation(self, state, intent, user_input, dataset_profile):
         state.add_confirmation({
@@ -759,7 +835,8 @@ def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear
     from data_agent.agent.loop import FinalResponse
 
     assert isinstance(result, FinalResponse)
-    assert result.content == "analysis continued"
+    assert "未计算" in result.content and "analysis continued" not in result.content
+    assert state.accepted_answers
     saved_updates = json.loads(state.pending_confirmations[0]["state_updates"])
     assert saved_updates == {
         "stage": "plan",
@@ -767,6 +844,7 @@ def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear
         "analysis_spec": {"goal": "preserve me"},
     }
     assert "suspension_id" not in state.pending_confirmations[0]
+
 
 
 def test_p08_structured_loop_no_longer_suspends_on_playbook_method_selection(tmp_path, monkeypatch):
@@ -783,7 +861,7 @@ def test_p08_structured_loop_no_longer_suspends_on_playbook_method_selection(tmp
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr("data_agent.agent.llm_playbook.select_playbook_llm", lambda **kwargs: None)
 
     class AnsweringClient:
@@ -830,7 +908,7 @@ def test_stream_loop_auto_suspends_for_required_question(monkeypatch):
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
 
     class FailingClient:
@@ -841,10 +919,7 @@ def test_stream_loop_auto_suspends_for_required_question(monkeypatch):
     state = AnalysisSessionState(session_id="auto_question_gate_stream", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"
     state.active_scope["active_mode"] = "data_loaded"
-    state.route_proposals = [
-        {"id": "route_trend", "dataset": "orders", "direction": "trend", "label": "Trend"},
-        {"id": "route_compare", "dataset": "orders", "direction": "period_compare", "label": "Compare"},
-    ]
+    _produce_current_execution_metadata(ctx, state, "orders", "amount")
     ctx.analysis_state = state
     loop = AgentLoop(client=FailingClient(), session_id="auto_question_gate_stream")
     loop.context = ctx
@@ -856,69 +931,48 @@ def test_stream_loop_auto_suspends_for_required_question(monkeypatch):
     assert len(events[0]["options"]) == 2
 
 
-def _incomplete_hypothesis_loop(session_id):
-    loop = AgentLoop(client=None, session_id=session_id)
-    loop._reset_turn_tracking()
-    loop.context.analysis_state.analysis_plan = None
-    loop.context.analysis_state.hypothesis_sets = []
-    loop.context.analysis_state.evidence_records = []
-    loop._ensure_mcp_initialized = lambda: None
-    loop._runtime_confirmation_checkpoint = lambda: None
-    loop._verify_before_publication = lambda *_args: None
-    loop._render_terminal_publication = lambda _user, text, persist=False: (text, None)
-    loop._persist_accepted_answer = lambda *_args: (_ for _ in ()).throw(
-        AssertionError("incomplete audit must not be persisted")
-    )
-    return loop
 
 
-def test_incomplete_hypothesis_audit_fails_once_in_sync_loop():
-    class TwoFinals:
-        def __init__(self):
-            self.calls = 0
-
-        def chat(self, **_kwargs):
-            self.calls += 1
-            return Response(text=f"prose candidate {self.calls}")
-
-    loop = _incomplete_hypothesis_loop("incomplete_hypothesis_sync")
-    client = TwoFinals()
-    loop.client = client
-    loop._provider_messages = lambda: []
-    loop._get_system_prompt = lambda: ""
-    loop._tools_for_current_round = lambda: None
-
-    result = loop._loop_impl("请提出并检验至少两种竞争性假设")
-
-    assert "analysis_audit_incomplete" in result.content
-    assert client.calls == 2
-    assert sum(
-        "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
-        for message in loop.messages
-    ) == 1
+def test_incomplete_hypothesis_audit_fails_once_in_sync_loop(engine,monkeypatch):
+    from tests.test_trusted_publication_runtime import AppClient,intent_for_app
+    from data_agent.session.history import load_session
+    from data_agent.agent.publication.runtime import read_answer
+    loop,_=engine
+    content="检验 H1 并显示当前状态"
+    intent_for_app(monkeypatch,"result",content,{'datasets': ['orders'], 'hypothesis_ids': ['H1'], 'quantity': 'value'})
+    loop.client=AppClient(loop)
+    if False:
+        events=list(loop.stream_turn(content))
+        assert not [e for e in events if e["type"]=="error"]
+        body="".join(e["text"] for e in events if e["type"]=="text_delta")
+    else: body=loop.run_turn_structured(content).content
+    saved=load_session(loop.session_id)
+    answer=read_answer(loop.session_id,saved["messages"][-1]["answer_ref"])
+    assert body==answer["body"] and "未计算" in body
+    assert answer["requirement_outcomes"][0]["status"]=="not_computed"
+    assert not [t for t in answer["render_trace"] if t["kind"]=="claim"]
+    assert len(loop.context.analysis_state.accepted_answers)==1
 
 
-def test_incomplete_hypothesis_audit_fails_once_in_stream_loop():
-    loop = _incomplete_hypothesis_loop("incomplete_hypothesis_stream")
-    rounds = []
-
-    def scripted_round(round_num):
-        rounds.append(round_num)
-        text = f"prose candidate {round_num}"
-        yield {"type": "text_delta", "text": text, "turn_id": None}
-        yield {"type": "_response", "response": Response(text=text), "streamed_text": text}
-
-    loop._stream_llm_round = scripted_round
-
-    events = list(loop._stream_analysis_loop("请提出并检验至少两种竞争性假设"))
-
-    assert rounds == [1, 2]
-    assert [event["type"] for event in events] == ["error"]
-    assert "analysis_audit_incomplete" in events[0]["message"]
-    assert sum(
-        "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
-        for message in loop.messages
-    ) == 1
+def test_incomplete_hypothesis_audit_fails_once_in_stream_loop(engine,monkeypatch):
+    from tests.test_trusted_publication_runtime import AppClient,intent_for_app
+    from data_agent.session.history import load_session
+    from data_agent.agent.publication.runtime import read_answer
+    loop,_=engine
+    content="检验 H1 并显示当前状态"
+    intent_for_app(monkeypatch,"result",content,{'datasets': ['orders'], 'hypothesis_ids': ['H1'], 'quantity': 'value'})
+    loop.client=AppClient(loop)
+    if True:
+        events=list(loop.stream_turn(content))
+        assert not [e for e in events if e["type"]=="error"]
+        body="".join(e["text"] for e in events if e["type"]=="text_delta")
+    else: body=loop.run_turn_structured(content).content
+    saved=load_session(loop.session_id)
+    answer=read_answer(loop.session_id,saved["messages"][-1]["answer_ref"])
+    assert body==answer["body"] and "未计算" in body
+    assert answer["requirement_outcomes"][0]["status"]=="not_computed"
+    assert not [t for t in answer["render_trace"] if t["kind"]=="claim"]
+    assert len(loop.context.analysis_state.accepted_answers)==1
 
 
 def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
@@ -932,7 +986,7 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
 
     workspace_obj = Workspace()
@@ -948,11 +1002,13 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     client = _EvidenceThenFinalClient()
     loop = AgentLoop(client=client, session_id="loop_synthesis_policy")
     loop.context = ctx
+    client.loop=loop
 
     with use_agent_context(ctx):
         result = loop.run_turn("analyze retention formula")
 
-    assert result == "final answer"
+    assert "未计算" in result and "final answer" not in result
+    assert state.accepted_answers
     assert any("<synthesis_policy" in prompt for prompt in client.system_prompts[1:])
 
     final_prompt = client.system_prompts[-1]
@@ -972,7 +1028,7 @@ def test_prepare_analysis_turn_stores_refined_intent_from_route_proposals(monkey
         reason="test",
         ambiguities=[],
     )
-    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context, **kwargs: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
     monkeypatch.setattr(AnalysisFlowController, "activate_tool_groups", lambda self, registry, intent, state, user_input: [])
 
@@ -993,48 +1049,20 @@ def test_prepare_analysis_turn_stores_refined_intent_from_route_proposals(monkey
     ]
 
 
-def test_synthesis_policy_injection_creates_verification_report_first(monkeypatch):
-    intent = TurnIntent(
-        intent_type="directed_analysis",
-        clarity="clear",
-        data_state="data_loaded",
-        analysis_stage="execute",
-        recommended_action="run_analysis",
-        execution_readiness="ready",
-        reason="test",
-        ambiguities=[],
-    )
-    workspace_obj = Workspace()
-    ctx = AgentContext(session_id="loop_verify_before_synthesis", workspace=workspace_obj)
-    state = AnalysisSessionState(session_id="loop_verify_before_synthesis")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Retention follows a power-law curve",
-        "result_summary": "R(t)=0.1917*t^(-0.7335), R2=0.9743",
-        "confidence": "high",
-        "dataset": "retention",
-        "sample_size": 1200,
-        "time_scope": "2026-01-01 to 2026-05-31",
-        "calculation_method": "retention curve fit",
-        "method_detail": "fit log retention against log elapsed time",
-        "limitations": "Aggregated data only",
-        "method": "log-linear least squares",
-    }]
-    ctx.analysis_state = state
-    ctx.user_quality_requirements = ""
-    loop = AgentLoop(client=object(), session_id="loop_verify_before_synthesis")
-    loop.context = ctx
-    loop._last_turn_intent = intent
-    loop._reset_turn_tracking()
-
-    with use_agent_context(ctx):
-        loop._maybe_inject_synthesis_policy("summarize the retention formula")
-
-    assert state.verification_reports
-    assert state.verification_reports[-1]["overall_status"] == "pass"
-    assert loop._turn_verification_injected is True
-    assert loop._turn_synthesis_policy_injected is True
-    assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
+def test_synthesis_policy_injection_creates_verification_report_first(engine,monkeypatch):
+    from tests.test_trusted_publication_runtime import request,draft
+    from data_agent.agent.publication.runtime import snapshot_for_turn,publication_prompt,publish
+    loop,_=engine
+    state=loop.context.analysis_state
+    state.evidence_records=[{"id":"ev_old","claim":"Retention rose 500%","result_summary":"Retention fell from 30% to 20%","confidence":"high"}]
+    request(loop,"计算当前留存",{'kind': 'series', 'scope': {'datasets': ['orders']}})
+    if "annotation"=="exception": state.verification_reports=[{"id":"old_failure","overall_status":"fail"}]
+    snapshot=snapshot_for_turn(loop)
+    assert snapshot.as_dict()["claims"]==[]
+    assert "<accepted_answer_contract>" in publication_prompt(loop)
+    body,error=publish(loop,draft(snapshot))
+    assert error is None and "未计算" in body and "500%" not in body
+    assert loop._accepted_answer["requirement_outcomes"][0]["status"]=="not_computed"
 
 
 def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_path):
@@ -1057,17 +1085,7 @@ def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_pat
         workspace_obj = Workspace()
         ctx = AgentContext(session_id="loop_hyp_before_synthesis", workspace=workspace_obj)
         state = AnalysisSessionState(session_id="loop_hyp_before_synthesis")
-        state.dataset_contracts = [{
-            "dataset": "sales",
-            "quality": {"status": "ready"},
-            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
-        }]
-        state.route_proposals = [{
-            "id": "route_trend",
-            "dataset": "sales",
-            "direction": "trend",
-            "evidence_requirements": ["date", "metric"],
-        }]
+        _produce_current_execution_metadata(ctx, state, "sales", "revenue")
         state.evidence_records = [{
             "id": "ev_1",
             "claim": "Revenue changed across the selected period",
@@ -1088,6 +1106,8 @@ def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_pat
         loop._last_turn_intent = intent
         loop._reset_turn_tracking()
 
+        # A presentation/playbook suggestion alone cannot create a hypothesis authority.
+        state.analysis_plan = {"id":"plan_current","goal":"show revenue trend"}
         with use_agent_context(ctx):
             loop._maybe_inject_synthesis_policy("show revenue trend")
 
@@ -1099,7 +1119,7 @@ def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_pat
         cfg.sessions_dir = old_sessions
 
 
-def test_explicit_hypothesis_task_exposes_stable_ids_before_evidence(tmp_path):
+def test_explicit_hypothesis_task_exposes_stable_ids_after_plan_before_evidence(tmp_path):
     from data_agent.config import get_config
 
     cfg = get_config()
@@ -1118,17 +1138,7 @@ def test_explicit_hypothesis_task_exposes_stable_ids_before_evidence(tmp_path):
         )
         ctx = AgentContext(session_id="loop_hyp_before_evidence", workspace=Workspace())
         state = AnalysisSessionState(session_id="loop_hyp_before_evidence")
-        state.dataset_contracts = [{
-            "dataset": "sales",
-            "quality": {"status": "ready"},
-            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
-        }]
-        state.route_proposals = [{
-            "id": "route_trend",
-            "dataset": "sales",
-            "direction": "trend",
-            "evidence_requirements": ["date", "metric"],
-        }]
+        _produce_current_execution_metadata(ctx, state, "sales", "revenue")
         ctx.analysis_state = state
         loop = AgentLoop(client=object(), session_id=ctx.session_id)
         loop.context = ctx
@@ -1139,108 +1149,50 @@ def test_explicit_hypothesis_task_exposes_stable_ids_before_evidence(tmp_path):
             loop._maybe_inject_synthesis_policy("请提出并检验至少两种竞争性假设")
 
         assert state.evidence_records == []
+        assert state.hypothesis_sets == []
+        assert "record_analysis_plan" in loop._turn_synthesis_policy_instruction
+        state.analysis_plan = {"id": "plan_current", "goal": "compare hypotheses"}
+        with use_agent_context(ctx):
+            loop._maybe_inject_synthesis_policy("请提出并检验至少两种竞争性假设")
         assert state.hypothesis_sets
+        assert state.hypothesis_sets[0]["plan_id"] == "plan_current"
         assert "<competing_hypotheses>" in loop._turn_synthesis_policy_instruction
         assert state.hypothesis_sets[0]["id"] in loop._turn_synthesis_policy_instruction
-        assert loop._turn_synthesis_policy_injected is False
+        assert loop._turn_synthesis_policy_injected is True
     finally:
         cfg.sessions_dir = old_sessions
 
 
-def test_synthesis_policy_injection_marks_failed_verification_attempt(monkeypatch):
-    intent = TurnIntent(
-        intent_type="directed_analysis",
-        clarity="clear",
-        data_state="data_loaded",
-        analysis_stage="execute",
-        recommended_action="run_analysis",
-        execution_readiness="ready",
-        reason="test",
-        ambiguities=[],
-    )
-    workspace_obj = Workspace()
-    ctx = AgentContext(session_id="loop_verify_exception_policy", workspace=workspace_obj)
-    state = AnalysisSessionState(session_id="loop_verify_exception_policy")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Retention follows a power-law curve",
-        "result_summary": "R(t)=0.1917*t^(-0.7335), R2=0.9743",
-        "confidence": "high",
-    }]
-    ctx.analysis_state = state
-    ctx.user_quality_requirements = ""
-    loop = AgentLoop(client=object(), session_id="loop_verify_exception_policy")
-    loop.context = ctx
-    loop._last_turn_intent = intent
-    loop._reset_turn_tracking()
-
-    from data_agent.agent import trust_workflow_runtime as runtime
-
-    def raise_verification_error(*_args, **_kwargs):
-        raise RuntimeError("verification unavailable")
-
-    monkeypatch.setattr(runtime, "maybe_verify_turn_claims", raise_verification_error)
-
-    with use_agent_context(ctx):
-        loop._maybe_inject_synthesis_policy("summarize retention")
-
-    assert loop._turn_verification_injected is True
-    assert loop._turn_synthesis_policy_injected is True
-    assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
+def test_synthesis_policy_injection_marks_failed_verification_attempt(engine,monkeypatch):
+    from tests.test_trusted_publication_runtime import request,draft
+    from data_agent.agent.publication.runtime import snapshot_for_turn,publication_prompt,publish
+    loop,_=engine
+    state=loop.context.analysis_state
+    state.evidence_records=[{"id":"ev_old","claim":"Retention rose 500%","result_summary":"Retention fell from 30% to 20%","confidence":"high"}]
+    request(loop,"计算当前留存",{'kind': 'series', 'scope': {'datasets': ['orders']}})
+    if "exception"=="exception": state.verification_reports=[{"id":"old_failure","overall_status":"fail"}]
+    snapshot=snapshot_for_turn(loop)
+    assert snapshot.as_dict()["claims"]==[]
+    assert "<accepted_answer_contract>" in publication_prompt(loop)
+    body,error=publish(loop,draft(snapshot))
+    assert error is None and "未计算" in body and "500%" not in body
+    assert loop._accepted_answer["requirement_outcomes"][0]["status"]=="not_computed"
 
 
-def test_synthesis_policy_instruction_reflects_failed_runtime_verification(monkeypatch):
-    intent = TurnIntent(
-        intent_type="directed_analysis",
-        clarity="clear",
-        data_state="data_loaded",
-        analysis_stage="execute",
-        recommended_action="run_analysis",
-        execution_readiness="ready",
-        reason="test",
-        ambiguities=[],
-    )
-    workspace_obj = Workspace()
-    ctx = AgentContext(session_id="loop_failed_verification_policy", workspace=workspace_obj)
-    state = AnalysisSessionState(session_id="loop_failed_verification_policy")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Retention rose 500%",
-        "result_summary": "Retention fell from 30% to 20%",
-        "confidence": "high",
-    }]
-    from data_agent.agent import trust_workflow_runtime as runtime
-
-    def fake_verify_analysis_claims(**_kwargs):
-        return {
-            "id": "failed_report",
-            "claim_checks": [{
-                "claim_id": "claim_1",
-                "claim": "Retention rose 500%",
-                "evidence_id": None,
-                "status": "failed",
-                "strength": "unsupported",
-                "issues": ["No evidence record supports this claim"],
-            }],
-            "route_proposal_ids": [],
-            "overall_status": "fail",
-        }
-
-    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
-    ctx.analysis_state = state
-    ctx.user_quality_requirements = ""
-    loop = AgentLoop(client=object(), session_id="loop_failed_verification_policy")
-    loop.context = ctx
-    loop._last_turn_intent = intent
-    loop._reset_turn_tracking()
-
-    with use_agent_context(ctx):
-        loop._maybe_inject_synthesis_policy("summarize retention")
-
-    assert state.verification_reports[-1]["overall_status"] == "fail"
-    assert "verification status is fail" in loop._turn_synthesis_policy_instruction.lower()
-    assert "decision_recommendation" in loop._turn_synthesis_policy_instruction
-    assert "suppressed" in loop._turn_synthesis_policy_instruction.lower()
+def test_synthesis_policy_instruction_reflects_failed_runtime_verification(engine,monkeypatch):
+    from tests.test_trusted_publication_runtime import request,draft
+    from data_agent.agent.publication.runtime import snapshot_for_turn,publication_prompt,publish
+    loop,_=engine
+    state=loop.context.analysis_state
+    state.evidence_records=[{"id":"ev_old","claim":"Retention rose 500%","result_summary":"Retention fell from 30% to 20%","confidence":"high"}]
+    request(loop,"计算当前留存",{'kind': 'series', 'scope': {'datasets': ['orders']}})
+    if "contradiction"=="exception": state.verification_reports=[{"id":"old_failure","overall_status":"fail"}]
+    snapshot=snapshot_for_turn(loop)
+    assert snapshot.as_dict()["claims"]==[]
+    assert "<accepted_answer_contract>" in publication_prompt(loop)
+    body,error=publish(loop,draft(snapshot))
+    assert error is None and "未计算" in body and "500%" not in body
+    assert loop._accepted_answer["requirement_outcomes"][0]["status"]=="not_computed"
 
 
 # ── P7-L3/B06: the turn budget must stay armed through real loop paths ──
@@ -1325,9 +1277,12 @@ def test_streaming_loop_enforces_tool_budget_and_stops_execution(tmp_path, monke
     events = list(loop.stream_turn("【B06-BUDGET】请执行大量分析以触发预算边界"))
 
     error_events = [event for event in events if event.get("type") == "error"]
-    assert any("budget" in str(event.get("message", "")).lower() for event in error_events), (
-        "超过预算必须产生真实 budget_exceeded 错误事件，而不是仅靠模型文本声称触界"
-    )
+    assert not any("budget" in str(event.get("message", "")).lower() for event in error_events)
+    assert any(event.get("type") == "tool_result"
+               and event.get("web", {}).get("error_type") == "budget_exceeded"
+               for event in events), "预算拒绝须有真实配对工具结果，随后沿原发布链收尾"
+    assert loop._turn_budget_exhaustion["code"] == "tool_calls"
+    assert loop._tools_for_current_round() is None
     receipts = loop.context.analysis_state.tool_receipts
     budget_messages = [
         message for message in loop.messages

@@ -282,14 +282,29 @@ def _plan_dataset_bindings(state: Any) -> tuple[bool, dict[str, list[str]]]:
     method_plan = plan.get("method_plan")
     if not isinstance(method_plan, list):
         return False, {}
+    from data_agent.agent.context import get_current_context
+    context = get_current_context()
+    current_needs = (set(context.turn_requirement_ids)
+                     if context is not None and context.analysis_state is state
+                     and context.turn_requirement_ids else None)
     has_binding_contract = False
     bindings: dict[str, list[str]] = {}
     for index, step in enumerate(method_plan, start=1):
         if not isinstance(step, dict) or "dataset_inputs" not in step:
             continue
+        # A prior request's plan cannot resolve this turn's material file choice.
+        # Original continuation IDs still retain their exact existing bindings.
+        if current_needs is not None and not current_needs.intersection(step.get("requirement_ids") or []):
+            continue
         has_binding_contract = True
         step_id = _text(step.get("step_id")) or f"step_{index}"
-        for dataset in _text_list(step.get("dataset_inputs")):
+        # Executable plans resolve physical source contracts before dispatch.
+        # Reuse those identities instead of matching historical dataset aliases
+        # again. Display-only plans retain their ordinary scope suggestions.
+        inputs = (step.get("dataset_contract_ids")
+                  if plan.get("contract_version") == "stage3c0b.v2"
+                  else step.get("dataset_inputs"))
+        for dataset in _text_list(inputs):
             bindings.setdefault(dataset, []).append(step_id)
     return has_binding_contract, bindings
 

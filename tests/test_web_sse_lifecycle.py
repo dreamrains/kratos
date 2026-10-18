@@ -479,7 +479,79 @@ async function keepalivePreventsFalseSilentStreamRecovery() {
   assert.strictEqual(app.turns[app.turns.length - 1].content, 'done');
 }
 
+function r07OriginalReplyAndFailureNoticeRemainSeparate() {
+  const app = makeApp();
+  const turns = app._reconstructTurns([
+    {role:'user',content:'全表记录数'},
+    {role:'assistant',content:'原接受答案：3行。',reply_id:'accepted_reply'},
+    {role:'assistant',content:'执行失败：冲突回答。',reply_id:'failure_reply'},
+  ]);
+  assert.strictEqual(turns.length,3);
+  assert.strictEqual(turns[1].replyId,'accepted_reply');
+  assert.strictEqual(turns[1].content,'原接受答案：3行。');
+  assert.strictEqual(turns[2].replyId,'failure_reply');
+  assert.strictEqual(turns[2].content,'执行失败：冲突回答。');
+}
+
+
+function acceptedHostChartLinksRenderAtTheirExactBodyPosition() {
+  const app = makeApp();
+  app.currentSessionId = 'session-a';
+  const own = { path: 'sessions/session-a/charts/原图_abc123.html', type: 'chart', description: '原图' };
+  const foreign = { path: 'sessions/session-b/charts/原图_abc123.html', type: 'chart', description: 'foreign' };
+  const body = `Before\n[原图](/api/files/${encodeURI(own.path)})\nAfter`;
+  const turn = { content: body, artifacts: [own] };
+  const rendered = app._replaceChartReferences(body, turn);
+  assert(rendered.indexOf('Before') < rendered.indexOf('<iframe'));
+  assert(rendered.indexOf('<iframe') < rendered.indexOf('After'));
+  assert(rendered.includes('title="原图"') && rendered.includes('Open chart in a new tab'));
+  assert.strictEqual(app.supplementalArtifacts(turn).length, 0);
+  for (const href of [
+    '/api/files/sessions/session-a/charts/原图_wronghash.html',
+    '/api/files/' + encodeURI(foreign.path),
+    'https://external.invalid/chart.html',
+  ]) {
+    const text = `[candidate](${href})`;
+    assert(!app._replaceChartReferences(text, { content: text, artifacts: [own, foreign] }).includes('<iframe'));
+  }
+  app.sessionArtifacts = [own];
+  assert(!app._replaceChartReferences(body, { content: body, artifacts: [] }).includes('<iframe'));
+  // A document artifact is still a link, even when its path ends with html.
+  assert(!app._replaceChartReferences(body, { content: body, artifacts: [{...own, type:'report'}] }).includes('<iframe'));
+}
+
+
+function acceptedWorkbenchFragmentsUseTablesWithoutArtifactAuthority() {
+  context.marked = require(require('path').join(require('path').dirname(appPath), '../vendor/marked/marked-15.0.4.min.js'));
+  context.katex = require(require('path').join(require('path').dirname(appPath), '../vendor/katex/katex-0.16.11.min.js'));
+  const app = makeApp();
+  app.currentSessionId = 'session-a';
+  const fragment = 'Before\n\n| field | value |\n| --- | --- |\n| escaped\\_key | 0 |\n\n$120/12=10$\n\nAfter';
+  const html = app.renderMarkdown(fragment, null, false);
+  assert(html.includes('<table>') && html.includes('escaped_key') && html.includes('>0</td>'));
+  assert(html.includes('tabindex="0"') && html.includes('katex'));
+  assert(html.indexOf('Before') < html.indexOf('<table>') && html.indexOf('</table>') < html.indexOf('After'));
+  const hostile = '<iframe src="/api/files/sessions/session-a/charts/original.html"></iframe>\n\n' +
+    '[owned](/api/files/sessions/session-a/charts/original.html)\n\n' +
+    '![image](https://external.invalid/p.png)\n\n' +
+    '[chart:original]\n\n{"data":[{"x":[1],"y":[2]}]}\n\n' +
+    '```json\n{"data":[{"x":[1],"y":[2]}]}\n```\n\n```mermaid\nflowchart LR\n A-->B\n```';
+  const safe = app.renderMarkdown(hostile, {artifacts:[{path:'sessions/session-a/charts/original.html',type:'chart'}]}, false);
+  assert(!/<(?:iframe|img|a)\b/.test(safe));
+  assert(!safe.includes('plotly-chart') && !safe.includes('mermaid-container'));
+  assert(safe.includes('&lt;iframe') && safe.includes('[owned]') && safe.includes('[chart:original]'));
+  assert(safe.includes('<pre><code') && Object.keys(app._chartData).length === 0);
+  const template = fs.readFileSync(require('path').join(require('path').dirname(appPath), '../../templates/index.html'), 'utf8');
+  assert(template.includes('x-html="renderMarkdown(conclusion.summary, null, false)"'));
+  const css = fs.readFileSync(require('path').join(require('path').dirname(appPath), '../css/app.css'), 'utf8');
+  const detailRule = css.match(/\.workbench-conclusion-summary\s*\{([^}]+)\}/)[1];
+  assert(/white-space:\s*normal/.test(detailRule), 'HTML details must not preserve Markdown-generated whitespace');
+}
+
 const scenarios = {
+  accepted_workbench_fragment: acceptedWorkbenchFragmentsUseTablesWithoutArtifactAuthority,
+  r07_identity: r07OriginalReplyAndFailureNoticeRemainSeparate,
+  accepted_host_chart_links: acceptedHostChartLinksRenderAtTheirExactBodyPosition,
   terminal_before_eof: terminalPublishesBeforeEOFAndOldEOFDoesNotUnlockNextRun,
   silent_sse_recovery: silentSSEFallsBackToDurableRunState,
   sse_keepalive: keepalivePreventsFalseSilentStreamRecovery,
@@ -520,6 +592,9 @@ const scenarios = {
         "reconstruct_confirmation",
         "execution_notice",
         "reply_export_names",
+        "r07_identity",
+        "accepted_host_chart_links",
+        "accepted_workbench_fragment",
     ],
 )
 def test_web_sse_completion_lifecycle(tmp_path: Path, scenario: str) -> None:

@@ -562,7 +562,8 @@ def test_register_loaded_data_bundle_is_idempotent_for_same_file(tmp_path, monke
     assert len(state.file_relationships) == 1
 
 
-def test_load_data_registers_data_pool_when_trust_workflow_fails(tmp_path, monkeypatch):
+def test_load_data_rolls_back_data_pool_when_trust_workflow_fails(tmp_path, monkeypatch):
+    import json
     import pandas as pd
 
     from data_agent import config
@@ -591,8 +592,10 @@ def test_load_data_registers_data_pool_when_trust_workflow_fails(tmp_path, monke
         with use_agent_context(ctx):
             result = data_io.load_data(str(csv_path), name="orders")
 
-        assert not result.startswith("Error:")
-        assert state.data_pool
-        assert state.active_bundle_id
+        assert json.loads(result)["error_type"] == "data_load_error"
+        assert state.data_pool == []
+        assert ctx.workspace.list_datasets() == {}
+        assert not any(p.is_file() for p in config._config.sessions_resolved.rglob("*"))
+        assert state.active_bundle_id == ""
     finally:
         config._config = old_cfg

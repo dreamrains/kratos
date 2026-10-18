@@ -1,126 +1,95 @@
-from __future__ import annotations
-
+"""Context cleanup and durable delivery through the single publication path."""
 import pytest
-
-from data_agent.agent.context import AgentContext, get_current_context, use_agent_context
-from data_agent.agent.loop import AgentLoop, SuspendedForConfirmation
-from data_agent.llm.client import Response
+from data_agent.agent.context import AgentContext,get_current_context,use_agent_context
+from data_agent.agent.loop import AgentLoop
 from data_agent.session.workspace import Workspace
+from tests.test_trusted_publication_runtime import AppClient,intent_for_app
 
 
-def _configure_single_round_stream(monkeypatch, loop: AgentLoop, *, raises: bool) -> None:
-    monkeypatch.setattr(loop, "_prepare_analysis_turn", lambda _user_input: None)
-    monkeypatch.setattr(loop, "_maybe_auto_suspend_for_required_question", lambda: None)
-    monkeypatch.setattr(loop, "_ensure_mcp_initialized", lambda: None)
-    monkeypatch.setattr(loop, "_is_analysis_quality_guard_candidate", lambda: False)
-    monkeypatch.setattr(loop, "_runtime_confirmation_checkpoint", lambda: None)
-    monkeypatch.setattr(loop, "_maybe_archive", lambda _user_input, _final_text: None)
-    monkeypatch.setattr(loop, "_auto_save", lambda: None)
+@pytest.fixture
+def stream_loop(tmp_path,monkeypatch):
+    from data_agent.config import get_config
+    import data_agent.session.task_manager as module
+    cfg=get_config()
+    monkeypatch.setattr(cfg,"sessions_dir",tmp_path/"sessions")
+    monkeypatch.setattr(cfg,"workspace_dir",tmp_path/"workspace")
+    monkeypatch.setattr(module,"task_manager",module.TaskManager(tasks_dir=tmp_path/"tasks"))
+    loop=AgentLoop(client=object(),session_id="stream-lifecycle")
+    intent_for_app(monkeypatch,"knowledge","什么是回归分析？")
+    loop.client=AppClient(loop)
+    return loop
 
-    def stream_round(_round_num):
-        yield {"type": "text_delta", "text": "chunk"}
-        if raises:
+
+@pytest.mark.parametrize("method",["stream_turn","resume_turn_streaming"])
+@pytest.mark.parametrize("termination",["exhaustion","close","exception"])
+@pytest.mark.parametrize("outer_context",[False,True],ids=["no-current","restore-outer"])
+def test_streaming_context_is_bound_only_while_generator_runs(stream_loop,monkeypatch,method,termination,outer_context):
+    loop=stream_loop
+    if method=="resume_turn_streaming":
+        # Lifecycle entry only; the actual durable response binding and replay
+        # are covered by the runtime resolved/skipped/cancelled app cases.
+        suspension=configure_resume(monkeypatch,loop)
+    if termination=="exception":
+        def explode(_round_num):
+            yield {"type":"llm_call_start"}
             raise RuntimeError("stream exploded")
-        yield {
-            "type": "_response",
-            "response": Response(text="chunk"),
-            "streamed_text": "chunk",
-        }
-
-    monkeypatch.setattr(loop, "_stream_llm_round", stream_round)
-
-
-def _configure_resume(monkeypatch, loop: AgentLoop) -> None:
-    suspension = SuspendedForConfirmation(
-        suspension_id="confirmation-1",
-        confirmation_id="confirmation-1",
-        question="Continue?",
-        options=[],
-        context="",
-        snapshot={},
-    )
-    monkeypatch.setattr(loop, "_load_confirmation_for_resume", lambda _suspension_id: suspension)
-    monkeypatch.setattr(loop, "_resolve_runtime_confirmation", lambda susp, *_args, **_kwargs: susp)
-    monkeypatch.setattr(loop, "_build_resume_user_input", lambda _susp, response: response)
-
-
-@pytest.mark.parametrize("method", ["stream_turn", "resume_turn_streaming"])
-@pytest.mark.parametrize("termination", ["exhaustion", "close", "exception"])
-@pytest.mark.parametrize("outer_context", [False, True], ids=["no-current", "restore-outer"])
-def test_streaming_context_is_bound_only_while_generator_runs(
-    monkeypatch,
-    method,
-    termination,
-    outer_context,
-):
-    loop = AgentLoop(client=object(), session_id=f"stream-{method}-{termination}")
-    _configure_single_round_stream(monkeypatch, loop, raises=termination == "exception")
-    if method == "resume_turn_streaming":
-        _configure_resume(monkeypatch, loop)
-    outer = AgentContext(session_id="outer", workspace=Workspace()) if outer_context else None
-
+        monkeypatch.setattr(loop,"_stream_llm_round",explode)
+    outer=AgentContext(session_id="outer",workspace=Workspace()) if outer_context else None
     def exercise():
         assert get_current_context() is outer
-        if method == "stream_turn":
-            events = loop.stream_turn("hello")
-        else:
-            events = loop.resume_turn_streaming("confirmation-1", "yes")
-
+        events=loop.stream_turn("什么是回归分析？") if method=="stream_turn" else loop.resume_turn_streaming(suspension.confirmation_id,"什么是回归分析？",expected_version=suspension.version,idempotency_key="lifecycle_answer_once")
         assert get_current_context() is outer
         try:
-            if termination == "exception":
-                # Final-round text is intentionally buffered until it can be
-                # persisted. A stream failure therefore exposes no partial final
-                # response, but must still release the AgentContext correctly.
-                with pytest.raises(RuntimeError, match="stream exploded"):
-                    next(events)
+            event=next(events)
+            assert event["type"]=="llm_call_start"
+            assert get_current_context() is loop.context
+            if termination=="close": events.close()
+            elif termination=="exception":
+                with pytest.raises(RuntimeError,match="stream exploded"): list(events)
             else:
-                first = next(events)
-                assert first["type"] == "text_delta"
-                assert first["text"] == "chunk"
-                assert get_current_context() is loop.context
-
-                if termination == "close":
-                    events.close()
-                else:
-                    assert list(events) == []
-        finally:
-            # A failed assertion must not leave the generator's AgentContext
-            # bound and contaminate later parametrized or full-suite tests.
-            events.close()
-
+                remaining=list(events)
+                assert any(e["type"]=="text_delta" for e in remaining)
+                assert not any(e["type"]=="error" for e in remaining)
+        finally: events.close()
         assert get_current_context() is outer
-
-    if outer is None:
-        exercise()
+    if outer is None: exercise()
     else:
-        with use_agent_context(outer):
-            exercise()
-
+        with use_agent_context(outer): exercise()
     assert get_current_context() is None
 
 
-@pytest.mark.parametrize("method", ["stream_turn", "resume_turn_streaming"])
-def test_final_stream_delta_is_persisted_before_it_is_yielded(monkeypatch, method):
-    """The browser must never see a completed final answer before it is durable."""
-    loop = AgentLoop(client=object(), session_id=f"persist-before-delta-{method}")
-    _configure_single_round_stream(monkeypatch, loop, raises=False)
-    if method == "resume_turn_streaming":
-        _configure_resume(monkeypatch, loop)
+def configure_resume(monkeypatch,loop):
+    from tests.test_trusted_publication_runtime import request
+    from data_agent.agent.confirmation.runtime import build_direct_question_candidate
+    with use_agent_context(loop.context): request(loop,"什么是回归分析？",kind="knowledge")
+    # Kernel lifecycle fixture, separate from the ordinary knowledge-turn
+    # question policy: persist a real record and resolve through the service.
+    candidate=build_direct_question_candidate(session_id=loop.session_id,
+        turn_id="lifecycle",message_version=len(loop.messages),request={
+            "question":"本次交付需要解释哪个分析主题？", "options":[],
+            "confirmation_type":"scope_confirmation",
+            "blocking_reason":"交付主题由用户提供。"})
+    service=loop._confirmation_runtime()
+    created=service.request(candidate)
+    assert created.record is not None
+    return service.checkpoint(loop.session_id)
 
-    saves: list[str] = []
-    monkeypatch.setattr(loop, "_auto_save", lambda: saves.append("saved"))
 
-    if method == "stream_turn":
-        events = loop.stream_turn("hello")
-    else:
-        events = loop.resume_turn_streaming("confirmation-1", "yes")
-
+@pytest.mark.parametrize("method",["stream_turn","resume_turn_streaming"])
+def test_final_stream_delta_is_persisted_before_it_is_yielded(stream_loop,monkeypatch,method):
+    from data_agent.session.history import load_session
+    from data_agent.agent.publication.runtime import read_answer
+    loop=stream_loop
+    if method=="resume_turn_streaming": suspension=configure_resume(monkeypatch,loop)
+    events=loop.stream_turn("什么是回归分析？") if method=="stream_turn" else loop.resume_turn_streaming(suspension.confirmation_id,"什么是回归分析？",expected_version=suspension.version,idempotency_key="lifecycle_answer_once")
+    observed=[]
     try:
-        event = next(events)
-        assert event["type"] == "text_delta"
-        assert event["text"] == "chunk"
-        assert saves == ["saved"]
-        assert list(events) == []
-    finally:
-        events.close()
+        for event in events:
+            if event["type"]!="text_delta": continue
+            observed.append(event["text"])
+            stored=load_session(loop.session_id)["messages"][-1]
+            assert stored["content"]==event["text"]
+            assert read_answer(loop.session_id,stored["answer_ref"])["body"]==event["text"]
+        assert len(observed)==1 and "回归" in observed[0]
+    finally: events.close()
+    assert get_current_context() is None

@@ -14,6 +14,9 @@ from typing import Any
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
+from data_agent.utils.logging import get_logger
+
+logger = get_logger("method_playbooks")
 
 
 @dataclass(frozen=True)
@@ -466,11 +469,30 @@ def select_playbooks(
 
     recommended_paths = _recommended_paths(primary, supporting)
     requirement = _build_data_requirement(playbook, user_input, supporting)
-    analysis_spec = _build_analysis_spec(playbook, user_input, supporting) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
+    # An independent operation after an analysis plan needs its own current
+    # identity.  Otherwise an ordinary EvidenceRecord silently inherits the
+    # previous goal's plan_id while the operation itself executes successfully.
+    needs_operation_scope = (
+        intent.intent_type == "data_operation"
+        and state is not None
+        and state.analysis_spec is not None
+    )
+    # A directed analysis retains its goal while its data is pending. The
+    # plan does not assert that evidence exists or authorize computation; it
+    # gives a later confirmation resume the same task identity to continue.
+    should_plan = intent.intent_type == "directed_analysis" or has_data and (
+        intent.intent_type in {"comprehensive_report", "intent_negotiation"}
+        or needs_operation_scope
+    )
+    analysis_spec = _build_analysis_spec(playbook, user_input, supporting) if should_plan else None
 
-    if not has_data or intent.intent_type == "data_requirement":
+    if intent.intent_type == "data_requirement":
         analysis_spec = None
 
+    logger.info("Playbook selection", extra={"extra_data": {
+        "event": "playbook_selection", "primary_source": primary_source,
+        "supporting_source": supporting_source, "primary_playbook_id": primary,
+        "supporting_count": len(supporting)}})
     return PlaybookSelection(
         primary_playbook_id=primary,
         supporting_playbook_ids=supporting,
@@ -503,7 +525,19 @@ def choose_playbook(
     )
 
 
-def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSelection) -> None:
+def apply_selection_to_state(
+    state: AnalysisSessionState,
+    selection: PlaybookSelection,
+    *,
+    continuation_of_plan_id: str = "",
+) -> None:
+    current_spec = state.analysis_spec or {}
+    current_plan = getattr(state, "analysis_plan", None) or current_spec
+    if (continuation_of_plan_id
+            and continuation_of_plan_id == current_plan.get("id")):
+        # The existing plan remains authoritative; a fresh playbook candidate
+        # for this wording must not replace its goal, route or task identity.
+        return
     paths = selection.recommended_paths
     if paths:
         state.last_recommended_paths = paths
@@ -512,7 +546,6 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
             state.add_data_requirement(selection.data_requirement)
     if selection.analysis_spec:
         selection.analysis_spec.setdefault("id", _analysis_spec_id(selection.analysis_spec))
-        current_spec = state.analysis_spec or {}
         selected_spec_id = selection.analysis_spec.get("id")
         current_spec_id = current_spec.get("id")
         should_replace_spec = (

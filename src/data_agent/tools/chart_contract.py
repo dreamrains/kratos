@@ -79,6 +79,43 @@ MAX_BAR_CATEGORIES = 40
 MAX_NUMERIC_CATEGORY_CODES = 12
 
 
+def is_chart_count_aggregation(df, chart_type, x_col, aggregation):
+    """Use the original count-capable plot modes without coercing counted values."""
+    return aggregation == "count" and (
+        chart_type in {"bar", "stacked_bar", "pie"}
+        or chart_type == "line" and x_col in df.columns
+    )
+
+
+def chart_parameter_error(chart_type, x_col, y_cols, color_col="", aggregation=""):
+    """Validate explicit mode/selector identity before any dataframe projection."""
+    if chart_type in {"box", "histogram", "pie", "funnel"} and color_col:
+        return "This chart type does not support color_col; use its original category/overall plot or select a supported chart type.", "unsupported_chart_color"
+    if chart_type in {"scatter", "box", "histogram", "funnel"} and aggregation:
+        return "This chart type does not support aggregation; transform the data explicitly before using its original plot.", "unsupported_chart_aggregation"
+    if chart_type == "scatter" and bool(x_col) != bool(y_cols):
+        return "Scatter requires both explicit x_col and y_col, or neither for the original numeric defaults.", "incomplete_scatter_axes"
+    if chart_type in {"line", "bar"} and x_col and not y_cols:
+        return "Line and bar require y_col when x_col is explicit; use y-only for original row-index plots or omit both for original defaults.", "missing_explicit_chart_measure"
+    if chart_type in {"line", "bar"} and not x_col and (aggregation or color_col):
+        return "Line and bar require an explicit x_col or label_columns for aggregation or color grouping; omit grouping parameters for the original row-index/default plot.", "missing_chart_group_axis"
+    if chart_type == "box" and x_col and not y_cols:
+        return "Box requires a single y_col when x_col is explicit; use y-only for an ungrouped box or omit both for original defaults.", "missing_explicit_chart_measure"
+    if chart_type == "pie" and aggregation in {"sum", "mean", "median"} and not y_cols:
+        return "Pie sum/mean/median requires one explicit y_col measure; omit aggregation or use count for the original category frequency plot.", "missing_explicit_chart_measure"
+    if chart_type in {"histogram", "box", "pie", "stacked_bar", "funnel"} and len(y_cols) > 1:
+        return "This chart type supports one explicit y measure; select one column.", "single_chart_measure_required"
+    if chart_type == "histogram" and x_col and y_cols and x_col != y_cols[0]:
+        return "Histogram is single-variable; explicit x_col and y_col must select the same column, or provide only one selector.", "conflicting_histogram_selectors"
+    if chart_type == "heatmap":
+        selected = [name for name in [x_col, *y_cols] if name]
+        if len(selected) < 2 or len(set(selected)) != len(selected):
+            return "Heatmaps require at least two distinct explicit numeric measures, without duplicates.", "invalid_heatmap_measures"
+        if color_col or aggregation:
+            return "Heatmap supports an overall Pearson matrix; color grouping and aggregation are not supported.", "unsupported_heatmap_parameters"
+    return None
+
+
 def validate_chart_request(
     df: pd.DataFrame,
     chart_type: str,
@@ -100,6 +137,16 @@ def validate_chart_request(
         result.error = "Unsupported chart/scale combination; normalize=max(abs)=100, index100=first observation=100 (line only)."
         result.error_code = "unsupported_scale_mode"
         return result
+    parameter_error = chart_parameter_error(chart_type, x_col, y_cols, color_col, aggregation)
+    if parameter_error:
+        result.error, result.error_code = parameter_error
+        return result
+    if chart_type == "line" and x_col in result.dataframe.columns and pd.api.types.is_numeric_dtype(result.dataframe[x_col]):
+        axis = result.dataframe[x_col]
+        if (axis.notna() & ~np.isfinite(axis)).any():
+            result.error = f"Numeric line x_col '{x_col}' contains nonfinite coordinates; provide finite coordinates or explicitly transform the data."
+            result.error_code = "invalid_numeric_line_axis"
+            return result
     referenced = [name for name in [x_col, *y_cols, color_col] if name]
     result.semantic_roles = {
         name: infer_semantic_role(name, result.dataframe[name])
@@ -108,14 +155,13 @@ def validate_chart_request(
     }
 
     for column in y_cols:
-        count_supported = aggregation == "count" and (
-            chart_type in {"bar", "stacked_bar", "pie"}
-            or chart_type == "line" and result.semantic_roles.get(x_col) == "time"
-        )
+        count_supported = is_chart_count_aggregation(df, chart_type, x_col, aggregation)
         if chart_type in {"bar", "stacked_bar", "line", "box", "pie"} and result.semantic_roles.get(column) == "identifier" and not count_supported:
             result.error = f"Identifier '{column}' is not a numeric measure; select a measure or explicitly count identifiers."
             result.error_code = "invalid_identifier_measure"
             return result
+        if count_supported:
+            continue
         numeric = pd.to_numeric(result.dataframe[column], errors="coerce")
         finite = numeric.notna() & np.isfinite(numeric)
         if not len(numeric) or float(finite.mean()) < 0.5:
@@ -260,7 +306,7 @@ def validate_chart_request(
             return result
         if y_cols:
             values = pd.to_numeric(result.dataframe[y_cols[0]], errors="coerce")
-            if (values < 0).any():
+            if aggregation != "count" and (values < 0).any():
                 result.error = "Pie chart measures must be non-negative."
                 result.error_code = "invalid_pie_measure"
                 return result
@@ -281,12 +327,10 @@ def validate_chart_request(
         x_col, result.dataframe[x_col]
     ) == "time":
         parsed = pd.to_datetime(result.dataframe[x_col], errors="coerce")
-        days = parsed.dt.normalize()
-        group_cols = [days] + (
-            [result.dataframe[color_col]] if color_col else []
-        )
-        duplicated_days = pd.DataFrame(group_cols).T.duplicated().any()
-        if duplicated_days and not aggregation:
+        groups = pd.DataFrame({x_col: parsed})
+        if color_col:
+            groups[color_col] = result.dataframe[color_col]
+        if groups.duplicated().any() and not aggregation:
             _set_aggregation_required(result)
             return result
 

@@ -1,0 +1,672 @@
+{
+  "source_batch": "tmp/p5-real-20261009-r1",
+  "freeze_sha256": "42b4a58556f5f10d8a8883e222a8c166b4377c2a17a0b2c629a87552279a4e80",
+  "source_session": "a79d8ee04094",
+  "source_http_sha256": "889ffa285e37d5e5af082205d62fcf272eccdb73d7b1cf3d5a2fdefaa4cd199e",
+  "replay_scope": "original semantic requirements and CSV; fresh local IDs/receipts; actual tools and synthesis scope; no model calls or new natural evidence",
+  "user_input": "请计算并解释 D1 至 D7 留存，并判断当前证据对 D30 能支持到什么程度。D30 可以保持未知；如果使用 curve fitting 外推，只能作为拟合情景，必须逐一命名模型族、报告拟合度 R²、明确说明未做留出验证/回测/外部验证，并展示不同模型的敏感性，不得写成已经验证的预测。\n分析文件: M02-retention.csv",
+  "csv": "day,retention\n1,0.55\n2,0.42\n3,0.31\n4,0.24\n5,0.18\n6,0.13\n7,0.1\n",
+  "requirements": [
+    {
+      "source_start": 0,
+      "source_end": 17,
+      "original_text": "请计算并解释 D1 至 D7 留存",
+      "semantic_kind": "result",
+      "selector": {
+        "dataset": "M02-retention",
+        "metric": "retention",
+        "parameters": {
+          "n": 10,
+          "name": "M02-retention"
+        },
+        "result_path": [
+          "data"
+        ],
+        "tool": "preview_data"
+      },
+      "purposes": [
+        "interpretation"
+      ]
+    },
+    {
+      "source_start": 19,
+      "source_end": 39,
+      "original_text": "判断当前证据对 D30 能支持到什么程度",
+      "semantic_kind": "result",
+      "selector": {
+        "dataset": "M02-retention",
+        "metric": "retention",
+        "parameters": {
+          "name": "M02-retention",
+          "scenario_points": [
+            10,
+            14,
+            21,
+            30
+          ],
+          "x_col": "day",
+          "y_col": "retention"
+        },
+        "result_path": [
+          "scenarios"
+        ],
+        "statistic": "scenario",
+        "tool": "curve_fitting"
+      },
+      "purposes": [
+        "interpretation",
+        "limitation"
+      ]
+    },
+    {
+      "source_start": 40,
+      "source_end": 50,
+      "original_text": "D30 可以保持未知",
+      "semantic_kind": "presentation",
+      "selector": {
+        "dataset": "M02-retention",
+        "metric": "retention",
+        "parameters": {
+          "name": "M02-retention",
+          "scenario_points": [
+            30
+          ]
+        },
+        "result_path": [
+          "scenarios"
+        ],
+        "statistic": "scenario",
+        "tool": "curve_fitting"
+      },
+      "purposes": [
+        "limitation"
+      ]
+    },
+    {
+      "source_start": 51,
+      "source_end": 144,
+      "original_text": "如果使用 curve fitting 外推，只能作为拟合情景，必须逐一命名模型族、报告拟合度 R²、明确说明未做留出验证/回测/外部验证，并展示不同模型的敏感性，不得写成已经验证的预测。",
+      "semantic_kind": "presentation",
+      "selector": {
+        "dataset": "M02-retention",
+        "metric": "retention",
+        "parameters": {
+          "name": "M02-retention",
+          "scenario_points": [
+            30
+          ],
+          "x_col": "day",
+          "y_col": "retention"
+        },
+        "result_path": [
+          "fits"
+        ],
+        "tool": "curve_fitting"
+      },
+      "purposes": [
+        "conditional_action",
+        "limitation"
+      ]
+    }
+  ],
+  "m06_explicit_replacement": {
+    "source_session": "997911f18d4c",
+    "user_input": "请将新上传的 M06-promo-v2.csv 载入同一业务对象 m06_promo，重新确认当前版本的账面净收益公式，不能沿用旧数据版本的口径授权。",
+    "filename": "M06-promo-v2.csv",
+    "csv": "order_id,channel,order_amount,incremental_revenue,coupon_cost,channel_cost\r\nP1,all,20,30,3,2\r\nP2,all,25,30,4,3\r\nP3,all,35,25,2,4\r\nP4,all,40,35,5,1\r\n",
+    "csv_sha256": "sha256:ae524e371c97d7b579531b9fcdfd8744b2c6c8737516adf07f129e6d76409a6a",
+    "object": "m06_promo",
+    "other_object": "M01-sales",
+    "replay_scope": "original prompt and CSV; fresh local upload ticket and identities; no Provider"
+  },
+  "m03_delivery_collection": {
+    "source_session": "71aec2946b09",
+    "prompts": [
+      "请分别比较当前六个来源在 2026-09-01 与 2026-09-02 的金额变化，并保留全部来源。正文逐来源给出两日金额、绝对变化、相对变化和记录数；如内容需要折叠，请明确列出未展开项并保证导出可访问完整事实。\n分析文件: M03-source-1.csv\n分析文件: M03-source-4.csv\n分析文件: M03-source-3.csv\n分析文件: M03-source-2.csv\n分析文件: M03-source-5.csv\n分析文件: M03-source-6.csv\n请同时展示六个来源各自的图表，保留原单位与来源身份。",
+      "好的，继续。"
+    ],
+    "files": [
+      {
+        "dataset": "M03-source-1",
+        "csv": "source,date,amount\r\nsource_1,2026-09-01,10\r\nsource_1,2026-09-02,11\r\n",
+        "sha256": "sha256:af0ea95f9b1c3fd821dbf7621d786c8a99f77466b1dc0abb68730a77376bea13"
+      },
+      {
+        "dataset": "M03-source-2",
+        "csv": "source,date,amount\r\nsource_2,2026-09-01,20\r\nsource_2,2026-09-02,22\r\n",
+        "sha256": "sha256:f969c8dff5d4916e10c296c5971ad9444e965f5f6981de72fcababb55620e353"
+      },
+      {
+        "dataset": "M03-source-3",
+        "csv": "source,date,amount\r\nsource_3,2026-09-01,30\r\nsource_3,2026-09-02,33\r\n",
+        "sha256": "sha256:8789cb9785e3e9f154cd32ba1604880d977dbc0690daeac22e049bccfc1aed1c"
+      },
+      {
+        "dataset": "M03-source-4",
+        "csv": "source,date,amount\r\nsource_4,2026-09-01,40\r\nsource_4,2026-09-02,44\r\n",
+        "sha256": "sha256:75234ff62862fc97450f807c47e127b046383e43f47ab677405586aceb773f2e"
+      },
+      {
+        "dataset": "M03-source-5",
+        "csv": "source,date,amount\r\nsource_5,2026-09-01,50\r\nsource_5,2026-09-02,55\r\n",
+        "sha256": "sha256:3310e74e6bc359793e87ad253c5b93e4999f351298282b0081edad8a58f982b2"
+      },
+      {
+        "dataset": "M03-source-6",
+        "csv": "source,date,amount\r\nsource_6,2026-09-01,60\r\nsource_6,2026-09-02,66\r\n",
+        "sha256": "sha256:346a9a3f9bf3bc795ca9a8146ce2d3ed16fcb83c99a759ad3c6cd735df5f52d9"
+      }
+    ],
+    "replay_scope": "captured original prompts/CSV; new structured execution proposal with fresh local identities; no natural-model pass",
+    "continuation": {
+      "content": "好的，继续。",
+      "request_id": "msg_6de7e7b8615b4664a8dbbf2b83b422c3"
+    },
+    "conversation_sha256": "sha256:b2c262b16db1a6606256e2a758751aa03926e1c80f2e37714378b749fe432ca6"
+  },
+  "m06_derived_formula": {
+    "user_input": "请将 M06-promo.csv 加载为 m06_promo。我要计算账面净收益，文件中的 incremental_revenue 仅作为账面原值，并不证明增量或促销因果。成本口径可能仅扣 coupon_cost，也可能同时扣 coupon_cost 和 channel_cost，请先确认这项实质口径，再计算所选公式。",
+    "csv": "order_id,channel,order_amount,incremental_revenue,coupon_cost,channel_cost\r\nP1,all,20,20,3,2\r\nP2,all,25,30,4,3\r\nP3,all,35,25,2,4\r\nP4,all,40,35,5,1\r\n",
+    "steps": [
+      {
+        "tool": "derive_field",
+        "arguments": {
+          "name": "m06_promo",
+          "field_name": "net_book_profit",
+          "expression": "incremental_revenue - coupon_cost - channel_cost"
+        }
+      },
+      {
+        "tool": "transform_data",
+        "arguments": {
+          "name": "m06_promo_net_book_profit",
+          "operation": "group_aggregate",
+          "group_by": [
+            "channel"
+          ],
+          "aggregations": [
+            {
+              "column": "incremental_revenue",
+              "functions": [
+                "sum"
+              ]
+            },
+            {
+              "column": "coupon_cost",
+              "functions": [
+                "sum"
+              ]
+            },
+            {
+              "column": "channel_cost",
+              "functions": [
+                "sum"
+              ]
+            },
+            {
+              "column": "net_book_profit",
+              "functions": [
+                "sum",
+                "mean",
+                "min",
+                "max"
+              ]
+            }
+          ],
+          "save_as": "m06_promo_net_total"
+        }
+      }
+    ],
+    "replay_scope": "original CSV/user/programs; fresh local receipts/confirmation; original paid receipts stay immutable"
+  },
+  "m01_window_ratio": {
+    "csv": "date,amount,campaign_cost,net_contribution,orders\r\n2026-09-07,100,20,80,10\r\n2026-09-08,100,20,80,10\r\n2026-09-09,100,20,80,10\r\n2026-09-10,100,20,80,10\r\n2026-09-11,100,20,80,10\r\n2026-09-12,100,20,80,10\r\n2026-09-13,100,20,80,10\r\n2026-09-14,110,25,85,11\r\n2026-09-15,110,25,85,11\r\n2026-09-16,110,25,85,11\r\n2026-09-17,110,25,85,11\r\n2026-09-18,110,25,85,11\r\n2026-09-19,110,25,85,11\r\n2026-09-20,110,25,85,11\r\n",
+    "steps": [
+      {
+        "tool": "derive_field",
+        "arguments": {
+          "name": "M01-action",
+          "field_name": "cost_per_order",
+          "expression": "campaign_cost / orders"
+        }
+      },
+      {
+        "tool": "compare_periods",
+        "arguments": {
+          "name": "M01-action_cost_per_order",
+          "date_col": "date",
+          "metrics": "cost_per_order",
+          "period_a": "2026-09-07~2026-09-13",
+          "period_b": "2026-09-14~2026-09-20"
+        }
+      }
+    ],
+    "corrected_formula": {
+      "cost_per_order": {
+        "operator": "ratio_of_sums",
+        "numerator": "campaign_cost",
+        "denominator": "orders"
+      }
+    },
+    "replay_scope": "original CSV and original technical programs; typed arithmetic correction; fresh local receipts; zero Provider"
+  },
+  "m04_competing_hypotheses": [
+    {
+      "version": "v1",
+      "dataset": "M04-hyp-v1",
+      "csv": "date,amount\r\n2026-09-01,10\r\n2026-09-02,20\r\n2026-09-03,20\r\n",
+      "csv_sha256": "f4e08a4807168b1c0adea09ed4caeaa31661571bc3baa6460a7ef7c4a87d29b4",
+      "original_hypotheses": {
+        "id": "hypotheses_m04_hyp_v1_trend_plan_c12e03664f",
+        "dataset": "M04-hyp-v1",
+        "route": "trend",
+        "plan_id": "plan_c12e03664f",
+        "count": 4,
+        "status_summary": {
+          "supported": 1,
+          "inconclusive": 3
+        },
+        "artifact_path": "C:\\Users\\duguy\\.codex\\worktrees\\trust-rebuild\\data-agent\\tmp\\p5-real-20261009-r1\\sessions\\bb31e503ea0a\\tool_outputs\\hypotheses_m04_hyp_v1_trend_plan_c12e03664f.json",
+        "sha256": "sha256:dfe23651fc16339149d7fb0056691bb2783bd06c68d60fde08be3660f7f14382",
+        "created_at": "2026-10-09 00:49:57",
+        "user_input": "请基于当前 v1 数据提出并检验至少两种竞争性假设，使用真实工具记录支持证据、反证、冲突和仍未解决之处；只做描述性判断，不写成因果结论。 分析文件: M04-hyp-v1.csv",
+        "hypotheses": [
+          {
+            "id": "hypotheses_m04_hyp_v1_trend_plan_c12e03664f_h1",
+            "dataset": "M04-hyp-v1",
+            "route": "trend",
+            "claim": "amount has a directional trend over time in M04-hyp-v1.",
+            "status": "supported",
+            "claim_type": "descriptive",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": "changed"
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [
+              {
+                "evidence_id": "ev_plan_c12e03664f_s1_m04_hyp_v1_trend_direction",
+                "relation": "supports",
+                "metric": "amount",
+                "observed": "increased",
+                "receipt_id": "tr_6934f23835e3",
+                "basis": "receipt-verified amount trend direction = increased"
+              },
+              {
+                "evidence_id": "ev_plan_c12e03664f_s3_m04_hyp_v1_hypothesis_synthesis",
+                "relation": "supports",
+                "metric": "amount",
+                "observed": "increased",
+                "receipt_id": "tr_6934f23835e3",
+                "basis": "receipt-verified amount trend direction = increased"
+              }
+            ],
+            "supporting_evidence_ids": [
+              "ev_plan_c12e03664f_s1_m04_hyp_v1_trend_direction",
+              "ev_plan_c12e03664f_s3_m04_hyp_v1_hypothesis_synthesis"
+            ],
+            "conflicting_evidence_ids": [],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "primary"
+            ],
+            "relation_candidates": [
+              {
+                "evidence_id": "ev_plan_c12e03664f_s1_m04_hyp_v1_trend_direction",
+                "relation": "supports",
+                "metric": "amount",
+                "observed": "increased",
+                "reason": "metric_missing_in_evidence"
+              },
+              {
+                "evidence_id": "ev_plan_c12e03664f_s2_m04_hyp_v1_day_diff_pattern",
+                "relation": "refutes",
+                "metric": "amount",
+                "observed": "flat",
+                "reason": "metric_missing_in_evidence"
+              }
+            ]
+          },
+          {
+            "id": "hypotheses_m04_hyp_v1_trend_plan_c12e03664f_h2",
+            "dataset": "M04-hyp-v1",
+            "route": "trend",
+            "claim": "amount trend is explained by another metric movement over time.",
+            "status": "inconclusive",
+            "claim_type": "causal",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": ""
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "alternative"
+            ],
+            "relation_candidates": []
+          },
+          {
+            "id": "hypotheses_m04_hyp_v1_trend_plan_c12e03664f_h3",
+            "dataset": "M04-hyp-v1",
+            "route": "trend",
+            "claim": "amount trend is concentrated in one segment rather than broad-based.",
+            "status": "inconclusive",
+            "claim_type": "causal",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": ""
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "alternative"
+            ],
+            "relation_candidates": []
+          },
+          {
+            "id": "hypotheses_m04_hyp_v1_trend_plan_c12e03664f_h4",
+            "dataset": "M04-hyp-v1",
+            "route": "trend",
+            "claim": "amount changes are consistent with baseline noise over time.",
+            "status": "inconclusive",
+            "claim_type": "statistical",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": ""
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "baseline"
+            ],
+            "relation_candidates": []
+          }
+        ]
+      },
+      "hypothesis_sha256": "sha256:cb29d58e59376e10f4ea6e3e3d585745c6df807bc0807beb5fb7f7fde725f529",
+      "scope": "original business rules and CSV; fresh offline session, plan, receipt IDs"
+    },
+    {
+      "version": "v2",
+      "dataset": "M04-hyp-v2",
+      "csv": "date,amount\r\n2026-09-01,10\r\n2026-09-02,10\r\n2026-09-03,10\r\n",
+      "csv_sha256": "397e67926b263a70188e4730208575a1e6c4567f5e93a2cb084c8e9da17dfea0",
+      "original_hypotheses": {
+        "id": "hypotheses_m04_hyp_v2_trend_plan_7ba29988a3",
+        "dataset": "M04-hyp-v2",
+        "route": "trend",
+        "plan_id": "plan_7ba29988a3",
+        "count": 4,
+        "status_summary": {
+          "refuted": 1,
+          "inconclusive": 3
+        },
+        "artifact_path": "C:\\Users\\duguy\\.codex\\worktrees\\trust-rebuild\\data-agent\\tmp\\p5-real-20261009-r1\\sessions\\bb31e503ea0a\\tool_outputs\\hypotheses_m04_hyp_v2_trend_plan_7ba29988a3.json",
+        "sha256": "sha256:27a2a46763e22cbd7613ed3d7710a65b509fa29816b961127c18267e4e1ba3de",
+        "created_at": "2026-10-09 00:52:04",
+        "user_input": "现在把 M04-hyp-v2.csv 作为同一业务对象的新数据版本载入。请保留 v1 的假设与证据审计，重新判断哪些关系已失效、哪些仍未决，不得把 v1 证据升级为 v2 结论。 分析文件: M04-hyp-v2.csv",
+        "hypotheses": [
+          {
+            "id": "hypotheses_m04_hyp_v2_trend_plan_7ba29988a3_h1",
+            "dataset": "M04-hyp-v2",
+            "route": "trend",
+            "claim": "amount has a directional trend over time in M04-hyp-v2.",
+            "status": "refuted",
+            "claim_type": "descriptive",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": "changed"
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [
+              {
+                "evidence_id": "ev_plan_7ba29988a3_s1_m04_hyp_v2_flat_constant",
+                "relation": "refutes",
+                "metric": "amount",
+                "observed": "flat",
+                "receipt_id": "tr_cfedbb272ab5",
+                "basis": "receipt-verified amount trend direction = flat"
+              },
+              {
+                "evidence_id": "ev_plan_7ba29988a3_s3_m04_hyp_v2_v1_relation_rejudgement",
+                "relation": "refutes",
+                "metric": "amount",
+                "observed": "flat",
+                "receipt_id": "tr_cfedbb272ab5",
+                "basis": "receipt-verified amount trend direction = flat"
+              }
+            ],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [
+              "ev_plan_7ba29988a3_s1_m04_hyp_v2_flat_constant",
+              "ev_plan_7ba29988a3_s3_m04_hyp_v2_v1_relation_rejudgement"
+            ],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "primary"
+            ],
+            "relation_candidates": [
+              {
+                "evidence_id": "ev_plan_7ba29988a3_s1_m04_hyp_v2_flat_constant",
+                "relation": "refutes",
+                "metric": "amount",
+                "observed": "flat",
+                "reason": "metric_missing_in_evidence"
+              }
+            ]
+          },
+          {
+            "id": "hypotheses_m04_hyp_v2_trend_plan_7ba29988a3_h2",
+            "dataset": "M04-hyp-v2",
+            "route": "trend",
+            "claim": "amount trend is explained by another metric movement over time.",
+            "status": "inconclusive",
+            "claim_type": "causal",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": ""
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "alternative"
+            ],
+            "relation_candidates": []
+          },
+          {
+            "id": "hypotheses_m04_hyp_v2_trend_plan_7ba29988a3_h3",
+            "dataset": "M04-hyp-v2",
+            "route": "trend",
+            "claim": "amount trend is concentrated in one segment rather than broad-based.",
+            "status": "inconclusive",
+            "claim_type": "causal",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": ""
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "alternative"
+            ],
+            "relation_candidates": []
+          },
+          {
+            "id": "hypotheses_m04_hyp_v2_trend_plan_7ba29988a3_h4",
+            "dataset": "M04-hyp-v2",
+            "route": "trend",
+            "claim": "amount changes are consistent with baseline noise over time.",
+            "status": "inconclusive",
+            "claim_type": "statistical",
+            "decision_rule": {
+              "metrics": [
+                "amount"
+              ],
+              "predicate": ""
+            },
+            "verification_level": "verifiable",
+            "evidence_requirements": [
+              {
+                "kind": "metric",
+                "field": "amount",
+                "required": true
+              },
+              {
+                "kind": "date",
+                "field": "date",
+                "required": true
+              }
+            ],
+            "related_evidence_ids": [],
+            "evidence_relations": [],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [],
+            "limitations": [
+              "Descriptive trend only unless supported by experimental evidence"
+            ],
+            "tags": [
+              "baseline"
+            ],
+            "relation_candidates": []
+          }
+        ]
+      },
+      "hypothesis_sha256": "sha256:2d4802d08cbe0218308eddb818ac8320112e00afbac9e60a898676612053880b",
+      "scope": "original business rules and CSV; fresh offline session, plan, receipt IDs"
+    }
+  ]
+}

@@ -1,0 +1,2584 @@
+{
+  "schema_version": "trust_reset_rebuild_inventory.v1",
+  "captured_date": "2026-09-27",
+  "purpose": "Review inventory, not a new runtime ledger or execution planner",
+  "history_start_exclusive": "5176c41103ee1b1c77b4b44331d8225fb49890be",
+  "initial_plan_snapshot": "5176c41103ee1b1c77b4b44331d8225fb49890be:docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+  "donor_inclusive": "b181646ff66ea9ea3b0e6a38ffcd3d16b6687312",
+  "chosen_code_base": "d0a261429c82ddadadc5a9377e719526fe1f4fbc",
+  "isolated_worktree": "C:\\Users\\duguy\\.codex\\worktrees\\trust-rebuild\\data-agent",
+  "review_method": "All commit subjects/file changes and changed-document identities indexed; changes reviewed by functional chain and cross-checked against linked historical evidence. This is not a line-by-line proof or a fresh runtime acceptance.",
+  "new_provider_calls": 0,
+  "new_product_test_runs": 0,
+  "commit_count": 86,
+  "changed_document_count": 33,
+  "changed_files": [
+    "AGENTS.md",
+    "docs/audit/2026-09-23-analysis-agent-trust-reset-phase0-review.md",
+    "docs/audit/2026-09-23-trust-reset-derived-claim-slice.md",
+    "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+    "docs/audit/2026-09-23-trust-reset-partial-publication-slice.md",
+    "docs/audit/2026-09-23-trust-reset-phase2-cross-history-review.md",
+    "docs/audit/2026-09-23-trust-reset-phase3-confirmation-review.md",
+    "docs/audit/2026-09-23-trust-reset-phase4-journal-boundary-review.md",
+    "docs/audit/2026-09-23-trust-reset-phase5-shadow-protocol.md",
+    "docs/audit/2026-09-23-trust-reset-pre-shadow-architecture-review.md",
+    "docs/audit/2026-09-23-trust-reset-single-metric-intent-slice.md",
+    "docs/audit/2026-09-24-trust-reset-comparison-claim-slice.md",
+    "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+    "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+    "docs/audit/2026-09-24-trust-reset-descriptive-fit-claim-slice.md",
+    "docs/audit/2026-09-24-trust-reset-dual-track-calibration.md",
+    "docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md",
+    "docs/audit/2026-09-24-trust-reset-offline-core-projection.md",
+    "docs/audit/2026-09-24-trust-reset-p08-real-batch-r1.md",
+    "docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md",
+    "docs/audit/2026-09-24-trust-reset-phase6-entry-assessment.md",
+    "docs/audit/2026-09-24-trust-reset-unbound-prose-decision.md",
+    "docs/audit/2026-09-25-shadow-c-calibration-cases.json",
+    "docs/audit/2026-09-25-trust-reset-stage-status.md",
+    "docs/audit/2026-09-25-typed-preview-natural-m03-r2.md",
+    "docs/audit/2026-09-26-trust-reset-convergence-map.md",
+    "docs/audit/2026-09-26-trust-reset-phase9-r1-authorization-stop.md",
+    "docs/audit/2026-09-26-trust-reset-phase9-r3-real-matrix.md",
+    "docs/audit/2026-09-26-trust-reset-phase9-r4-plan-review.md",
+    "docs/audit/2026-09-27-shadow-natural-m03-oracle.json",
+    "docs/audit/2026-09-27-shadow-natural-m03-r1-evaluation.md",
+    "docs/audit/2026-09-27-trust-reset-host-fact-boundary.md",
+    "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+    "docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md",
+    "scripts/testing/p08_real_matrix_contract.json",
+    "scripts/testing/p08_scenario_audit.py",
+    "scripts/testing/replay_natural_m03_shadow.py",
+    "scripts/testing/run_p08_http_matrix.py",
+    "scripts/testing/run_p08_real_matrix.py",
+    "scripts/testing/run_p7_browser_rehearsal.py",
+    "scripts/testing/run_shadow_calibration.py",
+    "scripts/testing/run_typed_trial_real.py",
+    "scripts/testing/typed_trial_real_contract.json",
+    "src/data_agent/agent/compact.py",
+    "src/data_agent/agent/confirmation/decision.py",
+    "src/data_agent/agent/confirmation/policy.py",
+    "src/data_agent/agent/confirmation/runtime.py",
+    "src/data_agent/agent/data_understanding.py",
+    "src/data_agent/agent/hypotheses.py",
+    "src/data_agent/agent/loop.py",
+    "src/data_agent/agent/publication_audit.py",
+    "src/data_agent/agent/publication_synthesis.py",
+    "src/data_agent/agent/trust_workflow_runtime.py",
+    "src/data_agent/session/history.py",
+    "src/data_agent/session/task_manager.py",
+    "src/data_agent/tools/data_io.py",
+    "src/data_agent/tools/interaction.py",
+    "src/data_agent/web/agent_manager.py",
+    "src/data_agent/web/blueprints/commands.py",
+    "src/data_agent/web/blueprints/sessions.py",
+    "tests/test_analysis_quality_guard_scope.py",
+    "tests/test_answer_content_coverage.py",
+    "tests/test_answer_numeric_consistency.py",
+    "tests/test_canonical_history_compaction.py",
+    "tests/test_comparison_claim_binding.py",
+    "tests/test_confirmation_typed_gap.py",
+    "tests/test_confirmed_group_aggregate_claim.py",
+    "tests/test_confirmed_m02_series_claim.py",
+    "tests/test_confirmed_multisource_comparison_claim.py",
+    "tests/test_descriptive_fit_claim_binding.py",
+    "tests/test_hypotheses.py",
+    "tests/test_m02_receipt_claim_production.py",
+    "tests/test_measurement_mapping_production.py",
+    "tests/test_offline_measurement_contract.py",
+    "tests/test_p08_real_matrix_launcher.py",
+    "tests/test_p08_scenario_audit.py",
+    "tests/test_phase6_offline_derived_snapshots.py",
+    "tests/test_phase6_offline_executed_result_identity.py",
+    "tests/test_phase6_offline_multisource_table.py",
+    "tests/test_phase6_offline_packet_projection.py",
+    "tests/test_phase6_preparatory_offline.py",
+    "tests/test_provenance_revision_only.py",
+    "tests/test_publication_audit_shadow_contract.py",
+    "tests/test_publication_audit_view_offline.py",
+    "tests/test_publication_synthesis.py",
+    "tests/test_publication_task_closure.py",
+    "tests/test_scenario_claim_binding.py",
+    "tests/test_scenario_envelope_and_disclosure.py",
+    "tests/test_stage3c0b_execution_scope.py",
+    "tests/test_trust_workflow_runtime.py",
+    "tests/test_typed_preview_comparison_claim.py",
+    "tests/test_typed_trial_real_launcher.py",
+    "tests/test_value_preservation_p7_boundaries.py"
+  ],
+  "category_counts": [
+    {
+      "disposition": "base_retained",
+      "count": 3
+    },
+    {
+      "disposition": "curate_acceptance_and_control",
+      "count": 10
+    },
+    {
+      "disposition": "curate_single_publication_path",
+      "count": 16
+    },
+    {
+      "disposition": "diagnostics_reference_only",
+      "count": 16
+    },
+    {
+      "disposition": "do_not_restore_retired_or_lexical_design",
+      "count": 5
+    },
+    {
+      "disposition": "historical_documentation",
+      "count": 30
+    },
+    {
+      "disposition": "migrate_closed_guards",
+      "count": 5
+    },
+    {
+      "disposition": "mixed_retire_dead_code_reject_tail_as_correction",
+      "count": 1
+    }
+  ],
+  "candidate_comparison": [
+    {
+      "sha": "5176c41103ee1b1c77b4b44331d8225fb49890be",
+      "publication_synthesis_lines": 2136,
+      "literal_re_compile_lines": 43,
+      "current_product_acceptance": "not_established"
+    },
+    {
+      "sha": "cdfcc1a5d4d4ab82cee85b722d9423a2c3036a99",
+      "publication_synthesis_lines": 2136,
+      "literal_re_compile_lines": 43,
+      "current_product_acceptance": "not_established"
+    },
+    {
+      "sha": "d0a261429c82ddadadc5a9377e719526fe1f4fbc",
+      "publication_synthesis_lines": 2346,
+      "literal_re_compile_lines": 45,
+      "current_product_acceptance": "not_established"
+    },
+    {
+      "sha": "5c0e4b2f79a0bd6f0a9d9e095812d7b2c7405557",
+      "publication_synthesis_lines": 2346,
+      "literal_re_compile_lines": 45,
+      "current_product_acceptance": "not_established"
+    },
+    {
+      "sha": "3d71bfaefb6c88bf1ea947ea22117d479c3962aa",
+      "publication_synthesis_lines": 4301,
+      "literal_re_compile_lines": 47,
+      "current_product_acceptance": "not_established"
+    },
+    {
+      "sha": "a84dbc1f6176f666fbbfcba2d391f4cf2b056043",
+      "publication_synthesis_lines": 4818,
+      "literal_re_compile_lines": 46,
+      "current_product_acceptance": "not_established"
+    },
+    {
+      "sha": "b181646ff66ea9ea3b0e6a38ffcd3d16b6687312",
+      "publication_synthesis_lines": 4856,
+      "literal_re_compile_lines": 46,
+      "current_product_acceptance": "not_established"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "04f41fa5fc10eff8479b09ade9050afa814e48d5",
+      "short": "04f41fa",
+      "authored_at": "2026-09-23T12:11:10+08:00",
+      "subject": "docs: record trust reset phase 0 evidence review",
+      "parents": [
+        "5176c41103ee1b1c77b4b44331d8225fb49890be"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-analysis-agent-trust-reset-phase0-review.md"
+      ],
+      "diff_stat": "1 file changed, 402 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "985630007ffbd9a41ec1f1e7d4c51e83cc65e3f5",
+      "short": "9856300",
+      "authored_at": "2026-09-23T12:59:53+08:00",
+      "subject": "docs: refine trust reset architecture boundaries",
+      "parents": [
+        "04f41fa5fc10eff8479b09ade9050afa814e48d5"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-analysis-agent-trust-reset-phase0-review.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "2 files changed, 808 insertions(+), 2 deletions(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "cdfcc1a5d4d4ab82cee85b722d9423a2c3036a99",
+      "short": "cdfcc1a",
+      "authored_at": "2026-09-23T17:06:05+08:00",
+      "subject": "feat: make session history canonical for compaction",
+      "parents": [
+        "985630007ffbd9a41ec1f1e7d4c51e83cc65e3f5"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-analysis-agent-trust-reset-phase0-review.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/compact.py",
+        "src/data_agent/session/history.py",
+        "src/data_agent/web/agent_manager.py",
+        "src/data_agent/web/blueprints/commands.py",
+        "src/data_agent/web/blueprints/sessions.py",
+        "tests/test_canonical_history_compaction.py"
+      ],
+      "diff_stat": "8 files changed, 679 insertions(+), 168 deletions(-)",
+      "disposition": "base_retained",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "0952ba46f5072ba66e4fb02b22d7cbd9d048fc92",
+      "short": "0952ba4",
+      "authored_at": "2026-09-23T17:38:44+08:00",
+      "subject": "feat: render receipt-bound scenario claims in final answers",
+      "parents": [
+        "cdfcc1a5d4d4ab82cee85b722d9423a2c3036a99"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-phase2-cross-history-review.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_scenario_claim_binding.py"
+      ],
+      "diff_stat": "5 files changed, 567 insertions(+), 4 deletions(-)",
+      "disposition": "base_retained",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "d0a261429c82ddadadc5a9377e719526fe1f4fbc",
+      "short": "d0a2614",
+      "authored_at": "2026-09-23T17:59:18+08:00",
+      "subject": "Type data-quality confirmations by host risk evidence",
+      "parents": [
+        "0952ba46f5072ba66e4fb02b22d7cbd9d048fc92"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-phase3-confirmation-review.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/confirmation/decision.py",
+        "src/data_agent/agent/confirmation/policy.py",
+        "src/data_agent/agent/confirmation/runtime.py",
+        "src/data_agent/agent/loop.py",
+        "tests/test_confirmation_typed_gap.py"
+      ],
+      "diff_stat": "7 files changed, 228 insertions(+), 61 deletions(-)",
+      "disposition": "base_retained",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "d5a28ce4faaab2a08fa996d2b985800d437eb18f",
+      "short": "d5a28ce",
+      "authored_at": "2026-09-23T18:04:29+08:00",
+      "subject": "Record Phase 4 journal boundary against existing host receipts",
+      "parents": [
+        "d0a261429c82ddadadc5a9377e719526fe1f4fbc"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-phase4-journal-boundary-review.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "2 files changed, 49 insertions(+), 2 deletions(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "9ef6fbc2eaea4e43a42a38beaae4f8234c39a241",
+      "short": "9ef6fbc",
+      "authored_at": "2026-09-23T18:14:19+08:00",
+      "subject": "Validate claim-bound publication audit findings offline",
+      "parents": [
+        "d5a28ce4faaab2a08fa996d2b985800d437eb18f"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-phase5-shadow-protocol.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_publication_audit_shadow_contract.py"
+      ],
+      "diff_stat": "4 files changed, 288 insertions(+)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "5c0e4b2f79a0bd6f0a9d9e095812d7b2c7405557",
+      "short": "5c0e4b2",
+      "authored_at": "2026-09-23T18:16:07+08:00",
+      "subject": "Document trust reset implementation handoff and authorization gates",
+      "parents": [
+        "9ef6fbc2eaea4e43a42a38beaae4f8234c39a241"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md"
+      ],
+      "diff_stat": "1 file changed, 36 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "32640302a064063b382f1267e0abf41faf3c3e08",
+      "short": "3264030",
+      "authored_at": "2026-09-23T22:22:58+08:00",
+      "subject": "fix: fail closed on publication coverage and packet errors",
+      "parents": [
+        "5c0e4b2f79a0bd6f0a9d9e095812d7b2c7405557"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-23-trust-reset-pre-shadow-architecture-review.md",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_answer_content_coverage.py",
+        "tests/test_publication_synthesis.py"
+      ],
+      "diff_stat": "6 files changed, 382 insertions(+), 41 deletions(-)",
+      "disposition": "migrate_closed_guards",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "dcaee2cd7b08d2c8fc9f974596d9be38d14893b2",
+      "short": "dcaee2c",
+      "authored_at": "2026-09-23T22:51:11+08:00",
+      "subject": "feat: bind derived claims to tool-owned metric facts",
+      "parents": [
+        "32640302a064063b382f1267e0abf41faf3c3e08"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-derived-claim-slice.md",
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_answer_content_coverage.py",
+        "tests/test_answer_numeric_consistency.py"
+      ],
+      "diff_stat": "5 files changed, 325 insertions(+), 35 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "88da00bbfedb5f2cbb8749c37cca8940af875d00",
+      "short": "88da00b",
+      "authored_at": "2026-09-23T23:02:45+08:00",
+      "subject": "fix: preserve verified claims after publication revision fails",
+      "parents": [
+        "dcaee2cd7b08d2c8fc9f974596d9be38d14893b2"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-23-trust-reset-partial-publication-slice.md",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_publication_synthesis.py"
+      ],
+      "diff_stat": "5 files changed, 148 insertions(+)",
+      "disposition": "migrate_closed_guards",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "75d5f87bed52b03281bf33d74b005b2505036f06",
+      "short": "75d5f87",
+      "authored_at": "2026-09-23T23:47:32+08:00",
+      "subject": "feat: bind single metric requirements to unique tool facts",
+      "parents": [
+        "88da00bbfedb5f2cbb8749c37cca8940af875d00"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-23-trust-reset-single-metric-intent-slice.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_answer_content_coverage.py",
+        "tests/test_publication_synthesis.py"
+      ],
+      "diff_stat": "5 files changed, 191 insertions(+), 1 deletion(-)",
+      "disposition": "do_not_restore_retired_or_lexical_design",
+      "work_packages": [
+        "R2",
+        "R5"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "ff0d4e6c2cfe21a153beaef8ab6d5c58031a4afb",
+      "short": "ff0d4e6",
+      "authored_at": "2026-09-23T23:48:34+08:00",
+      "subject": "docs: record single metric slice provenance",
+      "parents": [
+        "75d5f87bed52b03281bf33d74b005b2505036f06"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-23-trust-reset-single-metric-intent-slice.md"
+      ],
+      "diff_stat": "2 files changed, 3 insertions(+), 1 deletion(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "a96fd18eeda02cf5441371fe1cdb6f2a96c8cfbf",
+      "short": "a96fd18",
+      "authored_at": "2026-09-24T00:20:45+08:00",
+      "subject": "Bind period comparisons to current tool receipt",
+      "parents": [
+        "ff0d4e6c2cfe21a153beaef8ab6d5c58031a4afb"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-comparison-claim-slice.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_comparison_claim_binding.py"
+      ],
+      "diff_stat": "4 files changed, 341 insertions(+), 5 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "b8fc0f2a166a73e54305a99b2dfa2bfce0595527",
+      "short": "b8fc0f2",
+      "authored_at": "2026-09-24T00:50:43+08:00",
+      "subject": "Render observed curve fits from receipt bindings",
+      "parents": [
+        "a96fd18eeda02cf5441371fe1cdb6f2a96c8cfbf"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-descriptive-fit-claim-slice.md",
+        "docs/audit/2026-09-24-trust-reset-unbound-prose-decision.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_descriptive_fit_claim_binding.py"
+      ],
+      "diff_stat": "5 files changed, 369 insertions(+), 4 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "a47b281a513af93936f7c689118d18203ef2beee",
+      "short": "a47b281",
+      "authored_at": "2026-09-24T00:58:06+08:00",
+      "subject": "Calibrate trusted-core publication against historical answers",
+      "parents": [
+        "b8fc0f2a166a73e54305a99b2dfa2bfce0595527"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-dual-track-calibration.md",
+        "docs/audit/2026-09-24-trust-reset-unbound-prose-decision.md"
+      ],
+      "diff_stat": "3 files changed, 35 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "39246fc6da3e71cdcafdb6699c97ab7fe221d090",
+      "short": "39246fc",
+      "authored_at": "2026-09-24T01:17:19+08:00",
+      "subject": "Prepare receipt-bound core and claim-scoped audit offline",
+      "parents": [
+        "a47b281a513af93936f7c689118d18203ef2beee"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-phase6-entry-assessment.md",
+        "src/data_agent/agent/publication_audit.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_preparatory_offline.py",
+        "tests/test_publication_audit_shadow_contract.py"
+      ],
+      "diff_stat": "6 files changed, 437 insertions(+), 17 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "b7e1f981b395a3a5007998013422886b8958487e",
+      "short": "b7e1f98",
+      "authored_at": "2026-09-24T01:46:25+08:00",
+      "subject": "Project current artifacts into offline trusted core",
+      "parents": [
+        "39246fc6da3e71cdcafdb6699c97ab7fe221d090"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-offline-core-projection.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_packet_projection.py",
+        "tests/test_phase6_preparatory_offline.py"
+      ],
+      "diff_stat": "5 files changed, 529 insertions(+), 1 deletion(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "ac84dd82f15574d235d10865b15b66cd3c7273c9",
+      "short": "ac84dd8",
+      "authored_at": "2026-09-24T01:56:31+08:00",
+      "subject": "Document current trust-reset gates and cross-history calibration",
+      "parents": [
+        "b7e1f981b395a3a5007998013422886b8958487e"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 81 insertions(+), 7 deletions(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "508a580306db2ebaa98f0dd633988a18d0497549",
+      "short": "508a580",
+      "authored_at": "2026-09-24T02:09:05+08:00",
+      "subject": "Project selected multi-source receipts in offline trust preview",
+      "parents": [
+        "ac84dd82f15574d235d10865b15b66cd3c7273c9"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_packet_projection.py"
+      ],
+      "diff_stat": "5 files changed, 63 insertions(+), 2 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "361197ae5b16ea7d3a717b424c9bb86adccecbe5",
+      "short": "361197a",
+      "authored_at": "2026-09-24T02:22:32+08:00",
+      "subject": "Preview version-bound multisource values offline",
+      "parents": [
+        "508a580306db2ebaa98f0dd633988a18d0497549"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_multisource_table.py"
+      ],
+      "diff_stat": "5 files changed, 288 insertions(+), 1 deletion(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "7d348ad4b85c663de1b81acaa6041036fd613a32",
+      "short": "7d348ad",
+      "authored_at": "2026-09-24T02:24:45+08:00",
+      "subject": "Record cross-history derived result gap",
+      "parents": [
+        "361197ae5b16ea7d3a717b424c9bb86adccecbe5"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 11 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "f2ea7e3db1da5d3263fd8a0859afa6c4cf355e75",
+      "short": "f2ea7e3",
+      "authored_at": "2026-09-24T11:54:42+08:00",
+      "subject": "Add bounded offline derived snapshots to publication packet",
+      "parents": [
+        "7d348ad4b85c663de1b81acaa6041036fd613a32"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_derived_snapshots.py"
+      ],
+      "diff_stat": "5 files changed, 352 insertions(+), 55 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "c61ece7522b18a6fadd2354d7f05d79ba2ee094a",
+      "short": "c61ece7",
+      "authored_at": "2026-09-24T12:04:26+08:00",
+      "subject": "Document cross-history result identity gate",
+      "parents": [
+        "f2ea7e3db1da5d3263fd8a0859afa6c4cf355e75"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 23 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "83dac2fb3d97c8d45c7a704517b4de31f4763577",
+      "short": "83dac2f",
+      "authored_at": "2026-09-24T12:19:10+08:00",
+      "subject": "Project bounded executed result identities offline",
+      "parents": [
+        "c61ece7522b18a6fadd2354d7f05d79ba2ee094a"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_derived_snapshots.py",
+        "tests/test_phase6_offline_executed_result_identity.py"
+      ],
+      "diff_stat": "6 files changed, 374 insertions(+), 5 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "3d5f6eaf0bec63826555a2d23ba38d2177cbc9eb",
+      "short": "3d5f6ea",
+      "authored_at": "2026-09-24T12:33:21+08:00",
+      "subject": "Add offline receipt-bound target selector pilot",
+      "parents": [
+        "83dac2fb3d97c8d45c7a704517b4de31f4763577"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_executed_result_identity.py"
+      ],
+      "diff_stat": "5 files changed, 200 insertions(+), 2 deletions(-)",
+      "disposition": "do_not_restore_retired_or_lexical_design",
+      "work_packages": [
+        "R2",
+        "R5"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "d94b8a95286453ea76cffd7188b8e01385d9225a",
+      "short": "d94b8a9",
+      "authored_at": "2026-09-24T12:44:35+08:00",
+      "subject": "Bound offline audit to one targeted revision",
+      "parents": [
+        "3d5f6eaf0bec63826555a2d23ba38d2177cbc9eb"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_phase6_preparatory_offline.py"
+      ],
+      "diff_stat": "5 files changed, 39 insertions(+), 1 deletion(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "93b652e176ddb3ebc2752f17be8281a7b226ea3c",
+      "short": "93b652e",
+      "authored_at": "2026-09-24T12:45:43+08:00",
+      "subject": "Record historical metric and unit identity gap",
+      "parents": [
+        "d94b8a95286453ea76cffd7188b8e01385d9225a"
+      ],
+      "files": [
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md"
+      ],
+      "diff_stat": "1 file changed, 2 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "5f0480bc5f9d590ea80e0d74af2a29bbbbcc290e",
+      "short": "5f0480b",
+      "authored_at": "2026-09-24T13:05:52+08:00",
+      "subject": "Anchor offline target proposals to canonical request history",
+      "parents": [
+        "93b652e176ddb3ebc2752f17be8281a7b226ea3c"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_executed_result_identity.py"
+      ],
+      "diff_stat": "5 files changed, 182 insertions(+), 6 deletions(-)",
+      "disposition": "do_not_restore_retired_or_lexical_design",
+      "work_packages": [
+        "R2",
+        "R5"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "57c33de2eecfb194a3a753c0d063ce154c54b6ce",
+      "short": "57c33de",
+      "authored_at": "2026-09-24T13:35:10+08:00",
+      "subject": "Prototype offline versioned measurement confirmation mapping",
+      "parents": [
+        "5f0480bc5f9d590ea80e0d74af2a29bbbbcc290e"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/data_understanding.py",
+        "src/data_agent/tools/data_io.py",
+        "tests/test_offline_measurement_contract.py"
+      ],
+      "diff_stat": "6 files changed, 445 insertions(+), 4 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "4a32a6c43e4b1fde690977c7535db7217aced944",
+      "short": "4a32a6c",
+      "authored_at": "2026-09-24T13:37:03+08:00",
+      "subject": "Record historical confirmation scope for unit mapping",
+      "parents": [
+        "57c33de2eecfb194a3a753c0d063ce154c54b6ce"
+      ],
+      "files": [
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md"
+      ],
+      "diff_stat": "1 file changed, 2 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "84ab7904f7aeedb3af7374267d58bc4ac2cf354c",
+      "short": "84ab790",
+      "authored_at": "2026-09-24T14:02:14+08:00",
+      "subject": "Trace offline multi-turn metric identities",
+      "parents": [
+        "4a32a6c43e4b1fde690977c7535db7217aced944"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_phase6_offline_derived_snapshots.py",
+        "tests/test_phase6_offline_executed_result_identity.py"
+      ],
+      "diff_stat": "6 files changed, 406 insertions(+), 2 deletions(-)",
+      "disposition": "do_not_restore_retired_or_lexical_design",
+      "work_packages": [
+        "R2",
+        "R5"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "603dc115cc74664c1f062ca81547b8fbefb0a3ac",
+      "short": "603dc11",
+      "authored_at": "2026-09-24T14:16:21+08:00",
+      "subject": "Document Shadow audit calibration gate",
+      "parents": [
+        "84ab7904f7aeedb3af7374267d58bc4ac2cf354c"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 60 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "0fd91d1818c04ea8f06c0503c0e646214433f594",
+      "short": "0fd91d1",
+      "authored_at": "2026-09-24T14:35:42+08:00",
+      "subject": "Build offline accepted-claim audit view",
+      "parents": [
+        "603dc115cc74664c1f062ca81547b8fbefb0a3ac"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "5 files changed, 343 insertions(+)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "e05d957b85b2f42e6643c20e578c1156dfb933b9",
+      "short": "e05d957",
+      "authored_at": "2026-09-24T14:55:05+08:00",
+      "subject": "Record host-rendered claim spans in accepted publication packet",
+      "parents": [
+        "0fd91d1818c04ea8f06c0503c0e646214433f594"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_audit.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "7 files changed, 198 insertions(+), 15 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "eb821b5fe64d8f1b6bf563e37dae690a5e95eb2b",
+      "short": "eb821b5",
+      "authored_at": "2026-09-24T15:37:44+08:00",
+      "subject": "Record current-HEAD browser rehearsal and E4 freeze gaps",
+      "parents": [
+        "e05d957b85b2f42e6643c20e578c1156dfb933b9"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 40 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "1f4327e3683e49c789d4059cbad16aafe5febf31",
+      "short": "1f4327e",
+      "authored_at": "2026-09-24T16:01:05+08:00",
+      "subject": "Align P08 M02 oracle with unconfirmed source scale",
+      "parents": [
+        "eb821b5fe64d8f1b6bf563e37dae690a5e95eb2b"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md",
+        "scripts/testing/p08_real_matrix_contract.json",
+        "scripts/testing/p08_scenario_audit.py",
+        "tests/test_p08_real_matrix_launcher.py",
+        "tests/test_p08_scenario_audit.py"
+      ],
+      "diff_stat": "8 files changed, 62 insertions(+), 13 deletions(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "b70fbc35e212ed4d5389205d1a3ee9d801e2065f",
+      "short": "b70fbc3",
+      "authored_at": "2026-09-24T16:19:19+08:00",
+      "subject": "Freeze ordered M04 uploads for real provider matrix",
+      "parents": [
+        "1f4327e3683e49c789d4059cbad16aafe5febf31"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md",
+        "scripts/testing/p08_real_matrix_contract.json",
+        "tests/test_p08_real_matrix_launcher.py"
+      ],
+      "diff_stat": "6 files changed, 27 insertions(+), 1 deletion(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "26c223dfa77c196ae49b8b354322df384fb21a0b",
+      "short": "26c223d",
+      "authored_at": "2026-09-24T18:32:07+08:00",
+      "subject": "Document frozen P08 real-provider batch evidence",
+      "parents": [
+        "b70fbc35e212ed4d5389205d1a3ee9d801e2065f"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-p08-real-batch-r1.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 51 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "54678971b7db6ee559d465361df229e8a5132cb2",
+      "short": "5467897",
+      "authored_at": "2026-09-24T18:58:26+08:00",
+      "subject": "fix: validate current-plan hypothesis relations before audit closure",
+      "parents": [
+        "26c223dfa77c196ae49b8b354322df384fb21a0b"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/hypotheses.py",
+        "src/data_agent/agent/loop.py",
+        "tests/test_analysis_quality_guard_scope.py",
+        "tests/test_hypotheses.py",
+        "tests/test_publication_task_closure.py"
+      ],
+      "diff_stat": "8 files changed, 241 insertions(+), 36 deletions(-)",
+      "disposition": "migrate_closed_guards",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "5b3c75c57c355d2d207acbc549163134e8870c9b",
+      "short": "5b3c75c",
+      "authored_at": "2026-09-24T19:04:56+08:00",
+      "subject": "docs: record browser bridge blocker for trust reset E3",
+      "parents": [
+        "54678971b7db6ee559d465361df229e8a5132cb2"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 11 insertions(+), 1 deletion(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "3539067b5bb2a020fcf0b5615867b25f6e063fc5",
+      "short": "3539067",
+      "authored_at": "2026-09-24T19:14:11+08:00",
+      "subject": "docs: record cross-history trust reset viability gate",
+      "parents": [
+        "5b3c75c57c355d2d207acbc549163134e8870c9b"
+      ],
+      "files": [
+        "docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "2 files changed, 22 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "3d71bfaefb6c88bf1ea947ea22117d479c3962aa",
+      "short": "3d71bfa",
+      "authored_at": "2026-09-24T19:57:00+08:00",
+      "subject": "Verify hypothesis measurements and preview receipt-backed comparisons",
+      "parents": [
+        "3539067b5bb2a020fcf0b5615867b25f6e063fc5"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/hypotheses.py",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "src/data_agent/agent/trust_workflow_runtime.py",
+        "tests/test_hypotheses.py",
+        "tests/test_phase6_offline_multisource_table.py",
+        "tests/test_trust_workflow_runtime.py",
+        "tests/test_value_preservation_p7_boundaries.py"
+      ],
+      "diff_stat": "11 files changed, 650 insertions(+), 71 deletions(-)",
+      "disposition": "migrate_closed_guards",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "9932118317ce347e6582b7c891290a7ed3d3da54",
+      "short": "9932118",
+      "authored_at": "2026-09-24T21:24:40+08:00",
+      "subject": "Add offline M02 receipt claim production replay",
+      "parents": [
+        "3d71bfaefb6c88bf1ea947ea22117d479c3962aa"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_m02_receipt_claim_production.py"
+      ],
+      "diff_stat": "4 files changed, 333 insertions(+), 1 deletion(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "3df2591999d86e8147591f2f5fab3efe64a29e2a",
+      "short": "3df2591",
+      "authored_at": "2026-09-24T21:52:57+08:00",
+      "subject": "Prepare bounded offline Shadow audit requests",
+      "parents": [
+        "9932118317ce347e6582b7c891290a7ed3d3da54"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "4 files changed, 104 insertions(+), 1 deletion(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "82801191b97a3ab8f99dd01243ed2b8b2b90d7bf",
+      "short": "8280119",
+      "authored_at": "2026-09-24T23:05:42+08:00",
+      "subject": "Bind ambiguous measurement mappings to user confirmation",
+      "parents": [
+        "3df2591999d86e8147591f2f5fab3efe64a29e2a"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/confirmation/policy.py",
+        "src/data_agent/agent/confirmation/runtime.py",
+        "src/data_agent/agent/data_understanding.py",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/tools/interaction.py",
+        "tests/test_measurement_mapping_production.py"
+      ],
+      "diff_stat": "8 files changed, 408 insertions(+), 7 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "20665b9211e61657c18563b63837f46e9da915de",
+      "short": "20665b9",
+      "authored_at": "2026-09-24T23:26:59+08:00",
+      "subject": "Bind confirmed M02 observations to typed claims",
+      "parents": [
+        "82801191b97a3ab8f99dd01243ed2b8b2b90d7bf"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/confirmation/runtime.py",
+        "src/data_agent/agent/data_understanding.py",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "src/data_agent/tools/interaction.py",
+        "tests/test_confirmed_m02_series_claim.py",
+        "tests/test_measurement_mapping_production.py"
+      ],
+      "diff_stat": "9 files changed, 563 insertions(+), 17 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "134e3cd7e03ed0855c80d0e59866305afecf970e",
+      "short": "134e3cd",
+      "authored_at": "2026-09-24T23:38:56+08:00",
+      "subject": "Carry confirmed claim identity into offline Shadow input",
+      "parents": [
+        "20665b9211e61657c18563b63837f46e9da915de"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_confirmed_m02_series_claim.py"
+      ],
+      "diff_stat": "4 files changed, 72 insertions(+), 3 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "43238d1a06f56ca1cec54dafcdb0b39d0e790d2f",
+      "short": "43238d1",
+      "authored_at": "2026-09-25T12:26:01+08:00",
+      "subject": "Replay archived Phase 6 A value evidence offline",
+      "parents": [
+        "134e3cd7e03ed0855c80d0e59866305afecf970e"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "tests/test_phase6_offline_derived_snapshots.py",
+        "tests/test_phase6_offline_executed_result_identity.py",
+        "tests/test_phase6_offline_multisource_table.py"
+      ],
+      "diff_stat": "5 files changed, 182 insertions(+), 1 deletion(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "5f50c289701dc1890040ccc03f4bf07cf849f9e8",
+      "short": "5f50c28",
+      "authored_at": "2026-09-25T12:52:57+08:00",
+      "subject": "Prepare bounded Shadow C calibration with existing Provider ledger",
+      "parents": [
+        "43238d1a06f56ca1cec54dafcdb0b39d0e790d2f"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-25-shadow-c-calibration-cases.json",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/run_p08_real_matrix.py",
+        "scripts/testing/run_shadow_calibration.py",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_p08_real_matrix_launcher.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "8 files changed, 565 insertions(+), 8 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "5b5d3070670265cefe863db66637cb73f34327f3",
+      "short": "5b5d307",
+      "authored_at": "2026-09-25T13:05:50+08:00",
+      "subject": "Record Shadow C output shape and stop on empty audit",
+      "parents": [
+        "5f50c289701dc1890040ccc03f4bf07cf849f9e8"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-25-shadow-c-calibration-cases.json",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/run_shadow_calibration.py",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "6 files changed, 57 insertions(+), 10 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "d7d7b5e421cf46bf30d95f4d912ff231811b1940",
+      "short": "d7d7b5e",
+      "authored_at": "2026-09-25T13:19:23+08:00",
+      "subject": "Fail closed on truncated Shadow audits and freeze 64K cap",
+      "parents": [
+        "5b5d3070670265cefe863db66637cb73f34327f3"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-25-shadow-c-calibration-cases.json",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/run_shadow_calibration.py",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "6 files changed, 59 insertions(+), 8 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "302a85db8e380b1437e2c5f74d5e67928a71ece4",
+      "short": "302a85d",
+      "authored_at": "2026-09-25T13:28:40+08:00",
+      "subject": "Specify existing Shadow audit output contract",
+      "parents": [
+        "d7d7b5e421cf46bf30d95f4d912ff231811b1940"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "4 files changed, 26 insertions(+), 6 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "44a89c5bff65aebdd1262e4786d4a97976a7aa6f",
+      "short": "44a89c5",
+      "authored_at": "2026-09-25T13:36:57+08:00",
+      "subject": "Record controlled Shadow C calibration receipt",
+      "parents": [
+        "302a85db8e380b1437e2c5f74d5e67928a71ece4"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "2 files changed, 9 insertions(+), 1 deletion(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "a7c0f5ef7243db952180e58c649e7ab3f118723d",
+      "short": "a7c0f5e",
+      "authored_at": "2026-09-25T14:01:39+08:00",
+      "subject": "Close confirmed R16 aggregate claims in offline packet",
+      "parents": [
+        "44a89c5bff65aebdd1262e4786d4a97976a7aa6f"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/confirmation/policy.py",
+        "src/data_agent/agent/confirmation/runtime.py",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "src/data_agent/tools/interaction.py",
+        "tests/test_confirmed_group_aggregate_claim.py"
+      ],
+      "diff_stat": "8 files changed, 632 insertions(+), 14 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "5d10c8d0e97222fca8b85b427d82bb4d8101018a",
+      "short": "5d10c8d",
+      "authored_at": "2026-09-25T14:10:09+08:00",
+      "subject": "Render offline M03 per-source comparison claims",
+      "parents": [
+        "a7c0f5ef7243db952180e58c649e7ab3f118723d"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_confirmed_multisource_comparison_claim.py"
+      ],
+      "diff_stat": "4 files changed, 187 insertions(+), 3 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "4146df3926a531affb3f3b8765a430987bf501a7",
+      "short": "4146df3",
+      "authored_at": "2026-09-25T14:12:47+08:00",
+      "subject": "Record M04 structured relation boundary",
+      "parents": [
+        "5d10c8d0e97222fca8b85b427d82bb4d8101018a"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "2 files changed, 7 insertions(+), 1 deletion(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "dfd1bb3095543f49f9aead0ee1c52f069e748e6e",
+      "short": "dfd1bb3",
+      "authored_at": "2026-09-25T14:33:32+08:00",
+      "subject": "Add opt-in typed claim finalization trial",
+      "parents": [
+        "4146df3926a531affb3f3b8765a430987bf501a7"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/run_p7_browser_rehearsal.py",
+        "src/data_agent/agent/loop.py",
+        "tests/test_confirmed_group_aggregate_claim.py",
+        "tests/test_confirmed_multisource_comparison_claim.py"
+      ],
+      "diff_stat": "6 files changed, 226 insertions(+), 7 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "0c579a299ab62c0d0908b33b9a316ed697df2cb2",
+      "short": "0c579a2",
+      "authored_at": "2026-09-25T14:49:54+08:00",
+      "subject": "Prepare bounded natural typed trial freeze",
+      "parents": [
+        "dfd1bb3095543f49f9aead0ee1c52f069e748e6e"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/run_typed_trial_real.py",
+        "scripts/testing/typed_trial_real_contract.json",
+        "tests/test_typed_trial_real_launcher.py"
+      ],
+      "diff_stat": "5 files changed, 336 insertions(+), 1 deletion(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "ae8a6de64fca3bdbf0d7cce27f05d089276bf5c5",
+      "short": "ae8a6de",
+      "authored_at": "2026-09-25T15:17:01+08:00",
+      "subject": "Record natural typed trial E4 failure",
+      "parents": [
+        "0c579a299ab62c0d0908b33b9a316ed697df2cb2"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "2 files changed, 15 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "61866df5f61bc391bb01b5c2527b3ca12fecda88",
+      "short": "61866df",
+      "authored_at": "2026-09-25T15:19:11+08:00",
+      "subject": "Record preview receipt completeness evidence",
+      "parents": [
+        "ae8a6de64fca3bdbf0d7cce27f05d089276bf5c5"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md"
+      ],
+      "diff_stat": "1 file changed, 2 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "522c21d96de111fd8069d01728e46fe8794d0d2d",
+      "short": "522c21d",
+      "authored_at": "2026-09-25T15:38:40+08:00",
+      "subject": "Add opt-in typed comparisons for complete preview receipts",
+      "parents": [
+        "61866df5f61bc391bb01b5c2527b3ca12fecda88"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/run_p7_browser_rehearsal.py",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_typed_preview_comparison_claim.py"
+      ],
+      "diff_stat": "6 files changed, 259 insertions(+), 12 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "2f09e70c158686540c058c8065a4e5f67cd76e73",
+      "short": "2f09e70",
+      "authored_at": "2026-09-25T16:06:53+08:00",
+      "subject": "Record M03 preview browser acceptance and update real oracle",
+      "parents": [
+        "522c21d96de111fd8069d01728e46fe8794d0d2d"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/typed_trial_real_contract.json"
+      ],
+      "diff_stat": "3 files changed, 12 insertions(+), 1 deletion(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "1e59e2ef7e2c36ac3dece155ca210287d9086a20",
+      "short": "1e59e2e",
+      "authored_at": "2026-09-25T16:16:43+08:00",
+      "subject": "Record natural M03 preview typed trial evidence",
+      "parents": [
+        "2f09e70c158686540c058c8065a4e5f67cd76e73"
+      ],
+      "files": [
+        "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+        "docs/audit/2026-09-25-typed-preview-natural-m03-r2.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 32 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "6c4b97b26c9d873dfe7c3e22c475f5881191343f",
+      "short": "6c4b97b",
+      "authored_at": "2026-09-25T16:18:30+08:00",
+      "subject": "Record M03 trusted-core value comparison",
+      "parents": [
+        "1e59e2ef7e2c36ac3dece155ca210287d9086a20"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-typed-preview-natural-m03-r2.md"
+      ],
+      "diff_stat": "1 file changed, 2 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "d9558e362292f98e5c0d347468c4b59c7d6382b9",
+      "short": "d9558e3",
+      "authored_at": "2026-09-25T17:14:30+08:00",
+      "subject": "Align P08 audit verdicts with evidence boundaries",
+      "parents": [
+        "6c4b97b26c9d873dfe7c3e22c475f5881191343f"
+      ],
+      "files": [
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md",
+        "scripts/testing/p08_scenario_audit.py",
+        "tests/test_p08_scenario_audit.py"
+      ],
+      "diff_stat": "4 files changed, 146 insertions(+), 180 deletions(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "a84dbc1f6176f666fbbfcba2d391f4cf2b056043",
+      "short": "a84dbc1",
+      "authored_at": "2026-09-25T17:33:35+08:00",
+      "subject": "Retire unused offline selectors and correct gap coverage authority",
+      "parents": [
+        "d9558e362292f98e5c0d347468c4b59c7d6382b9"
+      ],
+      "files": [
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_answer_content_coverage.py",
+        "tests/test_phase6_offline_derived_snapshots.py",
+        "tests/test_phase6_offline_executed_result_identity.py"
+      ],
+      "diff_stat": "5 files changed, 20 insertions(+), 713 deletions(-)",
+      "disposition": "do_not_restore_retired_or_lexical_design",
+      "work_packages": [
+        "R2",
+        "R5"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "e54a2b6a98e3a6626f60eca5ff5574016553fda8",
+      "short": "e54a2b6",
+      "authored_at": "2026-09-25T17:41:46+08:00",
+      "subject": "Retire lexical pseudo-evidence from P08 audit",
+      "parents": [
+        "a84dbc1f6176f666fbbfcba2d391f4cf2b056043"
+      ],
+      "files": [
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/p08_scenario_audit.py",
+        "tests/test_p08_scenario_audit.py"
+      ],
+      "diff_stat": "3 files changed, 7 insertions(+), 118 deletions(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "76e9528cf5c1fea5c23316922d4bec12a3bccd96",
+      "short": "76e9528",
+      "authored_at": "2026-09-25T17:49:12+08:00",
+      "subject": "Expose host claim integrity in P08 audit reports",
+      "parents": [
+        "e54a2b6a98e3a6626f60eca5ff5574016553fda8"
+      ],
+      "files": [
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/p08_scenario_audit.py",
+        "tests/test_p08_scenario_audit.py"
+      ],
+      "diff_stat": "3 files changed, 44 insertions(+), 1 deletion(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "b9b9ddce52f17086456f3a2499eb739303086a50",
+      "short": "b9b9ddc",
+      "authored_at": "2026-09-25T20:35:43+08:00",
+      "subject": "Wire existing M02 fit claim into opt-in finalization",
+      "parents": [
+        "76e9528cf5c1fea5c23316922d4bec12a3bccd96"
+      ],
+      "files": [
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/loop.py",
+        "tests/test_confirmed_m02_series_claim.py"
+      ],
+      "diff_stat": "3 files changed, 54 insertions(+), 7 deletions(-)",
+      "disposition": "curate_single_publication_path",
+      "work_packages": [
+        "R2",
+        "R3"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "fbbc14741fa79901272fbcbd69cb48e15b7146b7",
+      "short": "fbbc147",
+      "authored_at": "2026-09-25T21:04:33+08:00",
+      "subject": "Separate layered acceptance from receipt fact alignment",
+      "parents": [
+        "b9b9ddce52f17086456f3a2499eb739303086a50"
+      ],
+      "files": [
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/p08_scenario_audit.py",
+        "src/data_agent/agent/publication_audit.py",
+        "tests/test_p08_scenario_audit.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "5 files changed, 76 insertions(+), 13 deletions(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "0ea810a53c659f2d80614b7af760764226a8b193",
+      "short": "0ea810a",
+      "authored_at": "2026-09-25T21:30:45+08:00",
+      "subject": "Record Phase 8 layered browser matrix evidence",
+      "parents": [
+        "fbbc14741fa79901272fbcbd69cb48e15b7146b7"
+      ],
+      "files": [
+        "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "2 files changed, 22 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "53a0ab29d37e54b0226720692030eecf1cd1ca73",
+      "short": "53a0ab2",
+      "authored_at": "2026-09-25T21:32:34+08:00",
+      "subject": "Align Phase 8 matrix with real and historical cases",
+      "parents": [
+        "0ea810a53c659f2d80614b7af760764226a8b193"
+      ],
+      "files": [
+        "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md"
+      ],
+      "diff_stat": "1 file changed, 14 insertions(+), 1 deletion(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "fc9ae7ac3e23d0096cec7f549c5f5b64372a9a12",
+      "short": "fc9ae7a",
+      "authored_at": "2026-09-25T22:32:43+08:00",
+      "subject": "fix: surface accepted publication boundaries and retire dead appendix",
+      "parents": [
+        "53a0ab29d37e54b0226720692030eecf1cd1ca73"
+      ],
+      "files": [
+        "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_provenance_revision_only.py",
+        "tests/test_publication_synthesis.py",
+        "tests/test_scenario_claim_binding.py",
+        "tests/test_scenario_envelope_and_disclosure.py"
+      ],
+      "diff_stat": "8 files changed, 97 insertions(+), 98 deletions(-)",
+      "disposition": "mixed_retire_dead_code_reject_tail_as_correction",
+      "work_packages": [
+        "R4",
+        "R5"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "959ea6a11f2689b097d5c118e043cacd1dde6c7a",
+      "short": "959ea6a",
+      "authored_at": "2026-09-25T23:19:34+08:00",
+      "subject": "Track trust reset stage gates and report verified claim spans",
+      "parents": [
+        "fc9ae7ac3e23d0096cec7f549c5f5b64372a9a12"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+        "scripts/testing/p08_scenario_audit.py"
+      ],
+      "diff_stat": "3 files changed, 92 insertions(+), 5 deletions(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "964694bf41d2c82fcf7b0c83ffa0bef882289d24",
+      "short": "964694b",
+      "authored_at": "2026-09-25T23:55:52+08:00",
+      "subject": "Record current trust reset browser matrix and Phase 9 entry boundary",
+      "parents": [
+        "959ea6a11f2689b097d5c118e043cacd1dde6c7a"
+      ],
+      "files": [
+        "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+        "docs/audit/2026-09-25-trust-reset-stage-status.md"
+      ],
+      "diff_stat": "2 files changed, 32 insertions(+), 4 deletions(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "fb44605078ecccfc0906269005b388fe55ced29c",
+      "short": "fb44605",
+      "authored_at": "2026-09-26T00:19:16+08:00",
+      "subject": "Record Phase 9 partial Provider batch and authorization stop",
+      "parents": [
+        "964694bf41d2c82fcf7b0c83ffa0bef882289d24"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-26-trust-reset-phase9-r1-authorization-stop.md"
+      ],
+      "diff_stat": "2 files changed, 25 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "0b8469f3b1528e6981de2c0b5cce5073da43a9b3",
+      "short": "0b8469f",
+      "authored_at": "2026-09-26T17:08:54+08:00",
+      "subject": "Prepare HTTP controlled P08 real model matrix",
+      "parents": [
+        "fb44605078ecccfc0906269005b388fe55ced29c"
+      ],
+      "files": [
+        "AGENTS.md",
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "scripts/testing/p08_real_matrix_contract.json",
+        "scripts/testing/run_p08_http_matrix.py",
+        "scripts/testing/run_p08_real_matrix.py",
+        "tests/test_p08_real_matrix_launcher.py"
+      ],
+      "diff_stat": "6 files changed, 319 insertions(+), 6 deletions(-)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "68bfdb8c209c92714df5572cd194b08a89ec394b",
+      "short": "68bfdb8",
+      "authored_at": "2026-09-26T20:52:55+08:00",
+      "subject": "Record P08 real matrix and correct M06 control choice",
+      "parents": [
+        "0b8469f3b1528e6981de2c0b5cce5073da43a9b3"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-26-trust-reset-phase9-r3-real-matrix.md",
+        "scripts/testing/run_p08_http_matrix.py",
+        "tests/test_p08_real_matrix_launcher.py"
+      ],
+      "diff_stat": "4 files changed, 58 insertions(+)",
+      "disposition": "curate_acceptance_and_control",
+      "work_packages": [
+        "R5",
+        "R6"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "d13653f92aa1bedc02e8bfcc76e1fc557f25f0b2",
+      "short": "d13653f",
+      "authored_at": "2026-09-26T21:33:13+08:00",
+      "subject": "Advance scoped tasks on manual completion and expose relation mismatch",
+      "parents": [
+        "68bfdb8c209c92714df5572cd194b08a89ec394b"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-26-trust-reset-phase9-r3-real-matrix.md",
+        "src/data_agent/agent/hypotheses.py",
+        "src/data_agent/session/task_manager.py",
+        "tests/test_analysis_quality_guard_scope.py",
+        "tests/test_stage3c0b_execution_scope.py"
+      ],
+      "diff_stat": "6 files changed, 123 insertions(+), 15 deletions(-)",
+      "disposition": "migrate_closed_guards",
+      "work_packages": [
+        "R1"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "5b55ed7256859a16bc24393d0108776dcd696403",
+      "short": "5b55ed7",
+      "authored_at": "2026-09-26T22:18:38+08:00",
+      "subject": "docs: review R4 against trust reset phase gates",
+      "parents": [
+        "d13653f92aa1bedc02e8bfcc76e1fc557f25f0b2"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-26-trust-reset-phase9-r4-plan-review.md"
+      ],
+      "diff_stat": "2 files changed, 52 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "65b036edc382926cbce36213acda26705585426c",
+      "short": "65b036e",
+      "authored_at": "2026-09-26T23:43:02+08:00",
+      "subject": "Partition opt-in typed answers by verification status",
+      "parents": [
+        "5b55ed7256859a16bc24393d0108776dcd696403"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-26-trust-reset-convergence-map.md",
+        "docs/audit/2026-09-26-trust-reset-phase9-r4-plan-review.md",
+        "scripts/testing/p08_scenario_audit.py",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_confirmed_multisource_comparison_claim.py",
+        "tests/test_p08_scenario_audit.py"
+      ],
+      "diff_stat": "8 files changed, 254 insertions(+), 28 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "f40d72a46ac0040e10c84d036649406e974301f3",
+      "short": "f40d72a",
+      "authored_at": "2026-09-27T00:10:51+08:00",
+      "subject": "Record remaining trust-reset gates and Shadow scope gap",
+      "parents": [
+        "65b036edc382926cbce36213acda26705585426c"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-26-trust-reset-convergence-map.md"
+      ],
+      "diff_stat": "2 files changed, 44 insertions(+), 2 deletions(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "7780bb8f88eb417cdb8bc09f7212e04767fd5474",
+      "short": "7780bb8",
+      "authored_at": "2026-09-27T01:03:51+08:00",
+      "subject": "Locate pending prose for opt-in Shadow audit and freeze natural calibration inputs",
+      "parents": [
+        "f40d72a46ac0040e10c84d036649406e974301f3"
+      ],
+      "files": [
+        "AGENTS.md",
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-26-trust-reset-convergence-map.md",
+        "docs/audit/2026-09-27-shadow-natural-m03-oracle.json",
+        "scripts/testing/replay_natural_m03_shadow.py",
+        "scripts/testing/run_shadow_calibration.py",
+        "src/data_agent/agent/loop.py",
+        "src/data_agent/agent/publication_audit.py",
+        "src/data_agent/agent/publication_synthesis.py",
+        "tests/test_publication_audit_view_offline.py"
+      ],
+      "diff_stat": "10 files changed, 637 insertions(+), 144 deletions(-)",
+      "disposition": "diagnostics_reference_only",
+      "work_packages": [
+        "R4"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "954ff239f3c6f1bfd7304b975be041e4ebc24c46",
+      "short": "954ff23",
+      "authored_at": "2026-09-27T01:14:07+08:00",
+      "subject": "Record natural Shadow calibration failure and phase gates",
+      "parents": [
+        "7780bb8f88eb417cdb8bc09f7212e04767fd5474"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-27-shadow-natural-m03-r1-evaluation.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 50 insertions(+), 10 deletions(-)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    },
+    {
+      "sha": "b181646ff66ea9ea3b0e6a38ffcd3d16b6687312",
+      "short": "b181646",
+      "authored_at": "2026-09-27T01:21:36+08:00",
+      "subject": "Map host fact boundaries for trust reset",
+      "parents": [
+        "954ff239f3c6f1bfd7304b975be041e4ebc24c46"
+      ],
+      "files": [
+        "docs/audit/2026-09-25-trust-reset-stage-status.md",
+        "docs/audit/2026-09-27-trust-reset-host-fact-boundary.md",
+        "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
+      ],
+      "diff_stat": "3 files changed, 40 insertions(+)",
+      "disposition": "historical_documentation",
+      "work_packages": [
+        "R0"
+      ],
+      "whole_commit_cherry_pick_approved": false
+    }
+  ],
+  "documents": [
+    {
+      "path": "docs/audit/2026-09-23-analysis-agent-trust-reset-phase0-review.md",
+      "donor_git_blob": "48f232aa67ea232d0155dfe9a262f28999f23445",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "04f41fa5fc10eff8479b09ade9050afa814e48d5",
+        "985630007ffbd9a41ec1f1e7d4c51e83cc65e3f5",
+        "cdfcc1a5d4d4ab82cee85b722d9423a2c3036a99"
+      ],
+      "donor_checkout_sha256_before_preparation": "3c7456a40d8f4f372882e202bcf24848386cc5412fa212d63c0f1eec197a739f"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-derived-claim-slice.md",
+      "donor_git_blob": "1e89ba8c2862000e8977503706c4cca5894979e9",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "dcaee2cd7b08d2c8fc9f974596d9be38d14893b2"
+      ],
+      "donor_checkout_sha256_before_preparation": "16dc23e9f792624db33bd166ef2132232d03a53f0b4b5ef6063a8d40d1a430ef"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-implementation-handoff.md",
+      "donor_git_blob": "a36397cd011c2ef5ab4900df60d7bbdcfe38eee5",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "5c0e4b2f79a0bd6f0a9d9e095812d7b2c7405557",
+        "32640302a064063b382f1267e0abf41faf3c3e08",
+        "dcaee2cd7b08d2c8fc9f974596d9be38d14893b2",
+        "88da00bbfedb5f2cbb8749c37cca8940af875d00",
+        "75d5f87bed52b03281bf33d74b005b2505036f06",
+        "ff0d4e6c2cfe21a153beaef8ab6d5c58031a4afb",
+        "a96fd18eeda02cf5441371fe1cdb6f2a96c8cfbf",
+        "b8fc0f2a166a73e54305a99b2dfa2bfce0595527",
+        "a47b281a513af93936f7c689118d18203ef2beee",
+        "39246fc6da3e71cdcafdb6699c97ab7fe221d090",
+        "b7e1f981b395a3a5007998013422886b8958487e",
+        "ac84dd82f15574d235d10865b15b66cd3c7273c9",
+        "508a580306db2ebaa98f0dd633988a18d0497549",
+        "361197ae5b16ea7d3a717b424c9bb86adccecbe5",
+        "7d348ad4b85c663de1b81acaa6041036fd613a32",
+        "f2ea7e3db1da5d3263fd8a0859afa6c4cf355e75",
+        "c61ece7522b18a6fadd2354d7f05d79ba2ee094a",
+        "83dac2fb3d97c8d45c7a704517b4de31f4763577",
+        "3d5f6eaf0bec63826555a2d23ba38d2177cbc9eb",
+        "d94b8a95286453ea76cffd7188b8e01385d9225a",
+        "5f0480bc5f9d590ea80e0d74af2a29bbbbcc290e",
+        "57c33de2eecfb194a3a753c0d063ce154c54b6ce",
+        "84ab7904f7aeedb3af7374267d58bc4ac2cf354c",
+        "603dc115cc74664c1f062ca81547b8fbefb0a3ac",
+        "0fd91d1818c04ea8f06c0503c0e646214433f594",
+        "e05d957b85b2f42e6643c20e578c1156dfb933b9",
+        "eb821b5fe64d8f1b6bf563e37dae690a5e95eb2b",
+        "1f4327e3683e49c789d4059cbad16aafe5febf31",
+        "b70fbc35e212ed4d5389205d1a3ee9d801e2065f",
+        "26c223dfa77c196ae49b8b354322df384fb21a0b",
+        "54678971b7db6ee559d465361df229e8a5132cb2",
+        "5b3c75c57c355d2d207acbc549163134e8870c9b",
+        "3d71bfaefb6c88bf1ea947ea22117d479c3962aa",
+        "9932118317ce347e6582b7c891290a7ed3d3da54",
+        "3df2591999d86e8147591f2f5fab3efe64a29e2a",
+        "82801191b97a3ab8f99dd01243ed2b8b2b90d7bf",
+        "20665b9211e61657c18563b63837f46e9da915de",
+        "134e3cd7e03ed0855c80d0e59866305afecf970e",
+        "43238d1a06f56ca1cec54dafcdb0b39d0e790d2f",
+        "5f50c289701dc1890040ccc03f4bf07cf849f9e8",
+        "5b5d3070670265cefe863db66637cb73f34327f3",
+        "d7d7b5e421cf46bf30d95f4d912ff231811b1940",
+        "302a85db8e380b1437e2c5f74d5e67928a71ece4",
+        "44a89c5bff65aebdd1262e4786d4a97976a7aa6f",
+        "a7c0f5ef7243db952180e58c649e7ab3f118723d",
+        "5d10c8d0e97222fca8b85b427d82bb4d8101018a",
+        "4146df3926a531affb3f3b8765a430987bf501a7",
+        "dfd1bb3095543f49f9aead0ee1c52f069e748e6e",
+        "0c579a299ab62c0d0908b33b9a316ed697df2cb2",
+        "ae8a6de64fca3bdbf0d7cce27f05d089276bf5c5",
+        "61866df5f61bc391bb01b5c2527b3ca12fecda88",
+        "522c21d96de111fd8069d01728e46fe8794d0d2d",
+        "2f09e70c158686540c058c8065a4e5f67cd76e73",
+        "1e59e2ef7e2c36ac3dece155ca210287d9086a20"
+      ],
+      "donor_checkout_sha256_before_preparation": "c866fb76fbb859dcf46eb02faa54dbf21277715f9d39d25daff9bf9b8919de9d"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-partial-publication-slice.md",
+      "donor_git_blob": "48c7f863ab648c3efacfd4cd5b016efd78339812",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "88da00bbfedb5f2cbb8749c37cca8940af875d00"
+      ],
+      "donor_checkout_sha256_before_preparation": "5e6a438fbdc1fc5864e211364dc1c9fb0f48a23d24b4dfb44a100f39a2bfd12c"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-phase2-cross-history-review.md",
+      "donor_git_blob": "519a430aabd9bdabe5908891adedd96314aec5de",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "0952ba46f5072ba66e4fb02b22d7cbd9d048fc92"
+      ],
+      "donor_checkout_sha256_before_preparation": "c6a0f3d89d8421992832dd5995bcf69bb562f3c76b083d6658d14e207fdcf84c"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-phase3-confirmation-review.md",
+      "donor_git_blob": "e012fb40737d4824c6771f27af48d73bb937ad69",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "d0a261429c82ddadadc5a9377e719526fe1f4fbc"
+      ],
+      "donor_checkout_sha256_before_preparation": "98d0749be3c803236319cdf21bbf0c441e77442bfcf4f9552b3f75dee5ee6b6e"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-phase4-journal-boundary-review.md",
+      "donor_git_blob": "8246ac1c59b6dacbad777b899a26403c53acc689",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "d5a28ce4faaab2a08fa996d2b985800d437eb18f"
+      ],
+      "donor_checkout_sha256_before_preparation": "87f03df37b4f0eab233a7d325ba38c1001582bebf0fe971b8b0d274c8b5e8e71"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-phase5-shadow-protocol.md",
+      "donor_git_blob": "f77d28e71c34d06c97d1a955256268cbc915b18c",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "9ef6fbc2eaea4e43a42a38beaae4f8234c39a241"
+      ],
+      "donor_checkout_sha256_before_preparation": "ffaf6a35ea114c6959fd6eca394c27239b2cfc19564c2fc80030d460acd5b4d6"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-pre-shadow-architecture-review.md",
+      "donor_git_blob": "a424faffd2dbc8dd9b005243c34fe5cdc337d7d6",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "32640302a064063b382f1267e0abf41faf3c3e08"
+      ],
+      "donor_checkout_sha256_before_preparation": "7536ba60333ce4aa2045873d6404bc28a16a99256be751f948d96aefcbae327e"
+    },
+    {
+      "path": "docs/audit/2026-09-23-trust-reset-single-metric-intent-slice.md",
+      "donor_git_blob": "a7ed6b7ec630c4770f2f9f7cdf416b19f9afd067",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "75d5f87bed52b03281bf33d74b005b2505036f06",
+        "ff0d4e6c2cfe21a153beaef8ab6d5c58031a4afb"
+      ],
+      "donor_checkout_sha256_before_preparation": "98f707df06a01de8cbbcbcdc4d5ef3d916df06350fe29e43ed00b432be738a0a"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-comparison-claim-slice.md",
+      "donor_git_blob": "d13ba7d3d3d4ab464b86783b5bec25ec047202c6",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "a96fd18eeda02cf5441371fe1cdb6f2a96c8cfbf"
+      ],
+      "donor_checkout_sha256_before_preparation": "75086842172a50fa99679539774e8b869af1834eb97d4bf6faf59b137465e15a"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-cross-history-gate.md",
+      "donor_git_blob": "7cdd575638126f3818de1f808bf45fca35dbbcc9",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "ac84dd82f15574d235d10865b15b66cd3c7273c9",
+        "508a580306db2ebaa98f0dd633988a18d0497549",
+        "361197ae5b16ea7d3a717b424c9bb86adccecbe5",
+        "7d348ad4b85c663de1b81acaa6041036fd613a32",
+        "f2ea7e3db1da5d3263fd8a0859afa6c4cf355e75",
+        "c61ece7522b18a6fadd2354d7f05d79ba2ee094a",
+        "83dac2fb3d97c8d45c7a704517b4de31f4763577",
+        "3d5f6eaf0bec63826555a2d23ba38d2177cbc9eb",
+        "d94b8a95286453ea76cffd7188b8e01385d9225a",
+        "93b652e176ddb3ebc2752f17be8281a7b226ea3c",
+        "5f0480bc5f9d590ea80e0d74af2a29bbbbcc290e",
+        "57c33de2eecfb194a3a753c0d063ce154c54b6ce",
+        "4a32a6c43e4b1fde690977c7535db7217aced944",
+        "84ab7904f7aeedb3af7374267d58bc4ac2cf354c"
+      ],
+      "donor_checkout_sha256_before_preparation": "65b77ad76095dfacac0c304cafa02ecff63bdeb640385ec8a9ed474380fca1d4"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-current-head-browser-rehearsal.md",
+      "donor_git_blob": "9195ee8e962aab1b037ec385d3898a1464d625d6",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "eb821b5fe64d8f1b6bf563e37dae690a5e95eb2b",
+        "1f4327e3683e49c789d4059cbad16aafe5febf31",
+        "b70fbc35e212ed4d5389205d1a3ee9d801e2065f",
+        "0ea810a53c659f2d80614b7af760764226a8b193",
+        "53a0ab29d37e54b0226720692030eecf1cd1ca73",
+        "fc9ae7ac3e23d0096cec7f549c5f5b64372a9a12",
+        "964694bf41d2c82fcf7b0c83ffa0bef882289d24"
+      ],
+      "donor_checkout_sha256_before_preparation": "3a3a57227ce9017a368afeceab61807973a33fbda05c520afd682eab4d22137d"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-descriptive-fit-claim-slice.md",
+      "donor_git_blob": "eb5e804338f920b8af2b73b54bb499cb1dcf2040",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "b8fc0f2a166a73e54305a99b2dfa2bfce0595527"
+      ],
+      "donor_checkout_sha256_before_preparation": "1cfd2c87ede704a50982ecb858db43ec14322bcf03c26f91bcdb6d7d800c37e0"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-dual-track-calibration.md",
+      "donor_git_blob": "73502cc78b42ad68eed3e43581b1af136a37f46e",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "a47b281a513af93936f7c689118d18203ef2beee"
+      ],
+      "donor_checkout_sha256_before_preparation": "6085ee389f43f611d0f9f2f21a4d0394c5122c69fde3c966b111374c9a92b0b7"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md",
+      "donor_git_blob": "3e539e106b564d6291396bd28fb74ede2e790edd",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "54678971b7db6ee559d465361df229e8a5132cb2",
+        "5b3c75c57c355d2d207acbc549163134e8870c9b"
+      ],
+      "donor_checkout_sha256_before_preparation": "87a40d0307fae04525d24d6d880e83dc83db7ff17f668043e459978c82d3a766"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-offline-core-projection.md",
+      "donor_git_blob": "1aee0c02051a0459c5ccac384224a7ff83b056aa",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "b7e1f981b395a3a5007998013422886b8958487e"
+      ],
+      "donor_checkout_sha256_before_preparation": "94de2a9908d95ad57e65887f0e18cae9838c148ce81d30f168b27ca04e2ede11"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-p08-real-batch-r1.md",
+      "donor_git_blob": "087d2dbb5772217f6b9b28423f68ac32869aeb4a",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "26c223dfa77c196ae49b8b354322df384fb21a0b"
+      ],
+      "donor_checkout_sha256_before_preparation": "3db9ff500774b01ca8e63b23e853e648f3c51440d3ad20460986522adb455be2"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md",
+      "donor_git_blob": "49c78400caf7be6ea4d888c6e069d652b87aaed4",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "603dc115cc74664c1f062ca81547b8fbefb0a3ac",
+        "0fd91d1818c04ea8f06c0503c0e646214433f594",
+        "e05d957b85b2f42e6643c20e578c1156dfb933b9",
+        "3539067b5bb2a020fcf0b5615867b25f6e063fc5",
+        "3d71bfaefb6c88bf1ea947ea22117d479c3962aa"
+      ],
+      "donor_checkout_sha256_before_preparation": "6ec01ba16fc45596208f4e70d64f7538c77722a59d2f336d721e277bcd607a34"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-phase6-entry-assessment.md",
+      "donor_git_blob": "034e3c87ad2f1bfcfbe341fcf805869efa7a158a",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "39246fc6da3e71cdcafdb6699c97ab7fe221d090"
+      ],
+      "donor_checkout_sha256_before_preparation": "e1e38917bacefd37641fc4b0cfc05ea328be8d8ad55f84144d06e4a16f408db6"
+    },
+    {
+      "path": "docs/audit/2026-09-24-trust-reset-unbound-prose-decision.md",
+      "donor_git_blob": "0ca5e4f06f4c4d8f7ffc26fc5bd9501bc398862f",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "b8fc0f2a166a73e54305a99b2dfa2bfce0595527",
+        "a47b281a513af93936f7c689118d18203ef2beee"
+      ],
+      "donor_checkout_sha256_before_preparation": "b82ca089c02d7f200dead1f00bf7f4afc6709edcbde624afc4dc8d969c5c6ff4"
+    },
+    {
+      "path": "docs/audit/2026-09-25-shadow-c-calibration-cases.json",
+      "donor_git_blob": "25d89bd9603aa3da56a9be63669f913db091df04",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "5f50c289701dc1890040ccc03f4bf07cf849f9e8",
+        "5b5d3070670265cefe863db66637cb73f34327f3",
+        "d7d7b5e421cf46bf30d95f4d912ff231811b1940"
+      ],
+      "donor_checkout_sha256_before_preparation": "ef0c11de6fd427b428852d3a9bab46ccf55cbe26b59b8b66e6863706ccaaac4f"
+    },
+    {
+      "path": "docs/audit/2026-09-25-trust-reset-stage-status.md",
+      "donor_git_blob": "e3b5e4327e0506d0c945a3e5700139a94d5ed2b5",
+      "disposition": "mark_historical_single_current_plan",
+      "commits": [
+        "959ea6a11f2689b097d5c118e043cacd1dde6c7a",
+        "964694bf41d2c82fcf7b0c83ffa0bef882289d24",
+        "fb44605078ecccfc0906269005b388fe55ced29c",
+        "0b8469f3b1528e6981de2c0b5cce5073da43a9b3",
+        "68bfdb8c209c92714df5572cd194b08a89ec394b",
+        "d13653f92aa1bedc02e8bfcc76e1fc557f25f0b2",
+        "5b55ed7256859a16bc24393d0108776dcd696403",
+        "65b036edc382926cbce36213acda26705585426c",
+        "f40d72a46ac0040e10c84d036649406e974301f3",
+        "7780bb8f88eb417cdb8bc09f7212e04767fd5474",
+        "954ff239f3c6f1bfd7304b975be041e4ebc24c46",
+        "b181646ff66ea9ea3b0e6a38ffcd3d16b6687312"
+      ],
+      "donor_checkout_sha256_before_preparation": "79a92cc17933ddb1d966e5c9808947bac812a1ae06e1bbf52f429d7d0cf0d04e"
+    },
+    {
+      "path": "docs/audit/2026-09-25-typed-preview-natural-m03-r2.md",
+      "donor_git_blob": "fc4e6a2251ce81f37a945e504d8b368d7ff582e6",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "1e59e2ef7e2c36ac3dece155ca210287d9086a20",
+        "6c4b97b26c9d873dfe7c3e22c475f5881191343f"
+      ],
+      "donor_checkout_sha256_before_preparation": "2662717bd094335161c3a26988ed9bdb03bf73017968aa39a6297739ba7afdf6"
+    },
+    {
+      "path": "docs/audit/2026-09-26-trust-reset-convergence-map.md",
+      "donor_git_blob": "4ff73be97eecfce76d1a05db950fc2c084c15398",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "65b036edc382926cbce36213acda26705585426c",
+        "f40d72a46ac0040e10c84d036649406e974301f3",
+        "7780bb8f88eb417cdb8bc09f7212e04767fd5474"
+      ],
+      "donor_checkout_sha256_before_preparation": "f0cd99e779fb5d2d47b6318f01d003f0b4c9304b9e5989b3db29a72176094baf"
+    },
+    {
+      "path": "docs/audit/2026-09-26-trust-reset-phase9-r1-authorization-stop.md",
+      "donor_git_blob": "880fe99dfb2f0991cde80f61f04b9c5af2d64dc1",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "fb44605078ecccfc0906269005b388fe55ced29c"
+      ],
+      "donor_checkout_sha256_before_preparation": "ca1658d8b77f09d0d2effdc1377d8dfd34400824a42b9913c66e080f0b3b6a9d"
+    },
+    {
+      "path": "docs/audit/2026-09-26-trust-reset-phase9-r3-real-matrix.md",
+      "donor_git_blob": "09bc520d6cbd3c11f1e5b9550ac602746056025d",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "68bfdb8c209c92714df5572cd194b08a89ec394b",
+        "d13653f92aa1bedc02e8bfcc76e1fc557f25f0b2"
+      ],
+      "donor_checkout_sha256_before_preparation": "adc365f49941f8793ae6d567fb1b18a536949449e9a7190f6acad88dbeca1c75"
+    },
+    {
+      "path": "docs/audit/2026-09-26-trust-reset-phase9-r4-plan-review.md",
+      "donor_git_blob": "88789aacab4541e3ae157b1d6a3b4d0bb75d9c45",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "5b55ed7256859a16bc24393d0108776dcd696403",
+        "65b036edc382926cbce36213acda26705585426c"
+      ],
+      "donor_checkout_sha256_before_preparation": "d609eff4671cbfb1a791f3130a2489a221d589a8dc2ac12a8f257b52c275b9c1"
+    },
+    {
+      "path": "docs/audit/2026-09-27-shadow-natural-m03-oracle.json",
+      "donor_git_blob": "ef1d6345d81e83a918609692c9b39ba1625fdf39",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "7780bb8f88eb417cdb8bc09f7212e04767fd5474"
+      ],
+      "donor_checkout_sha256_before_preparation": "c4ba82a0311ae07cf7143d1a41059434a68349167ab3082f7928ac624de26036"
+    },
+    {
+      "path": "docs/audit/2026-09-27-shadow-natural-m03-r1-evaluation.md",
+      "donor_git_blob": "a91f1ebb03b6698d6755ad91a4aa2c156562c3c2",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "954ff239f3c6f1bfd7304b975be041e4ebc24c46"
+      ],
+      "donor_checkout_sha256_before_preparation": "d657f4a0c1e9783fad6d28875146b3e81f4b0ad3b2b46b22af25ad846c61f1f1"
+    },
+    {
+      "path": "docs/audit/2026-09-27-trust-reset-host-fact-boundary.md",
+      "donor_git_blob": "d4d681555805295dedcf54e9f8d205ee4de9d491",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "b181646ff66ea9ea3b0e6a38ffcd3d16b6687312"
+      ],
+      "donor_checkout_sha256_before_preparation": "932f6a67dc3fd5719d9529405183098751cfa8a259b24b1e958a994c5a930224"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md",
+      "donor_git_blob": "95b048108ae29fc876ea5f92fcb139c6d77468cf",
+      "disposition": "replace_current_plan_preserve_git_history",
+      "commits": [
+        "985630007ffbd9a41ec1f1e7d4c51e83cc65e3f5",
+        "cdfcc1a5d4d4ab82cee85b722d9423a2c3036a99",
+        "0952ba46f5072ba66e4fb02b22d7cbd9d048fc92",
+        "d0a261429c82ddadadc5a9377e719526fe1f4fbc",
+        "d5a28ce4faaab2a08fa996d2b985800d437eb18f",
+        "9ef6fbc2eaea4e43a42a38beaae4f8234c39a241",
+        "ac84dd82f15574d235d10865b15b66cd3c7273c9",
+        "508a580306db2ebaa98f0dd633988a18d0497549",
+        "361197ae5b16ea7d3a717b424c9bb86adccecbe5",
+        "7d348ad4b85c663de1b81acaa6041036fd613a32",
+        "f2ea7e3db1da5d3263fd8a0859afa6c4cf355e75",
+        "c61ece7522b18a6fadd2354d7f05d79ba2ee094a",
+        "83dac2fb3d97c8d45c7a704517b4de31f4763577",
+        "3d5f6eaf0bec63826555a2d23ba38d2177cbc9eb",
+        "d94b8a95286453ea76cffd7188b8e01385d9225a",
+        "5f0480bc5f9d590ea80e0d74af2a29bbbbcc290e",
+        "57c33de2eecfb194a3a753c0d063ce154c54b6ce",
+        "84ab7904f7aeedb3af7374267d58bc4ac2cf354c",
+        "603dc115cc74664c1f062ca81547b8fbefb0a3ac",
+        "0fd91d1818c04ea8f06c0503c0e646214433f594",
+        "e05d957b85b2f42e6643c20e578c1156dfb933b9",
+        "eb821b5fe64d8f1b6bf563e37dae690a5e95eb2b",
+        "1f4327e3683e49c789d4059cbad16aafe5febf31",
+        "b70fbc35e212ed4d5389205d1a3ee9d801e2065f",
+        "26c223dfa77c196ae49b8b354322df384fb21a0b",
+        "54678971b7db6ee559d465361df229e8a5132cb2",
+        "5b3c75c57c355d2d207acbc549163134e8870c9b",
+        "3539067b5bb2a020fcf0b5615867b25f6e063fc5",
+        "3d71bfaefb6c88bf1ea947ea22117d479c3962aa",
+        "9932118317ce347e6582b7c891290a7ed3d3da54",
+        "3df2591999d86e8147591f2f5fab3efe64a29e2a",
+        "82801191b97a3ab8f99dd01243ed2b8b2b90d7bf",
+        "20665b9211e61657c18563b63837f46e9da915de",
+        "134e3cd7e03ed0855c80d0e59866305afecf970e",
+        "43238d1a06f56ca1cec54dafcdb0b39d0e790d2f",
+        "5f50c289701dc1890040ccc03f4bf07cf849f9e8",
+        "5b5d3070670265cefe863db66637cb73f34327f3",
+        "d7d7b5e421cf46bf30d95f4d912ff231811b1940",
+        "302a85db8e380b1437e2c5f74d5e67928a71ece4",
+        "44a89c5bff65aebdd1262e4786d4a97976a7aa6f",
+        "a7c0f5ef7243db952180e58c649e7ab3f118723d",
+        "5d10c8d0e97222fca8b85b427d82bb4d8101018a",
+        "4146df3926a531affb3f3b8765a430987bf501a7",
+        "dfd1bb3095543f49f9aead0ee1c52f069e748e6e",
+        "0c579a299ab62c0d0908b33b9a316ed697df2cb2",
+        "ae8a6de64fca3bdbf0d7cce27f05d089276bf5c5",
+        "522c21d96de111fd8069d01728e46fe8794d0d2d",
+        "2f09e70c158686540c058c8065a4e5f67cd76e73",
+        "1e59e2ef7e2c36ac3dece155ca210287d9086a20",
+        "d9558e362292f98e5c0d347468c4b59c7d6382b9",
+        "a84dbc1f6176f666fbbfcba2d391f4cf2b056043",
+        "e54a2b6a98e3a6626f60eca5ff5574016553fda8",
+        "76e9528cf5c1fea5c23316922d4bec12a3bccd96",
+        "b9b9ddce52f17086456f3a2499eb739303086a50",
+        "fbbc14741fa79901272fbcbd69cb48e15b7146b7",
+        "0ea810a53c659f2d80614b7af760764226a8b193",
+        "fc9ae7ac3e23d0096cec7f549c5f5b64372a9a12",
+        "959ea6a11f2689b097d5c118e043cacd1dde6c7a",
+        "954ff239f3c6f1bfd7304b975be041e4ebc24c46",
+        "b181646ff66ea9ea3b0e6a38ffcd3d16b6687312"
+      ],
+      "donor_checkout_sha256_before_preparation": "f294510a24f88988b31468211e4cbea7749574e08a9f638df8564bcd80d30819"
+    },
+    {
+      "path": "docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md",
+      "donor_git_blob": "dace40dc4ea803e830cdca5d84f02d7110ff6ff8",
+      "disposition": "retain_as_historical_evidence_not_current_authorization",
+      "commits": [
+        "1f4327e3683e49c789d4059cbad16aafe5febf31",
+        "b70fbc35e212ed4d5389205d1a3ee9d801e2065f",
+        "d9558e362292f98e5c0d347468c4b59c7d6382b9"
+      ],
+      "donor_checkout_sha256_before_preparation": "bbef03bdb1e02e9209d93a99923a61f67868a8e3a33002420b623eacd2d7762a"
+    }
+  ],
+  "original_requirements": [
+    "docs/superpowers/plans/2026-09-06-analysis-value-preservation-plan.md",
+    "docs/superpowers/plans/2026-09-07-intent-clarification-plan.md",
+    "docs/superpowers/plans/2026-09-08-answer-content-optimization-plan.md"
+  ],
+  "historical_receipts_verified_on_disk": [
+    {
+      "path": "tmp/trust-reset-phase3-full-offline-2/junit.xml",
+      "role": "baseline_historical_E2",
+      "bytes": 468415,
+      "sha256": "c96de690be28cf424ab5e36b7441771cc0d40db6b1d5ba42d0ac58d2f0b7aa65",
+      "freshly_executed": false
+    },
+    {
+      "path": "tmp/trust-reset-pending-full-20260927-r2/junit.xml",
+      "role": "donor_historical_E2",
+      "bytes": 496451,
+      "sha256": "d13eb2666d8ad816f90f0e37725beb57ad9a2bf563e95b5b62f53d96a57e4a5a",
+      "freshly_executed": false
+    },
+    {
+      "path": "tmp/phase9-p08-real-20260926-r4/provider-calls.jsonl",
+      "role": "normal_path_real_provider_ledger",
+      "bytes": 18677,
+      "sha256": "7b71bf69db42bd636120167958849b2a3ef4644b9310a2526c9033f34e455938",
+      "freshly_executed": false
+    },
+    {
+      "path": "tmp/phase9-p08-real-20260926-r4/scenario-audit.json",
+      "role": "normal_path_real_provider_audit",
+      "bytes": 19450,
+      "sha256": "00a5fa8b6401183137dc6fec3c84bcc25069ef9b94831429597ef5ac9b32567a",
+      "freshly_executed": false
+    },
+    {
+      "path": "tmp/typed-trial-natural-m03-20260925-r2/results.json",
+      "role": "opt_in_natural_trial",
+      "bytes": 1519,
+      "sha256": "904aa2d6cab0a5ce3b62e2102792b6d5fc6ee104ba34cd8f0085f2a47a73263d",
+      "freshly_executed": false
+    },
+    {
+      "path": "tmp/shadow-natural-m03-20260927-r1/results.json",
+      "role": "archived_answer_shadow_results",
+      "bytes": 7064,
+      "sha256": "82042c029a1563ea3d527542cf3b55e1ac56854edadf25b939c5d1c25eabde36",
+      "freshly_executed": false
+    },
+    {
+      "path": "tmp/shadow-natural-m03-20260927-r1/provider-calls.jsonl",
+      "role": "archived_answer_shadow_ledger",
+      "bytes": 520,
+      "sha256": "4799603033fe7edce4b32148ff776e551ef6e435f8fdfcbac82c9a3456ef857a",
+      "freshly_executed": false
+    }
+  ],
+  "limitations": [
+    "All migration dispositions are function-level candidates, not imported code or accepted product behavior.",
+    "Historical run directories stay in the donor workspace and are not copied into the new checkout.",
+    "Baseline has known post-baseline defects; R1 must restore deterministic protections before product-path validation."
+  ]
+}

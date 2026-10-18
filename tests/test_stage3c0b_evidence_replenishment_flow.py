@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+from tests.support.plan_inputs import bind_plan_fixture
+from tests.test_trusted_publication_semantics import engine
+
 from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.context import AgentContext, use_agent_context
@@ -26,6 +29,7 @@ def _state(session_id: str, project_name: str = "p1") -> AnalysisSessionState:
 
 def _synthesis_plan(plan_id: str = "plan_current") -> dict:
     return {
+        "requirement_revision": 0,
         "contract_version": STAGE3C0B_CONTRACT_VERSION,
         "id": plan_id,
         "goal": "Synthesize current evidence.",
@@ -36,6 +40,11 @@ def _synthesis_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": [],
                 "combination_mode": "synthesis",
                 "expected_output": "Evidence-backed answer with limitations.",
+                "required_deliveries": [{
+                    'requirement_id': 'rq_plan_fixture',
+                    'kind': 'interpretation',
+                    'label': 'Synthesize verified evidence only.: Evidence-backed answer with limitations.'
+                , "scope": {}}],
                 "evidence_requirements": ["answer_coverage"],
             },
         ],
@@ -45,6 +54,7 @@ def _synthesis_plan(plan_id: str = "plan_current") -> dict:
 
 def _replenishment_plan(plan_id: str = "plan_current") -> dict:
     return {
+        "requirement_revision": 0,
         "contract_version": STAGE3C0B_CONTRACT_VERSION,
         "id": plan_id,
         "goal": "Replenish missing revenue evidence.",
@@ -55,6 +65,11 @@ def _replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": ["orders"],
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for revenue_per_user.",
+                "required_deliveries": [{
+                    'requirement_id': 'rq_plan_fixture',
+                    'kind': 'measurement',
+                    'label': 'Calculate revenue per user for the missing material claim.: EvidenceRecord for revenue_per_user.'
+                , "scope": {"datasets": ['orders'], "metrics": ["revenue_per_user"], "quantity": "mean"}}],
                 "evidence_requirements": ["revenue_per_user"],
             },
         ],
@@ -64,6 +79,7 @@ def _replenishment_plan(plan_id: str = "plan_current") -> dict:
 
 def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
     return {
+        "requirement_revision": 0,
         "contract_version": STAGE3C0B_CONTRACT_VERSION,
         "id": plan_id,
         "goal": "Replenish two missing material claims.",
@@ -74,6 +90,11 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": ["orders"],
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for revenue_per_user.",
+                "required_deliveries": [{
+                    'requirement_id': 'rq_plan_fixture',
+                    'kind': 'measurement',
+                    'label': 'Calculate revenue per user.: EvidenceRecord for revenue_per_user.'
+                , "scope": {"datasets": ['orders'], "metrics": ["revenue_per_user"], "quantity": "mean"}}],
                 "evidence_requirements": ["revenue_per_user"],
             },
             {
@@ -82,6 +103,11 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": ["retention"],
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for day7_retention.",
+                "required_deliveries": [{
+                    'requirement_id': 'rq_plan_fixture',
+                    'kind': 'measurement',
+                    'label': 'Calculate day seven retention.: EvidenceRecord for day7_retention.'
+                , "scope": {"datasets": ['retention'], "metrics": ["day7_retention"], "quantity": "mean"}}],
                 "evidence_requirements": ["day7_retention"],
             },
             {
@@ -91,6 +117,11 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "combination_mode": "synthesis",
                 "required_evidence_step_ids": ["step_orders_revenue", "step_retention_d7"],
                 "expected_output": "Evidence-backed answer with limitations.",
+                "required_deliveries": [{
+                    'requirement_id': 'rq_plan_fixture',
+                    'kind': 'interpretation',
+                    'label': 'Synthesize verified evidence only.: Evidence-backed answer with limitations.'
+                , "scope": {}}],
                 "evidence_requirements": ["answer_coverage"],
             },
         ],
@@ -166,126 +197,86 @@ def _start_synthesis(manager: TaskManager, *, session_id: str, project_name: str
     return manager.get(synthesis["id"])
 
 
-def test_bounded_replenishment_loop_projects_independent_task_and_completes_from_evidence(
-    tmp_path,
-    monkeypatch,
-):
+def test_bounded_replenishment_loop_projects_independent_task_and_completes_from_evidence(tmp_path,monkeypatch,engine):
+    import pandas as pd
     import data_agent.tools.analysis_flow as analysis_flow
-
-    session_id = "replenish_happy"
-    project_name = "p1"
-    manager = TaskManager(tasks_dir=tmp_path / "tasks")
-    state = _state(session_id, project_name)
-    state.analysis_plan = _synthesis_plan()
-    state.analysis_spec = _synthesis_plan()
-    _install_task_manager(monkeypatch, manager)
-    _install_artifact_stubs(monkeypatch, state)
-    synthesis = _start_synthesis(manager, session_id=session_id, project_name=project_name)
-
-    blocked = ensure_dataset_allowed_for_current_task(
-        manager,
-        session_id,
-        project_name,
-        dataset="orders",
-    )
-    assert blocked.allowed is False
-    assert blocked.error_type == "synthesis_cannot_read_raw_dataset"
-
-    ctx = AgentContext(session_id=session_id, project_name=project_name, workspace=Workspace(), analysis_state=state)
-    with use_agent_context(ctx):
-        plan_result = json.loads(
-            analysis_flow.record_analysis_plan(json.dumps(_replenishment_plan()))
-        )
-
-    assert plan_result["workflow"]["created"] == 1
-    assert manager.get_active_plan_id(session_id, project_name) == synthesis["plan_id"]
-    active_tasks = manager.list_active_for_scope(session_id=session_id, project_name=project_name)
-    independent = next(task for task in active_tasks if task["step_id"] == "step_orders_revenue")
-    assert independent["combination_mode"] == "independent"
-    assert independent["dataset_inputs"] == ["orders"]
-    assert manager.get(synthesis["id"])["status"] == "in_progress"
-
-    manager.update(synthesis["id"], status="blocked")
-    manager.update(independent["id"], status="in_progress")
-    allowed = ensure_dataset_allowed_for_current_task(
-        manager,
-        session_id,
-        project_name,
-        dataset="orders",
-    )
-    outside_scope = ensure_dataset_allowed_for_current_task(
-        manager,
-        session_id,
-        project_name,
-        dataset="retention",
-    )
-    assert allowed.allowed is True
-    assert outside_scope.allowed is False
-    assert outside_scope.error_type == "dataset_outside_current_task_scope"
-
-    with use_agent_context(ctx):
-        evidence_result = json.loads(
-            analysis_flow.record_evidence_record(json.dumps(_evidence()))
-        )
-
-    assert evidence_result["completed_task_ids"] == [independent["id"]]
-    assert state.evidence_records[0]["evidence_requirement"] == "revenue_per_user"
-    completed = manager.get(independent["id"])
-    assert completed["status"] == "completed"
-    assert completed["completed_by"] == "evidence"
-
-    manager.update(synthesis["id"], status="in_progress")
-    still_blocked = ensure_dataset_allowed_for_current_task(
-        manager,
-        session_id,
-        project_name,
-        dataset="orders",
-    )
-    assert still_blocked.error_type == "synthesis_cannot_read_raw_dataset"
-    assert state.evidence_records[0]["id"] in completed["evidence_ids"]
+    from data_agent.tools.registry import registry
+    from tests.test_trusted_publication_semantics import execute
+    from data_agent.session.task_manager import task_manager as manager
+    loop,_=engine;state=loop.context.analysis_state
+    from data_agent.tools.data_io import load_data,reload_data
+    from data_agent.agent.artifact_refs import hydrate_refs
+    source=tmp_path/"orders.csv";pd.DataFrame({"revenue_per_user":[12.5]*24}).to_csv(source,index=False)
+    loaded=reload_data(str(source),"orders");assert not str(loaded).startswith("Error"),loaded
+    contract_id=next(c["id"] for c in hydrate_refs(state.dataset_contracts) if c["dataset"]=="orders")
+    plan=_two_claim_replenishment_plan();plan["method_plan"].pop(1)
+    plan["method_plan"][-1]["required_evidence_step_ids"]=["step_orders_revenue"]
+    result=json.loads(registry.execute("record_analysis_plan",{"plan_json":bind_plan_fixture(state,plan)}).summary)
+    assert "error" not in result,result
+    from data_agent.session.history import load_canonical_history
+    loop.messages=load_canonical_history(loop.session_id).messages
+    loop._last_jsonl_idx=len(loop.messages)
+    tasks=manager.list_active_for_scope(session_id=loop.session_id)
+    independent=next(t for t in tasks if t["step_id"]=="step_orders_revenue")
+    # Interpretation is a final-answer obligation, not a second calculation task.
+    assert all(t["step_id"]!="step_synthesis" for t in tasks)
+    assert any(d["kind"]=="interpretation" for r in state.answer_requirements for d in r["necessary_deliveries"])
+    annotation=json.loads(analysis_flow.record_evidence_record(json.dumps(_evidence(contract_id=contract_id))))
+    assert "error" not in annotation and not annotation.get("completed_task_ids")
+    assert manager.get(independent["id"])["status"]=="in_progress"
+    assert ensure_dataset_allowed_for_current_task(manager,loop.session_id,dataset="retention").allowed is False
+    loop._AgentLoop__context_operation("refresh")
+    execute(loop,"describe_dataset",{"name":"orders"})
+    from data_agent.agent.publication.runtime import snapshot_for_turn
+    (tmp_path/"replenishment-projection.json").write_text(json.dumps(dict(snapshot=snapshot_for_turn(loop).as_dict(),contracts=state.dataset_contracts,receipts=state.tool_receipts,tasks=manager.list_active_for_scope(session_id=loop.session_id)),ensure_ascii=False,indent=2),encoding="utf-8")
+    assert manager.get(independent["id"])["status"]=="completed"
+    assert all(t["step_id"]!="step_synthesis" for t in manager.list_active_for_scope(session_id=loop.session_id))
+    assert state.evidence_records[0]["evidence_requirement"]=="revenue_per_user"
+    from data_agent.agent.publication.runtime import snapshot_for_turn
+    host=snapshot_for_turn(loop).as_dict()
+    assert host["requirements"][0]["claim_ids"] and host["requirements"][0]["gap"] is None
+    assert state.accepted_answers == []  # Calculation completion does not synthesize or publish an answer.
+    assert any(c["value"]==12.5 and c["id"] in host["requirements"][0]["claim_ids"] for c in host["claims"])
 
 
-def test_replenishment_failure_isolates_only_the_missing_claim(tmp_path):
-    session_id = "replenish_failure"
-    project_name = "p1"
-    manager = TaskManager(tasks_dir=tmp_path / "tasks")
-    synthesis = _start_synthesis(manager, session_id=session_id, project_name=project_name)
-    active_plan_id = manager.get_active_plan_id(session_id, project_name)
-
-    projected = project_plan_to_workflow_tasks(
-        manager,
-        _two_claim_replenishment_plan(),
-        session_id=session_id,
-        project_name=project_name,
-        source="synthesis_replenishment",
-    )
-
-    assert projected["created"] == 2
-    assert projected["reused"] == 1
-    assert manager.get_active_plan_id(session_id, project_name) == active_plan_id
-
-    tasks = manager.list_active_for_scope(session_id=session_id, project_name=project_name)
-    revenue = next(task for task in tasks if task["step_id"] == "step_orders_revenue")
-    retention = next(task for task in tasks if task["step_id"] == "step_retention_d7")
-    synthesis = manager.get(synthesis["id"])
-    assert set(synthesis["blockedBy"]) == {revenue["id"], retention["id"]}
-
-    completed = manager.complete_matching_tasks_from_evidence(
-        session_id=session_id,
-        evidence=_evidence(),
-        analysis_spec_id="plan_current",
-    )
-    manager.update(
-        retention["id"],
-        status="failed",
-        result_summary="Retention extract is missing the day seven column.",
-        limitations="day7_retention remains unsupported.",
-    )
-
-    assert completed == [revenue["id"]]
-    assert manager.get(revenue["id"])["status"] == "completed"
-    assert manager.get(retention["id"])["status"] == "failed"
-    assert manager.get(synthesis["id"])["status"] == "in_progress"
-    assert manager.get(synthesis["id"])["blockedBy"] == [retention["id"]]
-    assert manager.get(revenue["id"])["evidence_ids"]
-    assert all(task["status"] != "superseded" for task in manager.list_active_for_scope(session_id=session_id, project_name=project_name))
+def test_replenishment_failure_isolates_only_the_missing_claim(tmp_path,engine):
+    import pandas as pd
+    from data_agent.tools.registry import registry
+    from data_agent.agent.publication.runtime import snapshot_for_turn
+    from tests.test_trusted_publication_semantics import execute
+    from data_agent.session.task_manager import task_manager as manager
+    loop,_=engine;state=loop.context.analysis_state
+    from data_agent.tools.data_io import load_data,reload_data
+    from data_agent.agent.artifact_refs import hydrate_refs
+    source=tmp_path/"orders.csv";pd.DataFrame({"revenue_per_user":[12.5]*24}).to_csv(source,index=False)
+    loaded=reload_data(str(source),"orders");assert not str(loaded).startswith("Error"),loaded
+    contract_id=next(c["id"] for c in hydrate_refs(state.dataset_contracts) if c["dataset"]=="orders")
+    source=tmp_path/"retention.csv";pd.DataFrame({"day7_retention":[.2]*24}).to_csv(source,index=False)
+    load_data(str(source),"retention")
+    result=json.loads(registry.execute("record_analysis_plan",{"plan_json":bind_plan_fixture(state,_two_claim_replenishment_plan())}).summary)
+    assert "error" not in result,result
+    from data_agent.session.history import load_canonical_history
+    loop.messages=load_canonical_history(loop.session_id).messages
+    loop._last_jsonl_idx=len(loop.messages)
+    tasks=manager.list_active_for_scope(session_id=loop.session_id)
+    revenue=next(t for t in tasks if t["step_id"]=="step_orders_revenue")
+    retention=next(t for t in tasks if t["step_id"]=="step_retention_d7")
+    # Interpretation is a final-answer obligation, not a second calculation task.
+    assert all(t["step_id"]!="step_synthesis" for t in tasks)
+    assert any(d["kind"]=="interpretation" for r in state.answer_requirements for d in r["necessary_deliveries"])
+    assert manager.complete_matching_tasks_from_evidence(loop.session_id,_evidence(contract_id=contract_id))==[]
+    loop._AgentLoop__context_operation("refresh")
+    execute(loop,"describe_dataset",{"name":"orders"})
+    from data_agent.agent.publication.runtime import snapshot_for_turn
+    (tmp_path/"replenishment-projection.json").write_text(json.dumps(dict(snapshot=snapshot_for_turn(loop).as_dict(),contracts=state.dataset_contracts,receipts=state.tool_receipts,tasks=manager.list_active_for_scope(session_id=loop.session_id)),ensure_ascii=False,indent=2),encoding="utf-8")
+    assert manager.get(revenue["id"])["status"]=="completed"
+    manager.update(retention["id"],status="failed",result_summary="Retention extract is missing the day seven column.",limitations="day7_retention remains unsupported.")
+    assert manager.get(retention["id"])["status"]=="failed"
+    # Mirror the normal loop refresh after the explicitly simulated task failure.
+    loop._AgentLoop__context_operation("refresh")
+    assert loop.context.workspace_scope.phase=="synthesis"
+    assert all(t["step_id"]!="step_synthesis" for t in manager.list_active_for_scope(session_id=loop.session_id))
+    host=snapshot_for_turn(loop).as_dict()
+    assert host["requirements"][0]["claim_ids"] and host["requirements"][0]["gap"]["status"]=="not_computed"
+    assert {c["scope"]["dataset"] for c in host["claims"]}=={"orders"}
+    assert any(c["id"] in host["requirements"][0]["claim_ids"] and c["value"]==12.5 for c in host["claims"])

@@ -1,0 +1,5 @@
+{
+  "source_sha256": "0dfd646422a0df07ba931693638471fb23de3555f4435f3fe71c4d76aaa7100c",
+  "input": "好的，继续。",
+  "visible_json": "{\"intent_type\": \"result_followup\", \"reason\": \"用户输入“好的，继续。”是在唯一未完成计划（spec_31a2e5d98f46）及其多个未交付需求（rq_7aa0152e06275ab003a5 等）的上下文中，承接原有交付继续执行，并非新知识问答或新分析目标。\", \"ambiguities\": [], \"continuation_of_plan_id\": \"spec_31a2e5d98f46\", \"requested_outputs\": [{\"exact_span\": \"好的，继续。\", \"kind\": \"result\", \"op\": \"reuse\", \"target_id\": \"rq_7aa0152e06275ab003a5\"}, {\"exact_span\": \"好的，继续。\", \"kind\": \"result\", \"op\": \"reuse\", \"target_id\": \"rq_3d24626ad4779c5804ef\"}, {\"exact_span\": \"好的，继续。\", \"kind\": \"result\", \"op\": \"reuse\", \"target_id\": \"rq_dc02dca3f055862bc69e\"}, {\"exact_span\": \"好的，继续。\", \"kind\": \"presentation\", \"op\": \"reuse\", \"target_id\": \"rq_9d4a7f8a6f788b26554d\"}, {\"exact_span\": \"好的，继续。\", \"kind\": \"presentation\", \"op\": \"reuse\", \"target_id\": \"rq_effdb5d0f7d7dda4bd10\"}, {\"exact_span\": \"好的，继续。\", \"kind\": \"presentation\", \"op\": \"reuse\", \"target_id\": \"rq_2d68233a14e93f53b101\"}]}"
+}

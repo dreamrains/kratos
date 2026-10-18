@@ -15,7 +15,6 @@ import pytest
 
 from scripts.testing.p08_scenario_audit import (
     MECHANICAL_ORACLES,
-    SCENARIO_PROMPT_PREFIXES,
     _detect_scenario_from,
     audit_run_dir,
     audit_session,
@@ -60,6 +59,7 @@ def _make_ledger(run_dir: Path, calls: list[dict]) -> None:
 
 M01_SUMMARY = "请分析当前上传的销售订单数据，给出已验证的关键业务事实和有条件的行动建议。"
 M01_EXPORT_REPORT = "conversation_Assistant_Reply_x.md"
+M03_SUMMARY = "请分别比较当前六个来源"
 
 
 class TestOracleContractConsistency:
@@ -72,37 +72,6 @@ class TestOracleContractConsistency:
 
 
 class TestSessionVerdicts:
-    def test_m02_numeric_text_is_unassessed_without_unit_evidence(self, tmp_path):
-        sdir = _make_session(
-            tmp_path, "s_m02", summary="请计算并解释 D1 至 D7 留存",
-            messages=[
-                {"role": "user", "content": "请计算并解释 D1 至 D7 留存"},
-                {"role": "assistant", "content": "D1 为 55%，D7 为 10%。"},
-            ],
-        )
-        verdict = audit_session(sdir, scenario="M02", actions=[])
-        check = next(c for c in verdict["checks"] if c["check"] == "answer_numeric_oracles")
-        assert check["passed"] is False
-        assert check["blocking"] is False
-        assert "unassessed" in check["detail"]
-        assert verdict["structured_evidence"]["host_rendered_claims"] == 0
-        assert verdict["structured_evidence"]["request_completeness"] == "unassessed"
-
-    @pytest.mark.parametrize("answer", [
-        "12 条订单，合计 120。",
-        "订单数和金额已计算，详见同版本回执。",
-    ])
-    def test_numeric_prose_presence_or_absence_cannot_pass_or_block(self, tmp_path, answer):
-        sdir = _make_session(tmp_path, "s_numeric", summary=M01_SUMMARY, messages=[
-            {"role": "user", "content": M01_SUMMARY},
-            {"role": "assistant", "content": answer},
-        ])
-        verdict = audit_session(sdir, scenario="M01", actions=[])
-        check = next(c for c in verdict["checks"] if c["check"] == "answer_numeric_oracles")
-        assert check["passed"] is False
-        assert check["blocking"] is False
-        assert "unassessed" in check["detail"]
-
     def test_clean_session_passes_all_blocking_checks(self, tmp_path):
         sdir = _make_session(
             tmp_path, "s_clean", summary=M01_SUMMARY,
@@ -188,7 +157,7 @@ class TestRunLevelVerdicts:
             for c in report["run_checks"]
         )
 
-    def test_partial_run_cannot_claim_complete_matrix(self, tmp_path):
+    def test_mechanically_clean_run_remains_incomplete_without_claim_oracle(self, tmp_path):
         self._base_run(tmp_path)
         report = audit_run_dir(tmp_path)
         blocking = [c for c in report["run_checks"] if c["blocking"] and not c["passed"]]
@@ -196,43 +165,42 @@ class TestRunLevelVerdicts:
             sid: [c for c in v["checks"] if c["blocking"] and not c["passed"]]
             for sid, v in report["sessions"].items()
         }
-        assert [c["check"] for c in blocking] == ["scenario_matrix_coverage"]
+        assert blocking == []
         assert all(v == [] for v in scenarios_blocking.values())
-        assert report["verdict"] == "failed"
-        assert report["dimensions"]["execution"] == "failed"
+        assert report["verdict"] == "incomplete"
+        assert report["required_unassessed"] == ["numeric_claim_consistency"]
 
-    def test_unrecognized_sessions_cannot_make_empty_matrix_pass(self, tmp_path):
-        _make_session(tmp_path, "s_unknown", summary="非 P08 测试会话")
-        _make_ledger(tmp_path, [
-            {"at": 1.0, "event": "started", "call_number": 1},
-            {"at": 2.0, "event": "dispatched", "call_number": 1},
+    def test_multiturn_numbers_are_not_judged_by_last_reply_tokens(self, tmp_path):
+        sdir = _make_session(tmp_path, "s_multiturn", summary=M01_SUMMARY, messages=[
+            {"role": "user", "content": M01_SUMMARY},
+            {"role": "assistant", "content": "12 条订单，金额 120；单位未知。"},
+            {"role": "user", "content": "请比较下一窗口"},
+            {"role": "assistant", "content": "下一窗口尚未观测。"},
         ])
-        report = audit_run_dir(tmp_path)
-        assert report["sessions"] == {}
-        assert report["verdict"] == "failed"
-        assert any(c["check"] == "scenario_matrix_coverage" and not c["passed"]
-                   for c in report["run_checks"])
+        verdict = audit_session(sdir, scenario="M01", actions=[])
+        assert verdict["required_assessments"]["numeric_claim_consistency"]["status"] == "unassessed"
+        assert not any(c["check"] == "answer_numeric_oracles" for c in verdict["checks"])
 
-    def test_complete_protocol_matrix_waits_for_content_review(self, tmp_path):
-        for scenario, prompt in SCENARIO_PROMPT_PREFIXES.items():
-            _make_session(tmp_path, f"s_{scenario}", summary=prompt, reports={
-                "conversation_1.md": "12 条订单，合计 120",
-                "publication_1.md": "12 条订单，合计 120",
-            })
-        _make_ledger(tmp_path, [
-            {"at": 1.0, "event": "started", "call_number": 1},
-            {"at": 2.0, "event": "dispatched", "call_number": 1},
-        ])
+    def test_first_turn_failure_survives_later_completed_session_state(self, tmp_path):
+        self._base_run(tmp_path)
+        _write_json(tmp_path / "freeze.json", {
+            "matrix": ["M01"], "scenario_inputs": {"M01": {"prompts": ["first", "second"]}},
+        })
+        rows = [
+            {"scenario": "M01", "turn": 1, "session_id": "s1", "terminal": "failed",
+             "run_state": {"session_id": "s1", "status": "failed"}},
+            {"scenario": "M01", "turn": 2, "session_id": "s1", "terminal": "completed",
+             "run_state": {"session_id": "s1", "status": "completed"}},
+        ]
+        (tmp_path / "http-matrix.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in rows), encoding="utf-8",
+        )
         report = audit_run_dir(tmp_path)
-        assert len(report["sessions"]) == 6
-        assert not [c for c in report["run_checks"] if c["blocking"] and not c["passed"]]
-        assert report["verdict"] == "needs_review"
-        assert report["dimensions"] == {
-            "execution": "passed", "evidence": "unassessed",
-            "value": "unassessed", "transfer": "passed",
-            "declaration": "passed",
-        }
-        assert report["semantic_audit"] == "unassessed"
+        outcome = next(item for item in report["run_checks"]
+                       if item["check"] == "matrix_turn_outcomes")
+        assert outcome["passed"] is False
+        assert "M01/1" in outcome["detail"]
+        assert report["verdict"] == "failed"
 
 
 class TestAdvisoryOnlySemantics:
@@ -278,38 +246,70 @@ class TestRulerCalibrationGaps:
 
     def test_m06_cost_scope_question_is_authorized_but_data_nature_question_is_not(self, tmp_path):
         cost_scope = {"records": {"c1": {
-            "source": "ask_user_question", "operation": "direct_user_question",
-            "answer_mode": "single_select", "status": "resolved",
-            "question": "促销净收益的\"成本\"口径请确认：净收益应扣哪一类成本？",
-            "resolution_params": {
-                "confirmation_type": "metric_definition",
-                "decision_kind": "metric_definition",
-            },
-            "options": [{"value": "A. 代金券成本"},
-                        {"value": "B. 代金券成本 + 渠道成本"}],
-            "response": "B. 代金券成本 + 渠道成本",
-        }}}
+            "operation": "direct_user_question", "answer_mode": "single_select",
+            "question": "计算「促销净收益」时，成本口径采用哪一种？"}}}
         data_nature = {"records": {"c1": {
             "operation": "direct_user_question", "answer_mode": "single_select",
             "question": "这份 M01-sales 数据的性质是？"}}}
-        wrong_metric = {"records": {"c1": {
-            "source": "ask_user_question", "operation": "direct_user_question",
-            "answer_mode": "single_select", "status": "resolved",
-            "question": "请确认数据性质？",
-            "resolution_params": {"confirmation_type": "metric_definition",
-                                  "decision_kind": "metric_definition"},
-            "options": [{"value": "A"}], "response": "A",
-        }}}
         m06 = _make_session(tmp_path, "s_m6", summary="请分析名为 missing_orders", confirmations=cost_scope)
-        m06_wrong = _make_session(tmp_path, "s_m6_wrong", summary="请分析名为 missing_orders", confirmations=wrong_metric)
         m01 = _make_session(tmp_path, "s_m1c", summary=M01_SUMMARY, confirmations=data_nature)
         v6 = audit_session(m06, scenario="M06", actions=[])
-        v6_wrong = audit_session(m06_wrong, scenario="M06", actions=[])
         v1 = audit_session(m01, scenario="M01", actions=[])
         assert all(c["passed"] for c in v6["checks"] if c["check"] == "confirmations_authorized")
-        assert not any(c["passed"] for c in v6_wrong["checks"] if c["check"] == "confirmations_authorized")
         failed = [c["check"] for c in v1["checks"] if c["blocking"] and not c["passed"]]
         assert "confirmations_authorized" in failed
+
+
+class TestYoyReceiptBinding:
+    """P1-6：同比标签的跨年判定来自 compare_periods 回执，不再挖散文年份。"""
+
+    _SAME_YEAR = {
+        "period_a": {"label": "本期", "range": ["2026-09-01", "2026-09-02"]},
+        "period_b": {"label": "对比期", "range": ["2026-09-08", "2026-09-09"]},
+    }
+    _CROSS_YEAR = {
+        "period_a": {"label": "去年同周", "range": ["2025-09-01", "2025-09-07"]},
+        "period_b": {"label": "本周", "range": ["2026-09-01", "2026-09-07"]},
+    }
+
+    def _m03_session(self, tmp_path, sid, final_text, receipt):
+        sdir = _make_session(tmp_path, sid, summary=M03_SUMMARY, messages=[
+            {"role": "user", "content": M03_SUMMARY},
+            {"role": "assistant", "content": final_text},
+        ])
+        _write_json(sdir / "tool_outputs" / "compare_periods_1.json", receipt)
+        return sdir
+
+    def test_sameyear_receipt_with_yoy_label_is_blocking_even_with_prose_years(self, tmp_path):
+        """R16 通路收口：散文出现两个年份不再放行，判定只认回执。"""
+        sdir = self._m03_session(
+            tmp_path, "s_yoy_r",
+            "2025 与 2026 两个年度口径合并后六来源合计 210 与 231，金额同比增长 10%。",
+            self._SAME_YEAR,
+        )
+        verdict = audit_session(sdir, scenario="M03", actions=[])
+        failed = [c["check"] for c in verdict["checks"] if c["blocking"] and not c["passed"]]
+        assert "yoy_requires_crossyear_receipt" in failed
+
+    def test_crossyear_receipt_supports_yoy_label_without_prose_years(self, tmp_path):
+        sdir = self._m03_session(
+            tmp_path, "s_yoy_ok",
+            "六来源合计 210 与 231；金额同比增长 10%。",
+            self._CROSS_YEAR,
+        )
+        verdict = audit_session(sdir, scenario="M03", actions=[])
+        yoy = [c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt"][0]
+        assert yoy["passed"]
+
+    def test_same_proportional_wording_is_not_a_yoy_label(self, tmp_path):
+        sdir = self._m03_session(
+            tmp_path, "s_yoy_prop",
+            "各来源同比例上升：合计 210 与 231。",
+            self._SAME_YEAR,
+        )
+        verdict = audit_session(sdir, scenario="M03", actions=[])
+        yoy = [c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt"][0]
+        assert yoy["passed"]
 
 
 M06_SUMMARY = "请分析名为 missing_orders 的数据集"

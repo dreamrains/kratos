@@ -146,11 +146,18 @@ def show_project_rules() -> str:
 
 @registry.register(
     name="update_project_rules",
+    capability={"capability_id":"system.update_project_rules","category":"data_write"},
+    output_contract={"version":"native_operation_effect.v1","adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation"]},
     description="Update global project rules content.",
 )
 def update_project_rules(content: str) -> str:
     _ensure_instances()
-    return _project_rules.update(content)
+    from data_agent.agent.publication.native import _file_state
+    from data_agent.agent.publication.contracts import digest
+    from data_agent.tools.registry import ToolResult
+    path=_project_rules.path.resolve();before=_file_state(path)
+    summary=_project_rules.update(content)
+    return ToolResult(summary=summary,data={"path":str(path),"before":before,"state":{"exists":True,"sha256":digest(content)}})
 
 
 def show_domain_knowledge() -> str:
@@ -190,6 +197,8 @@ def confirm_experience(entry_id: str) -> str:
 
 @registry.register(
     name="create_knowledge_item",
+    capability={"capability_id":"system.create_knowledge_item","category":"data_write"},
+    output_contract={"version":"native_operation_effect.v1","adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation"]},
     description="Create a user-confirmed formal knowledge item.",
 )
 def create_knowledge_item(
@@ -200,12 +209,14 @@ def create_knowledge_item(
     tags: list[str] | None = None,
 ) -> dict:
     item = _library().create(title, domain, content, summary, tags or [])
-    return _knowledge_to_dict(item)
+    return dict(_knowledge_to_dict(item), path=item.path, source=item.source.value,
+                created_at=item.created_at, deprecated_at=item.deprecated_at,
+                supersedes=item.supersedes, superseded_by=item.superseded_by)
 
 
 @registry.register(
     name="search_knowledge",
-    description="Search active formal knowledge by query and optional domain.",
+    description="Search active formal knowledge by query and optional domain. limit is an integer count (not bool, float or string); zero or negative returns no items.",
 )
 def search_knowledge(query: str, domain: str = "", limit: int = 5) -> list[dict]:
     return [
@@ -216,6 +227,8 @@ def search_knowledge(query: str, domain: str = "", limit: int = 5) -> list[dict]
 
 @registry.register(
     name="create_memory_candidate",
+    capability={"capability_id":"system.create_memory_candidate","category":"data_write"},
+    output_contract={"version":"native_operation_effect.v1","adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation"]},
     description="Create a reviewable memory candidate from conversation evidence.",
 )
 def create_memory_candidate(
@@ -235,16 +248,27 @@ def create_memory_candidate(
         domain=domain,
         tags=tags or [],
     )
-    return _memory_to_dict(item)
+    from data_agent.agent.publication.native import _memory_record
+    return dict(_memory_to_dict(item),state=_memory_record(item),before=None)
 
 
 @registry.register(
     name="confirm_memory",
+    capability={"capability_id":"system.confirm_memory","category":"data_write"},
+    output_contract={"version":"native_operation_effect.v1","adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation"]},
     description="Confirm a memory candidate so it may be used as a low-priority memory hint.",
 )
 def confirm_memory(memory_id: str) -> dict:
-    item = _memory().confirm(memory_id)
-    return _memory_to_dict(item) if item else {"error": "memory not found"}
+    from data_agent.agent.publication.native import _memory_record
+    store=_memory()
+    with store.db.connect() as conn:
+        conn.execute("BEGIN")
+        before=store._get_with_connection(conn,memory_id)
+        if before is None:return {"error":"memory not found"}
+        if before.status.value not in {"candidate","confirmed"}:
+            raise ValueError("确认仅支持待审候选或已确认记忆；当前状态不支持。")
+        item=store._confirm_with_connection(conn,memory_id)
+    return dict(_memory_to_dict(item),state=_memory_record(item),before=_memory_record(before))
 
 
 @registry.register(

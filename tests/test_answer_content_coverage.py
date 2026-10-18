@@ -1,382 +1,133 @@
+from tests.test_trusted_publication_semantics import engine,execute
+from tests.test_trusted_publication_runtime import request,draft
+from data_agent.agent.publication.runtime import snapshot_for_turn,publish,commit
+from data_agent.agent.publication.service import PublicationService
+from data_agent.agent.publication.contracts import encode
+from data_agent.agent.publication.requirements import update_requirements
+from data_agent.session.history import save_session,load_canonical_history
 import json
 
-from data_agent.agent.analysis_state import AnalysisSessionState
-from data_agent.agent.publication_synthesis import (
-    build_publication_packet,
-    extract_publication_fact_groups,
-    extract_publication_facts,
-    parse_answer_bindings,
-    apply_answer_binding_coverage,
-    render_bound_claims,
-    extract_explicit_requirements,
-    update_requirement_lifecycle,
-    validate_final_narrative_issues,
-)
 
 
-def _state_with_metrics(metrics: dict) -> AnalysisSessionState:
-    state = AnalysisSessionState("coverage")
-    state.add_tool_receipt({
-        "id": "tr_metrics",
-        "tool_name": "run_python",
-        "result_sha256": "sha256:result",
-        "structured_result_sha256": "sha256:structured",
-        "result_preview": "metrics computed",
-        "publication_facts": extract_publication_facts(metrics, max_facts=500),
-        "publication_fact_groups": extract_publication_fact_groups(metrics, receipt_id="tr_metrics")["groups"],
-        "publication_contract": {"schema_version": "publication_scope.v1", "tool": "run_python"},
-    })
-    return state
 
 
-def _binding(packet: dict, blocks: list[dict]) -> str:
-    return "```answer-bindings\n" + json.dumps({
-        "schema_version": "answer_bindings.v1",
-        "packet_digest": packet["snapshot_digest"],
-        "blocks": blocks,
-    }, ensure_ascii=False) + "\n```"
 
 
-def test_ac16_two_explicit_requirements_cannot_be_satisfied_by_one_metric():
-    state = _state_with_metrics({"收入": {"value": 100}, "复购率": {"value": 0.2}})
-    packet = build_publication_packet(
-        state, user_input="请回答收入和复购率", substantive_tools={"run_python"},
-    )
-    issues = validate_final_narrative_issues("收入为100元。", packet)
-    assert any(issue["code"] == "missing_answer_requirement" and issue["span"] == "复购率" for issue in issues)
+def test_ac16_two_explicit_requirements_cannot_be_satisfied_by_one_metric(engine):
+    loop,_=engine
+    request(loop,"回答收入",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'metrics': ['amount'], 'quantity': 'sum'}})
+    request(loop,"回答复购率",{'kind': 'table', 'scope': {'datasets': ['orders'], 'metrics': ['repurchase_rate']}})
+    execute(loop,"describe_dataset",{"name":"orders"})
+    answer=_publish(loop)
+    assert [r["status"] for r in answer["requirement_outcomes"]]==["answered","not_computed"]
+    assert any(c["value"]==180 for c in answer["source_snapshot"]["claims"])
 
 
-def test_cr03_single_direct_metric_request_is_a_requirement_with_receipt_identity():
-    state = _state_with_metrics({"复购率": {"value": 0.2}})
-    ids = update_requirement_lifecycle(state, "请回答复购率", source_message_ref="msg_single")
-    assert len(ids) == 1
-    packet = build_publication_packet(
-        state, user_input="请回答复购率", substantive_tools={"run_python"}, requirement_ids=ids,
-    )
-    assert [(item["id"], item["label"]) for item in packet["requirements"]] == [(ids[0], "复购率")]
-    assert packet["requirements"][0]["metric_identity_status"] == "verified"
-    assert any(item["code"] == "missing_answer_requirement" for item in validate_final_narrative_issues("目前只给出方法说明。", packet))
-    placeholder = "[[claim:claim_repeat]]"
-    fact_id = next(item["fact_id"] for item in packet["sources"][0]["facts"] if item["path"] == "复购率.value")
-    clean, bindings, issues = parse_answer_bindings(placeholder + "\n\n" + _binding(packet, [{
-        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
-        "exact_text": placeholder, "requirement_refs": ids, "fact_refs": [fact_id], "derived_refs": [],
-    }]), packet)
-    assert not issues
-    packet["answer_bindings"] = bindings
-    assert validate_final_narrative_issues(clean, packet) == []
-    assert render_bound_claims(clean, packet, bindings) == "复购率：0.2（回执原始数值尺度；单位未确认）"
+def test_ac17_nine_items_allow_eight_answers_and_one_specific_gap(engine):
+    import pandas as pd
+    loop,_=engine
+    for number in range(1,9):
+        name="metric_"+str(number)
+        loop.context.workspace.add(name,pd.DataFrame({"amount":[number]}))
+        request(loop,"指标"+str(number),{'kind': 'measurement', 'scope': {'datasets': [name], 'metrics': ['amount'], 'quantity': 'sum'}})
+        execute(loop,"describe_dataset",{"name":name})
+    request(loop,"指标9复购率缺少分母，请说明证据缺口",kind="gap")
+    answer=_publish(loop)
+    assert len(answer["requirement_outcomes"])==9
+    assert [r["status"] for r in answer["requirement_outcomes"]]==["answered"]*8+["evidence_insufficient"]
+    values=[c["value"] for c in answer["source_snapshot"]["claims"] if c["target"].get("statistic")=="sum"]
+    assert sorted(values)==list(range(1,9))
+    assert "指标9复购率缺少分母" in answer["body"]
 
 
-def test_cr03_single_metric_cannot_borrow_unrelated_current_receipt():
-    state = _state_with_metrics({"收入": {"value": 100}})
-    packet = build_publication_packet(state, user_input="请回答复购率", substantive_tools={"run_python"})
-    assert [item["label"] for item in packet["requirements"]] == ["复购率"]
-    assert packet["requirements"][0]["metric_identity_status"] == "unassessed"
-    assert packet["requirements"][0]["evidence_coverage"] == "unassessed"
-    fact_id = packet["sources"][0]["facts"][0]["fact_id"]
-    _, _, binding_issues = parse_answer_bindings("[[claim:claim_repeat]]\n\n" + _binding(packet, [{
-        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
-        "exact_text": "[[claim:claim_repeat]]", "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [fact_id], "derived_refs": [],
-    }]), packet)
-    assert any(item["code"] == "invalid_observed_binding" for item in binding_issues)
-    assert packet["requirements"][0]["answer_coverage"] != "answered"
+def test_ac18_not_computed_and_evidence_insufficient_stay_distinct(engine):
+    loop,_=engine
+    request(loop,"渠道拆分尚未计算",{'kind': 'table', 'scope': {'datasets': ['orders']}})
+    request(loop,"复购率缺少订单分母，请说明缺口",kind="gap")
+    answer=_publish(loop)
+    assert [r["status"] for r in answer["requirement_outcomes"]]==["not_computed","evidence_insufficient"]
+    assert not answer["source_snapshot"]["claims"]
 
 
-def test_cr03_single_direct_zero_and_ambiguous_receipts_keep_distinct_status():
-    zero = build_publication_packet(
-        _state_with_metrics({"收入": {"value": 0}}),
-        user_input="请回答收入", substantive_tools={"run_python"},
-    )
-    assert zero["requirements"][0]["metric_identity_status"] == "verified"
-    state = _state_with_metrics({"收入": {"value": 100}})
-    state.add_tool_receipt({
-        "id": "tr_second", "tool_name": "run_python", "result_sha256": "sha256:second",
-        "structured_result_sha256": "sha256:second", "result_preview": "another result",
-        "publication_facts": extract_publication_facts({"收入": {"value": 200}}, max_facts=500),
-        "publication_contract": {"schema_version": "publication_scope.v1", "tool": "run_python"},
-    })
-    ambiguous = build_publication_packet(state, user_input="请回答收入", substantive_tools={"run_python"})
-    assert ambiguous["requirements"][0]["metric_identity_status"] == "unassessed"
+def test_ac19_host_rejects_model_binding_to_unknown_fact(engine):
+    loop,_=engine
+    request(loop,"计算收入",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'metrics': ['amount'], 'quantity': 'sum'}})
+    request(loop,"计算复购率",{'kind': 'table', 'scope': {'datasets': ['orders'], 'metrics': ['repurchase_rate']}})
+    execute(loop,"describe_dataset",{"name":"orders"})
+    snapshot=snapshot_for_turn(loop);rid=snapshot.as_dict()["requirements"][1]["id"]
+    answer=PublicationService(snapshot).publish(encode({"schema":"answer_bindings.v2","snapshot_digest":snapshot.digest,
+        "sections":[{"requirement_ids":[rid],"parts":[{"kind":"claim","ref":"fact_from_old_version"}]}]})).as_dict()
+    assert {i["code"] for i in answer["issues"]}=={"unknown_claim_ref"}
+    assert [r["status"] for r in answer["requirement_outcomes"]]==["answered","not_computed"]
 
 
-def test_cr03_open_analysis_and_fitted_curve_are_not_single_metric_requirements():
-    for request in ("请分析整体情况", "拟合留存曲线并说明边界", "请比较两个渠道的表现"):
-        assert extract_explicit_requirements(request) == []
+def test_ac20_requirement_retraction_and_window_replacement_are_versioned(engine):
+    loop,_=engine
+    first=_change(loop,"收入和复购率",[{"op":"add","start":0,"end":2,"kind":"result"},{"op":"add","start":3,"end":6,"kind":"result"}])
+    _change(loop,"撤回复购率",[{"op":"withdraw","start":0,"end":len("撤回复购率"),"kind":"result","target_id":first[1]}])
+    old=_change(loop,"最近7天收入",[{"op":"add","start":0,"end":len("最近7天收入"),"kind":"result","business_scope":{"datasets":["orders"],"parameters":{"window_days":7}}}])[0]
+    new=_change(loop,"最近30天收入",[{"op":"replace","start":0,"end":len("最近30天收入"),"kind":"result","target_id":old,"business_scope":{"datasets":["orders"],"parameters":{"window_days":30}}}])[0]
+    state=loop.context.analysis_state
+    assert state.requirement_revision==4
+    assert {r["id"] for r in state.answer_requirements if r["lifecycle_status"]=="withdrawn"}=={first[1],old}
+    current=next(r for r in state.answer_requirements if r["id"]==new)
+    assert current["original_text"]=="最近30天收入" and current["business_scope"]["parameters"]=={"window_days":30}
+    assert current["source_message_ref"]==loop.messages[-1]["request_id"]
 
 
-def test_ac17_nine_items_allow_eight_answers_and_one_specific_gap():
-    labels = [f"指标{i}" for i in range(1, 10)]
-    state = _state_with_metrics({label: {"value": index} for index, label in enumerate(labels, 1)})
-    request = "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
-    packet = build_publication_packet(state, user_input=request, substantive_tools={"run_python"})
-    blocks = []
-    for index, requirement in enumerate(packet["requirements"][:8], 1):
-        fact = next(
-            fact for fact in packet["sources"][0]["facts"]
-            if fact["path"] == f"指标{index}.value"
-        )
-        blocks.append({
-            "claim_id": f"claim_metric_{index}", "claim_type": "observed_fact",
-            "status": "observed", "exact_text": f"[[claim:claim_metric_{index}]]",
-            "requirement_refs": [requirement["id"]], "fact_refs": [fact["fact_id"]],
-            "derived_refs": [],
-        })
-    visible = "。".join([block["exact_text"] for block in blocks] + ["指标9缺少分母，证据不足"])
-    answer, bindings, binding_issues = parse_answer_bindings(visible + "\n\n" + _binding(packet, blocks), packet)
-    assert not binding_issues
-    packet["answer_bindings"] = bindings
-    assert not [issue for issue in validate_final_narrative_issues(answer, packet) if issue["code"] == "missing_answer_requirement"]
+def test_semantic_requirements_keep_source_identity_without_claiming_coverage(engine):
+    import pytest
+    loop,_=engine
+    content="促销净收益；已算未算与证据缺口"
+    valid=[{"op":"add","start":0,"end":5,"kind":"result"},{"op":"add","start":6,"end":len(content),"kind":"gap"}]
+    with pytest.raises(ValueError):_change(loop,content,valid+[{"op":"add","start":0,"end":len(content)+1,"kind":"result"}])
+    state=loop.context.analysis_state
+    assert state.answer_requirements==[] and state.requirement_revision==0
+    snapshot=load_canonical_history(loop.session_id);ref=loop.messages[-1]["request_id"]
+    ids=update_requirements(state,snapshot,ref,valid,expected_revision=0)
+    assert update_requirements(state,snapshot,ref,valid,expected_revision=1)==ids
+    assert len(ids)==2 and state.requirement_revision==1
+    assert {r["source_message_ref"] for r in state.answer_requirements}=={ref}
+    assert not any("answer_coverage" in r for r in state.answer_requirements)
 
 
-def test_ac18_not_computed_and_evidence_insufficient_stay_distinct():
-    packet = {
-        "requirements": [
-            {"id": "rq_a", "label": "渠道拆分"},
-            {"id": "rq_b", "label": "复购率"},
-        ],
-        "publication_scope": [],
-    }
-    text = "渠道拆分因本轮预算限制尚未计算。复购率缺少订单分母，证据不足。"
-    assert validate_final_narrative_issues(text, packet) == []
-    assert packet["requirements"][0]["answer_coverage"] == "not_computed"
-    assert packet["requirements"][1]["answer_coverage"] == "evidence_insufficient"
-    assert all(item["coverage_check"] == "unassessed" for item in packet["requirements"])
+def test_presentation_rewording_cannot_create_a_replacement_requirement(engine):
+    loop,_=engine
+    request(loop,"计算当前金额",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'quantity': 'rows'}})
+    execute(loop,"describe_dataset",{"name":"orders"})
+    current=snapshot_for_turn(loop);body,error=publish(loop,draft(current));assert error is None
+    assert commit(loop,{"role":"assistant"},body) is None
+    prior=loop.context.analysis_state.accepted_answers[-1]["answer_id"]
+    ids=_change(loop,"改成业务负责人表达",[{"op":"add","start":0,"end":len("改成业务负责人表达"),"kind":"presentation","source_answer_id":prior}])
+    state=loop.context.analysis_state
+    assert len(state.answer_requirements)==2 and all(r["lifecycle_status"]=="active" for r in state.answer_requirements)
+    changed=next(r for r in state.answer_requirements if r["id"]==ids[0])
+    assert changed["source_answer_id"]==prior and changed["semantic_kind"]=="presentation"
+    snapshot=snapshot_for_turn(loop)
+    assert any(r["id"]==ids[0] and r["claim_ids"] for r in snapshot.as_dict()["requirements"])
 
 
-def test_model_stated_gap_does_not_become_host_checked_coverage():
-    packet = {
-        "requirements": [{"id": "rq_repeat", "label": "复购率"}],
-        "publication_scope": [],
-        "sources": [{"facts": [{"path": "orders.count", "value": 120}]}],
-    }
-    assert validate_final_narrative_issues("复购率缺少订单分母，证据不足。", packet) == []
-    assert packet["requirements"][0]["answer_coverage"] == "evidence_insufficient"
-    assert packet["requirements"][0]["coverage_check"] == "unassessed"
+def test_ac21_binding_is_removed_and_stale_or_malformed_protocol_is_not_trusted(engine):
+    loop,_=engine
+    request(loop,"计算当前记录数",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'quantity': 'rows'}})
+    execute(loop,"describe_dataset",{"name":"orders"})
+    snapshot=snapshot_for_turn(loop);raw=draft(snapshot)
+    good=PublicationService(snapshot).publish(raw).as_dict()
+    assert good["issues"]==[] and "answer_bindings.v2" not in good["body"]
+    for bad in [raw.replace(snapshot.digest,"sha256:old"),"{bad}"]:
+        answer=PublicationService(snapshot).publish(bad).as_dict()
+        assert answer["issues"] and any(c["label"]=="记录数" and c["value"]==12 for c in answer["source_snapshot"]["claims"])
 
 
-def test_ac19_host_rejects_model_binding_to_unknown_fact():
-    state = _state_with_metrics({"收入": {"value": 100}})
-    packet = build_publication_packet(state, user_input="请回答收入和复购率", substantive_tools={"run_python"})
-    text = "收入为100元。复购率为20%。\n\n" + _binding(packet, [{
-        "exact_text": "复购率为20%。",
-        "requirement_refs": [packet["requirements"][1]["id"]],
-        "fact_refs": ["fact_from_old_version"],
-        "derived_refs": [],
-    }])
-    _, _, issues = parse_answer_bindings(text, packet)
-    assert [issue["code"] for issue in issues] == ["unresolved_answer_binding"]
+def _publish(loop):
+    snapshot=snapshot_for_turn(loop)
+    return PublicationService(snapshot).publish(draft(snapshot)).as_dict()
 
 
-def test_ac20_requirement_retraction_and_window_replacement_are_versioned():
-    state = AnalysisSessionState("lifecycle")
-    ids = update_requirement_lifecycle(state, "请回答收入和复购率", source_message_ref="msg1")
-    assert len(ids) == 2
-    revision1 = state.requirement_revision
-    active = update_requirement_lifecycle(state, "撤回复购率", source_message_ref="msg2")
-    assert len(active) == 1
-    assert state.requirement_revision == revision1 + 1
-    old = update_requirement_lifecycle(state, "请回答最近7天收入和渠道", source_message_ref="msg3")
-    assert old
-    new = update_requirement_lifecycle(state, "把最近7天收入改为最近30天收入", source_message_ref="msg4")
-    assert len(new) == 1
-    assert any(item["label"] == "最近30天收入" and item["lifecycle_status"] == "active" for item in state.answer_requirements)
-    assert any(item["label"] == "最近7天收入" and item["lifecycle_status"] == "superseded" for item in state.answer_requirements)
-
-
-def test_ac21_binding_is_removed_and_stale_or_malformed_protocol_is_not_trusted():
-    state = _state_with_metrics({"收入": {"value": 100}})
-    packet = build_publication_packet(state, user_input="请回答收入和复购率", substantive_tools={"run_python"})
-    fact_id = packet["sources"][0]["facts"][0]["fact_id"]
-    visible = "收入为100元。"
-    text = visible + "\n\n" + _binding(packet, [{
-        "exact_text": visible,
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [fact_id],
-        "derived_refs": [],
-    }])
-    clean, bindings, issues = parse_answer_bindings(text, packet)
-    assert clean == visible and bindings and not issues
-    assert "answer-bindings" not in clean
-
-    stale = text.replace(packet["snapshot_digest"], "sha256:old")
-    assert parse_answer_bindings(stale, packet)[2][0]["code"] == "stale_answer_bindings"
-    assert parse_answer_bindings(visible + "\n```answer-bindings\n{bad}\n```", packet)[2][0]["code"] == "invalid_answer_bindings_json"
-
-
-def test_cr03_unbound_number_cannot_answer_an_explicit_requirement():
-    packet = build_publication_packet(
-        _state_with_metrics({"收入": {"value": 100}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    issues = validate_final_narrative_issues("复购率为20%。", packet)
-    assert any(item["code"] == "missing_answer_requirement" for item in issues)
-    assert packet["requirements"][0]["answer_coverage"] != "answered"
-
-
-def test_cr03_gap_marker_cannot_launder_an_unbound_number():
-    packet = build_publication_packet(
-        _state_with_metrics({"收入": {"value": 100}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    issues = validate_final_narrative_issues("复购率为20%，缺少分母。", packet)
-    assert any(item["code"] == "missing_answer_requirement" for item in issues)
-    assert packet["requirements"][0]["answer_coverage"] != "answered"
-
-
-def test_cr03_later_gap_cannot_launder_an_earlier_numeric_claim():
-    packet = build_publication_packet(
-        _state_with_metrics({"收入": {"value": 100}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    issues = validate_final_narrative_issues("复购率为20%。复购率缺少分母，证据不足。", packet)
-    assert any(item["code"] == "unbound_requirement_numeric" for item in issues)
-
-
-def test_cr03_valid_bound_claim_does_not_exempt_a_second_raw_number():
-    packet = build_publication_packet(
-        _state_with_metrics({"复购率": {"value": 0.2}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    placeholder = "[[claim:claim_repeat]]"
-    visible = placeholder + "。复购率另有40%的结果。"
-    text = visible + "\n\n" + _binding(packet, [{
-        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
-        "exact_text": placeholder,
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
-        "derived_refs": [],
-    }])
-    clean, bindings, binding_issues = parse_answer_bindings(text, packet)
-    assert not binding_issues
-    packet["answer_bindings"] = bindings
-    issues = validate_final_narrative_issues(clean, packet)
-    assert any(item["code"] == "unbound_requirement_numeric" for item in issues)
-
-
-def test_cr03_current_but_unrelated_fact_cannot_authorize_requirement():
-    packet = build_publication_packet(
-        _state_with_metrics({"收入": {"value": 100}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    visible = "复购率为20%。"
-    text = visible + "\n\n" + _binding(packet, [{
-        "exact_text": visible,
-        "claim_type": "observed_fact",
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
-        "derived_refs": [],
-    }])
-    _, bindings, issues = parse_answer_bindings(text, packet)
-    assert any(item["code"] == "invalid_observed_binding" for item in issues)
-    apply_answer_binding_coverage(packet, bindings)
-    assert packet["requirements"][0]["answer_coverage"] != "answered"
-
-
-def test_cr03_wrong_value_cannot_authorize_correct_fact_reference():
-    packet = build_publication_packet(
-        _state_with_metrics({"复购率": {"value": 0.2}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    visible = "复购率为40%。"
-    text = visible + "\n\n" + _binding(packet, [{
-        "exact_text": visible,
-        "claim_type": "observed_fact",
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
-        "derived_refs": [],
-    }])
-    _, bindings, issues = parse_answer_bindings(text, packet)
-    assert any(item["code"] == "invalid_observed_binding" for item in issues)
-    apply_answer_binding_coverage(packet, bindings)
-    assert packet["requirements"][0]["answer_coverage"] != "answered"
-
-
-def test_cr03_matching_observed_claim_is_rendered_from_its_own_receipt():
-    packet = build_publication_packet(
-        _state_with_metrics({"复购率": {"value": 0.2}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    placeholder = "[[claim:claim_repeat]]"
-    text = placeholder + "\n\n" + _binding(packet, [{
-        "claim_id": "claim_repeat",
-        "claim_type": "observed_fact",
-        "status": "observed",
-        "exact_text": placeholder,
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
-        "derived_refs": [],
-    }])
-    clean, bindings, issues = parse_answer_bindings(text, packet)
-    assert not issues
-    packet["answer_bindings"] = bindings
-    assert not validate_final_narrative_issues(clean, packet)
-    assert packet["requirements"][0]["answer_coverage"] == "answered"
-    assert render_bound_claims(clean, packet, bindings) == "复购率：0.2（回执原始数值尺度；单位未确认）"
-
-
-def test_cr03_observed_zero_is_a_result_not_a_missing_value():
-    packet = build_publication_packet(
-        _state_with_metrics({"收入": {"value": 0}}),
-        user_input="1. 收入", substantive_tools={"run_python"},
-    )
-    placeholder = "[[claim:claim_zero]]"
-    fact = next(item for item in packet["sources"][0]["facts"] if item["path"] == "收入.value")
-    block = {
-        "claim_id": "claim_zero", "claim_type": "observed_fact", "status": "observed",
-        "exact_text": placeholder,
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [fact["fact_id"]], "derived_refs": [],
-    }
-    clean, bindings, issues = parse_answer_bindings(placeholder + "\n\n" + _binding(packet, [block]), packet)
-    assert not issues
-    packet["answer_bindings"] = bindings
-    assert not validate_final_narrative_issues(clean, packet)
-    assert "收入：0" in render_bound_claims(clean, packet, bindings)
-
-
-def test_cr03_non_numeric_receipt_value_is_not_an_observed_numeric_answer():
-    packet = build_publication_packet(
-        _state_with_metrics({"复购率": {"value": "unknown"}}),
-        user_input="1. 复购率", substantive_tools={"run_python"},
-    )
-    placeholder = "[[claim:claim_repeat]]"
-    text = placeholder + "\n\n" + _binding(packet, [{
-        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
-        "exact_text": placeholder,
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
-        "derived_refs": [],
-    }])
-    assert any(item["code"] == "invalid_observed_binding" for item in parse_answer_bindings(text, packet)[2])
-
-
-def test_cr03_derived_binding_survives_real_packet_build_and_renders_in_place():
-    state = _state_with_metrics({"留存人数": {"value": 1142.4}})
-    state.add_evidence_record({
-        "id": "ev_retained", "claim": "留存人数由人数和比率计算",
-        "tool_receipt_ids": ["tr_metrics"],
-        "measurements": [
-            {"id": "population", "value": 22400, "unit": "count", "population_scope": "new_users", "time_scope": "2026-09", "data_identity": "v1"},
-            {"id": "rate", "value": "0.051", "unit": "ratio", "population_scope": "new_users", "time_scope": "2026-09", "data_identity": "v1"},
-        ],
-        "derived_measurements": [{
-            "id": "dm_retained", "operation": "product", "operand_refs": ["population", "rate"],
-            "result": "1142.4", "unit": "count", "scope_ref": "new_users_2026_09",
-        }],
-    })
-    packet = build_publication_packet(state, user_input="1. 留存人数", substantive_tools={"run_python"})
-    placeholder = "[[claim:claim_retained]]"
-    fact = next(item for item in packet["sources"][0]["facts"] if item["path"] == "留存人数.value")
-    block = {
-        "claim_id": "claim_retained", "claim_type": "derived_metric", "status": "computed",
-        "unit_status": "not_confirmed", "exact_text": placeholder,
-        "requirement_refs": [packet["requirements"][0]["id"]],
-        "fact_refs": [fact["fact_id"]], "derived_refs": ["dm_retained"],
-    }
-    clean, bindings, issues = parse_answer_bindings(placeholder + "\n\n" + _binding(packet, [block]), packet)
-    assert not issues
-    packet["answer_bindings"] = bindings
-    assert not validate_final_narrative_issues(clean, packet)
-    assert "留存人数：1142.4" in render_bound_claims(clean, packet, bindings)
+def _change(loop,content,changes):
+    ref="coverage_request_"+str(len(loop.messages))
+    loop.messages.append({"role":"user","content":content,"request_id":ref})
+    save_session(loop.messages,loop.session_id,extra_meta={"publication_schema":"answer_bindings.v2"},merge_protect=False)
+    loop._last_jsonl_idx=len(loop.messages)
+    state=loop.context.analysis_state
+    return update_requirements(state,load_canonical_history(loop.session_id),ref,changes,expected_revision=state.requirement_revision)

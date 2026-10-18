@@ -280,7 +280,8 @@ def test_web_compact_cas_conflict_preserves_new_message_and_cache_state(tmp_path
     loop.invalidate_prompt_cache.assert_not_called()
 
 
-def test_rewind_uses_canonical_snapshot_and_advances_identity(tmp_path, monkeypatch):
+@pytest.mark.parametrize("publication_schema", ["", "answer_bindings.v2"])
+def test_rewind_uses_canonical_snapshot_and_advances_identity(tmp_path, monkeypatch, publication_schema):
     _use_session_root(monkeypatch, tmp_path)
     messages = [
         {"role": "user", "content": "first"},
@@ -288,7 +289,7 @@ def test_rewind_uses_canonical_snapshot_and_advances_identity(tmp_path, monkeypa
         {"role": "user", "content": "second"},
         {"role": "assistant", "content": "second answer"},
     ]
-    history.save_session(messages, "rewind")
+    history.save_session(messages, "rewind", extra_meta={"publication_schema": publication_schema})
     before = history.load_canonical_history("rewind")
     loop = _loop([{"role": "user", "content": "stale cache"}], MagicMock())
 
@@ -300,7 +301,27 @@ def test_rewind_uses_canonical_snapshot_and_advances_identity(tmp_path, monkeypa
     assert response.status_code == 200
     written = history.load_canonical_history("rewind")
     assert written.revision > before.revision
+    assert history.load_session("rewind")["publication_schema"] == publication_schema
     assert [item["content"] for item in written.messages] == ["first", "first answer"]
     assert loop.messages == written.messages
     assert loop._last_jsonl_idx == 2
     loop.invalidate_prompt_cache.assert_called_once()
+
+
+def test_long_complete_analysis_then_short_followup_is_actually_compacted(tmp_path, monkeypatch):
+    sessions = _use_session_root(monkeypatch, tmp_path)
+    messages = _m03_single_turn_shape() + [
+        {"role": "user", "content": "好的，继续。"},
+        {"role": "assistant", "content": "six sources remain independently available"},
+    ]
+    client = MagicMock()
+    client.chat.return_value = SimpleNamespace(text="read_data 已执行，六个来源仍分别保留。")
+    state = CompactState()
+    compacted = compact_history("two-turns", client, messages, state, token_threshold=0)
+    assert state.has_compacted and len(compacted) == 4
+    assert compacted[2:] == messages[-2:]
+    assert "read_data" in compacted[0]["content"]
+    archive = next((sessions / "two-turns" / "transcripts").glob("*.jsonl"))
+    assert [json.loads(line) for line in archive.read_text("utf-8").splitlines()] == messages
+    meta = json.loads(archive.with_suffix(".meta.json").read_text("utf-8"))
+    assert meta["split_index"] == 27 and meta["recent_message_count"] == 2

@@ -543,3 +543,82 @@ def test_concurrent_answers_apply_only_one_resolution(tmp_path):
 
     assert sum(result is not None for result in results) == 1
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("key", ["same", "different"])
+def test_s3_r07_conflicting_answer_preserves_original_resolution_and_events(tmp_path,restart,key):
+    import json,os
+    from pathlib import Path
+    service,registry,calls=_service(tmp_path);service.request(_candidate());active=service.checkpoint("session_1")
+    resolved=service.respond("session_1",active.confirmation_id,"revenue",active.version,"answer_once")
+    path=tmp_path/"session_1"/"confirmations"/"events.jsonl";before=path.read_bytes()
+    if restart:
+        new_registry=ResolutionActionRegistry();new_registry.register("choose_metric",lambda context,answer: calls.append(answer) or {"metric":answer})
+        service=ConfirmationService(tmp_path,action_registry=new_registry)
+    with pytest.raises(ConfirmationVersionConflict):
+        service.respond("session_1",active.confirmation_id,"orders",active.version,"answer_once" if key=="same" else "another_answer")
+    assert service.get("session_1",active.confirmation_id)==resolved and path.read_bytes()==before and calls==["revenue"]
+    assert service.respond("session_1",active.confirmation_id,"revenue",active.version,"answer_once")==resolved
+    assert calls==["revenue"] and path.read_bytes()==before
+    out=Path(os.environ["DATA_AGENT_S3_ASK_EVIDENCE"])
+    (out/(f"r07_conflict_{restart}_{key}.json")).write_text(json.dumps({"record":resolved.to_dict(),"events_hex":before.hex(),"calls":calls,"restart":restart,"provider_calls":0},indent=2),encoding="utf-8")
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("point", ["response_received", "applying", "resolved"])
+@pytest.mark.parametrize("when", ["before", "after"])
+def test_s3_r07_event_write_failure_replay_never_reapplies_uncertain_action(tmp_path,monkeypatch,restart,point,when):
+    import json,os
+    from pathlib import Path
+    service,registry,calls=_service(tmp_path);service.request(_candidate());active=service.checkpoint("session_1")
+    append=ConfirmationStore.append;fired=[]
+    def fail_once(store,event):
+        if event.event_type==point and not fired:
+            fired.append(True)
+            if when=="after":append(store,event)
+            raise OSError("injected original event write "+when+" "+point)
+        return append(store,event)
+    monkeypatch.setattr(ConfirmationStore,"append",fail_once)
+    with pytest.raises(OSError):service.respond("session_1",active.confirmation_id,"revenue",active.version,"answer_once")
+    monkeypatch.setattr(ConfirmationStore,"append",append)
+    record=service.get("session_1",active.confirmation_id);before_calls=list(calls)
+    events=tmp_path/"session_1"/"confirmations"/"events.jsonl";before=events.read_bytes()
+    if restart:
+        new_registry=ResolutionActionRegistry();new_registry.register("choose_metric",lambda context,answer: calls.append(answer) or {"metric":answer})
+        service=ConfirmationService(tmp_path,action_registry=new_registry)
+    error=None
+    try:repeated=service.respond("session_1",active.confirmation_id,"revenue",active.version,"answer_once")
+    except (ConfirmationVersionConflict,InvalidConfirmationTransition) as exc:repeated=None;error=type(exc).__name__
+    after=service.get("session_1",active.confirmation_id)
+    out=Path(os.environ["DATA_AGENT_S3_ASK_EVIDENCE"])
+    (out/(f"r07_store_{point}_{when}_{restart}.json")).write_text(json.dumps({"point":point,"when":when,"restart":restart,"record":record.to_dict(),"after":after.to_dict(),"before_calls":before_calls,"calls":calls,"error":error,"before_events_hex":before.hex(),"after_events_hex":events.read_bytes().hex(),"provider_calls":0},indent=2),encoding="utf-8")
+    assert len(fired)==1 and len(calls)<=1
+    if record.status==ConfirmationStatus.SUSPENDED:
+        assert repeated.status==ConfirmationStatus.RESOLVED and calls==["revenue"]
+    elif record.status==ConfirmationStatus.RESOLVED:
+        assert repeated==record and calls==before_calls==["revenue"] and events.read_bytes()==before
+    else:
+        assert repeated is None and error and after==record and calls==before_calls and events.read_bytes()==before
+
+
+def test_s3_r09_concurrent_equivalent_open_candidates_share_one_record(tmp_path):
+    from dataclasses import replace
+    from threading import Barrier
+    import json, os
+    from pathlib import Path
+    service, registry, calls = _service(tmp_path)
+    other = ConfirmationService(tmp_path, action_registry=registry)
+    barrier = Barrier(2)
+    def arrive(index):
+        candidate = replace(_candidate(index+1), decision_key="same_business_decision", turn_id="arrival_"+str(index))
+        barrier.wait(timeout=10)
+        return (service if index == 0 else other).request(candidate)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(arrive, range(2)))
+    active = service.checkpoint("session_1")
+    loaded = ConfirmationStore(tmp_path, "session_1").load()
+    out=Path(os.environ["DATA_AGENT_S3_ASK_EVIDENCE"])
+    (out/"r09_service_concurrent.json").write_text(json.dumps({"ids":[r.record.confirmation_id for r in results],"records":{k:v.to_dict() for k,v in loaded.records.items()},"events":[e.to_dict() for e in loaded.events_by_id.values()],"calls":calls,"provider_calls":0},indent=2),encoding="utf-8")
+    assert len(loaded.records) == 1 and {r.record.confirmation_id for r in results} == {active.confirmation_id}
+    assert [e.event_type for e in loaded.events_by_id.values()] == ["requested", "suspended"] and calls == []

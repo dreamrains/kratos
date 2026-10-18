@@ -21,7 +21,7 @@ def test_registered_tool_surface_matches_reviewed_manifest_exactly():
     manifest = _tool_manifest()
     assert manifest["schema_version"] == "tool_surface_manifest.v1"
     assert set(registry.tool_names) == set(manifest["tools"])
-    assert len(registry.tool_names) == len(set(manifest["tools"])) == 76
+    assert len(registry.tool_names) == len(set(manifest["tools"])) == 77
 
 
 def test_static_tool_references_resolve_to_registered_tools():
@@ -47,3 +47,15 @@ def test_removed_or_never_registered_tools_have_no_runtime_references():
         if matched:
             offenders.append(f"{path.relative_to(ROOT)}: {matched}")
     assert offenders == []
+
+
+def test_read_file_receipt_sha_binds_original_crlf_bytes_without_changing_text_view(tmp_path,monkeypatch):
+    import hashlib,json
+    from data_agent.config import get_config
+    from data_agent.tools.file_ops import read_file
+    cfg=get_config();monkeypatch.setattr(cfg,"workspace_dir",tmp_path)
+    raw=("row1\r\nrow2\r\n"*400).encode("utf-8");(tmp_path/"crlf.txt").write_bytes(raw)
+    page=json.loads(read_file("crlf.txt",max_chars=100,expected_sha256=hashlib.sha256(raw).hexdigest()))
+    assert page["sha256"]==hashlib.sha256(raw).hexdigest() and "\r" not in page["content"]
+    wrong=hashlib.sha256(raw.replace(b"\r\n",b"\n")).hexdigest()
+    assert "file_changed" in read_file("crlf.txt",expected_sha256=wrong)

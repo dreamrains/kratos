@@ -2,7 +2,9 @@
 
 Reads only persisted artifacts (session dirs, provider ledger, reports).
 Blocking checks are closed-class (protocol states, artifact presence, receipt
-arithmetic); unverified answer numbers remain unassessed.
+arithmetic); open-class semantics are advisory only. Numeric answer coverage
+requires a separate per-turn receipt/claim oracle and is explicitly unassessed
+until that oracle is supplied; prose token presence is not a numeric binding.
 Every mechanical oracle cites the plan principle it enforces so oracle drift
 from the approved principles is detectable (``oracle_contract_is_consistent``).
 """
@@ -10,8 +12,8 @@ from the approved principles is detectable (``oracle_contract_is_consistent``).
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -41,8 +43,13 @@ DEFAULT_ACTIONS = {
 
 # Only M06 is authorized to suspend on a real business-scope confirmation
 # (frozen operator protocol; IC principle 2: business ambiguity is specific).
-AUTHORIZED_M06_CONFIRMATION_TYPES = {
-    "metric_definition", "business_scope", "cost_scope", "decision",
+AUTHORIZED_CONFIRMATION_TYPES = {
+    "M01": set(),
+    "M02": set(),
+    "M03": set(),
+    "M04": set(),
+    "M05": set(),
+    "M06": {"metric_definition", "business_scope", "cost_scope", "decision"},
 }
 
 HOST_DEADLINE_SECONDS = 120.0
@@ -55,12 +62,12 @@ DEADLINE_SLACK_SECONDS = 5.0
 #   CP=2026-09-08 answer-content plan (CR-goals / §5-§6).
 # ---------------------------------------------------------------------------
 MECHANICAL_ORACLES: list[dict] = [
-    {"id": "scenario_matrix_coverage", "scenario": "*", "dim": "execution", "blocking": True,
-     "principle": "VP-P8(完整 M01-M06 批次)/CP-CR03(逐项交付)", "type": "matrix"},
     {"id": "run_state_terminal_unique", "scenario": "*", "dim": "execution", "blocking": True,
      "principle": "VP-G6(能力不回退)/P08验收§15(终态唯一)", "type": "run_state"},
     {"id": "run_state_completed", "scenario": "*", "dim": "execution", "blocking": True,
      "principle": "VP-P8-四维契约(执行与生命周期:product_failed)/VP-G6", "type": "run_state"},
+    {"id": "matrix_turn_outcomes", "scenario": "*", "dim": "execution", "blocking": True,
+     "principle": "VP-G6(多轮逐轮终态)/P08验收§15(同会话链与单终态)", "type": "run_state"},
     {"id": "tool_pairing_closed", "scenario": "*", "dim": "execution", "blocking": True,
      "principle": "VP-G6(工具协议完整)/IC-§7(事件完整性)", "type": "pairing"},
     {"id": "confirmations_authorized", "scenario": "*", "dim": "execution", "blocking": True,
@@ -69,12 +76,14 @@ MECHANICAL_ORACLES: list[dict] = [
      "principle": "VP-P8-12.1(调用核算完整性)", "type": "ledger"},
     {"id": "ledger_max_duration", "scenario": "*", "dim": "execution", "blocking": True,
      "principle": "VP-G6(宿主 deadline 生效)", "type": "ledger"},
-    {"id": "answer_numeric_oracles", "scenario": "*", "dim": "evidence", "blocking": False,
-     "principle": "CP-CR02/CR04(绑定数字一致)/CP-§5(未知不得伪装为已检查)", "type": "numeric"},
     {"id": "export_dual_artifacts", "scenario": "*", "dim": "transfer", "blocking": True,
      "principle": "CP-CR06(图文对应、导出一致)/VP-P8-12.1(生命周期一致性)", "type": "export"},
     {"id": "tasks_terminal", "scenario": "*", "dim": "declaration", "blocking": True,
      "principle": "VP-G5(假设生命周期闭合)/CP-CR03(覆盖或具体缺口)", "type": "tasks"},
+    {"id": "extrapolated_value_receipt_bound", "scenario": "*", "dim": "evidence", "blocking": True,
+     "principle": "VP-4.1(允许标注的待验证解释,禁止无依据外推)", "type": "extrapolation"},
+    {"id": "yoy_requires_crossyear_receipt", "scenario": "*", "dim": "evidence", "blocking": True,
+     "principle": "VP-4.1(口径正确)/CP-CR04", "type": "yoy"},
     # Open-class semantics: advisory only (CP-§5: 规则不能可靠判定的语义不伪精确).
     {"id": "unit_drift_advisory", "scenario": "*", "dim": "value", "blocking": False,
      "principle": "CP-§5(unknown 不得写成已知)/CP-§6(避免过度保守)", "type": "advisory_unit"},
@@ -85,8 +94,8 @@ MECHANICAL_ORACLES: list[dict] = [
 ]
 
 _KNOWN_CHECK_TYPES = {
-    "matrix", "run_state", "pairing", "confirmations", "ledger", "numeric", "export",
-    "tasks", "advisory_unit", "advisory_origin",
+    "run_state", "pairing", "confirmations", "ledger", "export",
+    "tasks", "extrapolation", "yoy", "advisory_unit", "advisory_origin",
     "advisory_next_step",
 }
 _KNOWN_DIMS = {"execution", "evidence", "value", "transfer", "declaration"}
@@ -190,22 +199,15 @@ def _detect_scenario_from(sdir: Path) -> str | None:
 def _confirmation_is_authorized(record: dict, scenario: str) -> bool:
     """Closed-class authorization: only M06's frozen cost-scope question may suspend.
 
-    Read the persisted decision type, which direct questions store under
-    resolution_params. The question still has to address this frozen scenario's
-    business target; a method approval or unrelated metric choice is invalid.
+    Real records carry no ``confirmation_type`` field; the discriminator is the
+    frozen operator protocol itself: M06's authorized question is the cost-scope
+    single-select defined in the frozen prompt (成本口径). Any other question in
+    any scenario is an unauthorized suspension (IC principle 1/2).
     """
-    if scenario != "M06":
-        return False
-    params = record.get("resolution_params")
-    if not isinstance(params, dict):
-        params = {}
-    ctype = str(params.get("confirmation_type") or record.get("confirmation_type") or "")
-    question = str(record.get("question") or "")
-    return (ctype in AUTHORIZED_M06_CONFIRMATION_TYPES
-            and record.get("operation") == "direct_user_question"
-            and record.get("answer_mode") == "single_select"
-            and record.get("source") in {None, "ask_user_question"}
-            and "促销净收益" in question and "成本" in question)
+    if scenario == "M06" and "成本口径" in str(record.get("question") or ""):
+        return True
+    ctype = str(record.get("confirmation_type") or "")
+    return ctype in AUTHORIZED_CONFIRMATION_TYPES.get(scenario, set())
 
 
 def _check(passed: bool, check_id: str, detail: str, blocking: bool, dim: str, principle: str) -> dict:
@@ -226,39 +228,70 @@ def _oracle_meta(check_id: str) -> dict:
     raise KeyError(check_id)
 
 
-def _structured_claim_evidence(sdir: Path, accepted_answer: str) -> dict:
-    """Reuse the host's persisted-claim view without upgrading answer quality."""
-    result = {"claim_location_status": "unavailable", "host_rendered_claims": 0,
-              "unlocatable_claims": 0, "request_completeness": "unassessed",
-              "unbound_prose_status": "not_audited"}
-    state_data = _read_json(sdir / "analysis_state.json")
-    if not isinstance(state_data, dict):
-        return result
-    try:
-        from data_agent.agent.analysis_state import AnalysisSessionState
-        from data_agent.agent.publication_audit import build_offline_audit_view
-        from data_agent.session.history import _read_canonical_snapshot
-
-        state = AnalysisSessionState.from_dict(state_data, sdir.name)
-        packets = [packet for packet in state.publication_packets
-                   if isinstance(packet, dict)
-                   and packet.get("answer_sha256") == "sha256:" + hashlib.sha256(
-                       accepted_answer.encode("utf-8")).hexdigest()]
-        if len(packets) != 1:
-            return result
-        view = build_offline_audit_view(
-            packets[0], accepted_answer, state=state,
-            canonical_history=_read_canonical_snapshot(sdir),
+def _http_turn_outcome_check(run_dir: Path) -> dict | None:
+    """Use the frozen HTTP turn record; final session state can hide earlier failures."""
+    path = run_dir / "http-matrix.jsonl"
+    if not path.exists():
+        return None
+    freeze = _read_json(run_dir / "freeze.json")
+    if not isinstance(freeze, dict):
+        o = _oracle_meta("matrix_turn_outcomes")
+        return _check(False, o["id"], "HTTP turn record has no readable freeze",
+                      o["blocking"], o["dim"], o["principle"])
+    expected = {
+        (str(scenario), index)
+        for scenario in freeze.get("matrix", [])
+        for index, _prompt in enumerate(
+            (freeze.get("scenario_inputs", {}).get(scenario) or {}).get("prompts", []), 1
         )
-    except (AttributeError, KeyError, OSError, TypeError, ValueError):
-        return result
-    return {
-        "claim_location_status": view["status"],
-        "host_rendered_claims": len(view["claims"]),
-        "unlocatable_claims": len(view.get("unlocatable_claim_ids", [])),
-        "request_completeness": "unassessed",
-        "unbound_prose_status": view.get("unbound_prose_status", "not_audited"),
     }
+    observed: dict[tuple[str, int], list[dict]] = {}
+    resumes: list[dict] = []
+    malformed = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            malformed += 1
+            continue
+        if not isinstance(row, dict) or not isinstance(row.get("turn"), int):
+            if isinstance(row, dict) and row.get("turn") == "resume":
+                resumes.append(row)
+            continue
+        key = (str(row.get("scenario") or ""), row["turn"])
+        observed.setdefault(key, []).append(row)
+    failures = [] if expected else ["freeze has no expected turns"]
+    for scenario, index in sorted(expected | set(observed)):
+        rows = observed.get((scenario, index), [])
+        if (scenario, index) not in expected or len(rows) != 1:
+            failures.append(f"{scenario}/{index}: expected one frozen turn, got {len(rows)}")
+            continue
+        row = rows[0]
+        terminal = str(row.get("terminal") or "")
+        durable = row.get("run_state") or {}
+        expected_resume = scenario == "M06" and index == 2 and terminal == "suspended"
+        if (not row.get("session_id") or terminal not in ({"completed", "suspended"} if expected_resume else {"completed"})
+                or durable.get("status") != terminal
+                or str(durable.get("session_id") or "") != row["session_id"]):
+            failures.append(f"{scenario}/{index}: terminal={terminal or 'missing'}, durable={durable.get('status')}")
+        if expected_resume:
+            matched = [item for item in resumes if item.get("scenario") == scenario
+                       and item.get("session_id") == row["session_id"]]
+            if (len(matched) != 1 or matched[0].get("terminal") != "completed"
+                    or (matched[0].get("run_state") or {}).get("status") != "completed"):
+                failures.append(f"{scenario}/{index}: cost-scope resume not completed")
+    if resumes and not any(scenario == "M06" and index == 2
+                           and rows[0].get("terminal") == "suspended"
+                           for (scenario, index), rows in observed.items() if len(rows) == 1):
+        failures.append("unexpected_resume")
+    if malformed:
+        failures.append(f"malformed_http_rows={malformed}")
+    o = _oracle_meta("matrix_turn_outcomes")
+    return _check(not failures, o["id"],
+                  f"expected_turns={len(expected)}; failures={failures}",
+                  o["blocking"], o["dim"], o["principle"])
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +308,101 @@ _SINGLE_NEXT_STEP = re.compile(
     r"只有(?:一条|一个)(?:路|途径|选项|下一步|办法)",
     re.I,
 )
+_UNCERTAINTY_ESCAPE = re.compile(
+    r"未知|不能|无法|非观测|未观测|情景|假设|待确认|未验证|不是预测", re.I
+)
+_D_TOKEN = re.compile(r"(?<![A-Za-z0-9])D(\d+)")
+_PCT = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*%")
+
+
+def _find_curve_receipt(tool_outputs_dir: Path) -> dict | None:
+    if not tool_outputs_dir.exists():
+        return None
+    for path in sorted(tool_outputs_dir.glob("*.json")):
+        data = _read_json(path)
+        if not isinstance(data, dict):
+            continue
+
+        def walk(node):
+            if isinstance(node, dict):
+                if isinstance(node.get("fits"), list) and isinstance(node.get("points"), list):
+                    return node
+                for value in node.values():
+                    found = walk(value)
+                    if found is not None:
+                        return found
+            elif isinstance(node, list):
+                for value in node:
+                    found = walk(value)
+                    if found is not None:
+                        return found
+            return None
+
+        found = walk(data)
+        if found is not None:
+            return found
+    return None
+
+
+def _find_compare_periods_receipts(tool_outputs_dir: Path) -> list[dict]:
+    """All compare_periods receipts (period_a/period_b carrying date ranges)."""
+    receipts: list[dict] = []
+    if not tool_outputs_dir.exists():
+        return receipts
+    for path in sorted(tool_outputs_dir.glob("*.json")):
+        data = _read_json(path)
+        if not isinstance(data, dict):
+            continue
+
+        def walk(node):
+            if isinstance(node, dict):
+                pa, pb = node.get("period_a"), node.get("period_b")
+                if (
+                    isinstance(pa, dict) and isinstance(pb, dict)
+                    and isinstance(pa.get("range"), list) and isinstance(pb.get("range"), list)
+                ):
+                    receipts.append(node)
+                    return
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(data)
+    return receipts
+
+
+def _receipt_is_cross_year(receipt: dict) -> bool:
+    """P1-6：跨年判定只认回执里的结构化日期范围，不挖散文年份。"""
+    from datetime import date as _date
+
+    starts = []
+    for key in ("period_a", "period_b"):
+        raw = (receipt.get(key) or {}).get("range") or []
+        if len(raw) < 2:
+            return False
+        try:
+            starts.append(_date.fromisoformat(str(raw[0])[:10]))
+        except ValueError:
+            return False
+    left, right = starts
+    return left.month == right.month and left.day == right.day and left.year != right.year
+
+
+def _family_value(fit: dict, x: float) -> float | None:
+    params = fit.get("parameters") or {}
+    try:
+        family = fit.get("family")
+        if family == "power":
+            return float(params["a"]) * x ** float(params["b"])
+        if family == "exponential":
+            return float(params["a"]) * math.exp(float(params["b"]) * x)
+        if family == "logarithmic":
+            return float(params["a"]) + float(params["b"]) * math.log(x)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    return None
 
 
 def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -> dict:
@@ -344,28 +472,7 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         o["blocking"], o["dim"], o["principle"],
     ))
 
-    # 4. The persisted host trace can certify its own receipt-bound spans,
-    # never the adjacent prose or the completeness of the whole answer.
-    structured_evidence = _structured_claim_evidence(sdir, final_text)
-    o = _oracle_meta("answer_numeric_oracles")
-    verified_spans = (
-        structured_evidence["host_rendered_claims"]
-        if structured_evidence["claim_location_status"] == "ready"
-        else 0
-    )
-    detail = (
-        "unassessed: review raw-scale D1-D7, unit evidence, and receipt-bound D30"
-        if scenario == "M02" else
-        "unassessed: answer numbers require current receipt, binding, and rendered-span review"
-    )
-    if verified_spans:
-        detail += f"; receipt-bound host-rendered spans={verified_spans}, whole-answer numbers and prose remain unassessed"
-    numeric_check = _check(False, o["id"], detail, o["blocking"], o["dim"], o["principle"])
-    numeric_check["assessment"] = "unassessed"
-    numeric_check["verified_host_spans"] = verified_spans
-    checks.append(numeric_check)
-
-    # 5. export dual artifacts (blocking when the scenario exports)
+    # 4. export dual artifacts (blocking when the scenario exports)
     o = _oracle_meta("export_dual_artifacts")
     if "export_markdown" in actions:
         reports = list((sdir / "reports").glob("*.md")) if (sdir / "reports").exists() else []
@@ -402,7 +509,55 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         detail = f"run_state={status!r}; declaration check applies to completed runs"
     checks.append(_check(tasks_ok, o["id"], detail, o["blocking"], o["dim"], o["principle"]))
 
-    # Open-class semantics remain advisory and never certify answer evidence.
+    # 7. extrapolated % values must be receipt-bound or uncertainty-marked (blocking)
+    o = _oracle_meta("extrapolated_value_receipt_bound")
+    receipt = _find_curve_receipt(sdir / "tool_outputs")
+    offenders: list[str] = []
+    if receipt:
+        xs = [float(p.get("x")) for p in receipt.get("points", []) if isinstance(p, dict) and p.get("x") is not None]
+        max_x = max(xs) if xs else None
+        fits = [f for f in receipt.get("fits", []) if isinstance(f, dict)]
+        if max_x is not None:
+            for clause in re.split(r"[。；;\n]", final_text):
+                for dm in _D_TOKEN.finditer(clause):
+                    day = float(dm.group(1))
+                    if day <= max_x:
+                        continue
+                    window = clause[max(0, dm.start() - 40): dm.end() + 60]
+                    for pm in _PCT.finditer(clause[dm.end():dm.end() + 80]):
+                        reported = float(pm.group(1)) / 100
+                        matches = [
+                            abs(reported - v) <= 0.0005
+                            for v in (_family_value(f, day) for f in fits)
+                            if v is not None
+                        ]
+                        if any(matches):
+                            continue
+                        if _UNCERTAINTY_ESCAPE.search(window):
+                            continue
+                        offenders.append(window.strip()[:60])
+    checks.append(_check(
+        not offenders, o["id"],
+        f"unbound_extrapolated_values={len(offenders)}" if offenders else "no unbound extrapolated values",
+        o["blocking"], o["dim"], o["principle"],
+    ))
+
+    # 8. 同比 label requires a cross-year period receipt (blocking)
+    o = _oracle_meta("yoy_requires_crossyear_receipt")
+    yoy_labelled = any(
+        "同比" in clause and "同比例" not in clause
+        for clause in re.split(r"[。；;\n]", final_text)
+    )
+    period_receipts = _find_compare_periods_receipts(sdir / "tool_outputs")
+    crossyear_count = sum(1 for receipt in period_receipts if _receipt_is_cross_year(receipt))
+    yoy_ok = not yoy_labelled or crossyear_count > 0
+    checks.append(_check(
+        yoy_ok, o["id"],
+        f"yoy_labelled={yoy_labelled} crossyear_receipts={crossyear_count}",
+        o["blocking"], o["dim"], o["principle"],
+    ))
+
+    # 9-10. advisory open-class semantics (never blocking)
     o = _oracle_meta("unit_drift_advisory")
     unit_hits = _ADVISORY_UNIT.findall(final_text)
     checks.append(_check(
@@ -416,7 +571,7 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         f"origin_lean_candidates={len(origin_hits)}", o["blocking"], o["dim"], o["principle"],
     ))
 
-    # P2-2 排他式"唯一下一步"框架（价值维软检查，永不阻断）：
+    # 11. P2-2 排他式"唯一下一步"框架（价值维软检查，永不阻断）：
     # 把单一路径写成唯一选项（真实 r1 M06"下一步（单一动作）"）压缩了
     # 用户的决策空间；条件式指引（触发/停止条件）不计。
     o = _oracle_meta("single_next_step_advisory")
@@ -428,8 +583,18 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         o["blocking"], o["dim"], o["principle"],
     ))
 
-    return {"session": sdir.name, "scenario": scenario, "checks": checks,
-            "structured_evidence": structured_evidence}
+    return {
+        "session": sdir.name,
+        "scenario": scenario,
+        "checks": checks,
+        "required_assessments": {
+            "numeric_claim_consistency": {
+                "status": "unassessed",
+                "principle": "CP-CR02/CR04(逐轮当前回执、单位与正文绑定)",
+                "detail": "需要按轮次核当前回执和已发布 claim；散文数字子串不能证明数值一致",
+            },
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +603,10 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
 
 def audit_run_dir(run_dir: Path) -> dict:
     run_checks: list[dict] = []
+
+    turn_check = _http_turn_outcome_check(run_dir)
+    if turn_check is not None:
+        run_checks.append(turn_check)
 
     o = _oracle_meta("ledger_closed")
     ledger_path = run_dir / "provider-calls.jsonl"
@@ -489,39 +658,26 @@ def audit_run_dir(run_dir: Path) -> dict:
                 continue
             sessions[sdir.name] = audit_session(sdir, scenario=scenario)
 
-    o = _oracle_meta("scenario_matrix_coverage")
-    observed_scenarios = {item["scenario"] for item in sessions.values()}
-    missing_scenarios = sorted(set(SCENARIO_PROMPT_PREFIXES) - observed_scenarios)
-    run_checks.append(_check(
-        not missing_scenarios, o["id"],
-        f"observed={sorted(observed_scenarios)} missing={missing_scenarios}",
-        o["blocking"], o["dim"], o["principle"],
-    ))
-
-    checks = [*run_checks, *(check for session in sessions.values()
-                            for check in session["checks"])]
-    dimensions = {}
-    for dim in ("execution", "evidence", "value", "transfer", "declaration"):
-        scoped = [check for check in checks if check["dim"] == dim]
-        if any(check["blocking"] and not check["passed"] for check in scoped):
-            dimensions[dim] = "failed"
-        elif (dim == "value" or not scoped or
-              (dim == "evidence" and (
-                  any(check.get("assessment") == "unassessed" for check in scoped)
-                  or any(session["structured_evidence"]["request_completeness"] == "unassessed"
-                         for session in sessions.values())))):
-            dimensions[dim] = "unassessed"
-        else:
-            dimensions[dim] = "passed"
+    any_blocking = any(
+        (not c["passed"]) and c["blocking"]
+        for c in run_checks
+    ) or any(
+        (not c["passed"]) and c["blocking"]
+        for verdict in sessions.values()
+        for c in verdict["checks"]
+    )
+    required_unassessed = sorted({
+        assessment_id
+        for session in sessions.values()
+        for assessment_id, assessment in session.get("required_assessments", {}).items()
+        if assessment.get("status") == "unassessed"
+    })
     return {
         "run_dir": str(run_dir),
         "run_checks": run_checks,
         "sessions": sessions,
-        "dimensions": dimensions,
-        "semantic_audit": "unassessed",
-        "verdict": ("failed" if "failed" in dimensions.values()
-                    else "needs_review" if "unassessed" in dimensions.values()
-                    else "passed"),
+        "required_unassessed": required_unassessed,
+        "verdict": "failed" if any_blocking else ("incomplete" if required_unassessed else "passed"),
     }
 
 
@@ -541,7 +697,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
     print(text)
-    return {"passed": 0, "failed": 1, "needs_review": 2}[report["verdict"]]
+    return 0 if report["verdict"] == "passed" else 1
 
 
 if __name__ == "__main__":

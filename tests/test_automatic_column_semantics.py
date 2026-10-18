@@ -64,7 +64,7 @@ def test_identifier_values_are_not_chart_measures(chart_type):
     result = validate_chart_request(df, chart_type, 'group', ['user_id'])
     assert result.error_code == 'invalid_identifier_measure'
     counted = validate_chart_request(df, chart_type, 'group', ['user_id'], aggregation='count')
-    assert counted.valid == (chart_type in {'bar', 'pie'})
+    assert counted.valid == (chart_type in {'bar', 'line', 'pie'})
 
 
 @pytest.mark.parametrize('name', ['用户平均金额', '用户数', 'customer_count', 'user_id_count'])

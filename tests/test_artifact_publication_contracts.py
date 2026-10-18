@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from tests.test_trusted_publication_semantics import engine
 
 
 @pytest.fixture
@@ -206,13 +207,27 @@ def test_autosave_without_workspace_scope_still_persists_session(context):
     assert saved["messages"] == loop.messages
 
 
-def test_publication_scope_rejects_unperformed_test_and_fit_extrapolation():
-    from data_agent.agent.publication_synthesis import publication_contract, validate_final_narrative
-    packet = {"publication_scope": [publication_contract("curve_fitting", {"points": [{"x": 1}, {"x": 30}]})]}
-    assert validate_final_narrative("两组差异不显著。", packet)
-    assert validate_final_narrative("预计D60留存为1%。", packet)
-    assert validate_final_narrative("未做检验，不能声称差异不显著。", packet) is None
-    assert validate_final_narrative("仅描述D1至D30观测值。", packet) is None
+def test_publication_scope_rejects_unperformed_test_and_fit_extrapolation(engine):
+    from tests.test_trusted_publication_semantics import execute
+    from tests.test_trusted_publication_runtime import request,draft
+    from data_agent.agent.publication.runtime import snapshot_for_turn
+    from data_agent.agent.publication.service import PublicationService
+    loop,_=engine
+    loop.context.workspace.add("orders",pd.DataFrame({"day":range(1,8),"retention":[.4,.3,.25,.2,.15,.12,.1]}))
+    request(loop,"拟合当前观测",{'kind': 'series', 'scope': {'datasets': ['orders']}})
+    execute(loop,"curve_fitting",{"name":"orders","x_col":"day","y_col":"retention"})
+    snapshot=snapshot_for_turn(loop)
+    facts=snapshot.as_dict()["claims"]
+    assert next(c["value"] for c in facts if c["label"]=="curve_fitting：claim_ceiling")=="descriptive"
+    assert not any(c["target"]["tool"] in {"ab_test","forecast"} for c in facts)
+    raw=json.loads(draft(snapshot))
+    allowed=set(snapshot.as_dict()["requirements"][0]["claim_ids"])
+    raw["sections"][0]["parts"]=[p for p in raw["sections"][0]["parts"] if p.get("ref") in allowed]
+    raw["sections"][0]["parts"] += [{"kind":"claim","ref":"unperformed_test"},{"kind":"claim","ref":"future_d60"}]
+    answer=PublicationService(snapshot).publish(json.dumps(raw)).as_dict()
+    assert [i["code"] for i in answer["issues"]]==["unknown_claim_ref"]*2
+    assert any(t["kind"]=="claim" and t["disposition"]=="accepted" for t in answer["render_trace"])
+    assert answer["requirement_outcomes"][0]["status"]=="answered"
 
 
 def test_paired_test_sign_matches_reported_difference(context):
@@ -253,6 +268,6 @@ def test_explicit_output_write_and_load_share_the_same_reference(context):
     from data_agent.tools.file_ops import write_file
     from data_agent.tools.data_io import load_data
     written = write_file("output/period_summary.csv", "period,revenue\nA,1818\nB,684\n")
-    assert written.endswith("/output/period_summary.csv")
+    assert written.summary.endswith("/output/period_summary.csv")
     assert "Error" not in load_data("output/period_summary.csv", name="period_summary")
     assert context.workspace.get("period_summary")["revenue"].tolist() == [1818, 684]

@@ -142,16 +142,26 @@ def _process_answer(answer: str, options: list[dict], multi_select: bool) -> dic
         parts = [p.strip() for p in answer.split(",")]
         selected_indices = []
         free_answers = []
+        answer_values = []
+        display_answers = []
 
         for part in parts:
             if part.isdigit():
                 idx = int(part) - 1
                 if 0 <= idx < len(options):
                     selected_indices.append(idx)
+                    option = options[idx]
+                    label = option.get("label", str(option)) if isinstance(option, dict) else str(option)
+                    answer_values.append(str(option.get("value") or label) if isinstance(option, dict) else label)
+                    display_answers.append(label)
                 else:
                     free_answers.append(part)
+                    answer_values.append(part)
+                    display_answers.append(part)
             else:
                 free_answers.append(part)
+                answer_values.append(part)
+                display_answers.append(part)
 
         if selected_indices:
             selected_labels = []
@@ -164,9 +174,10 @@ def _process_answer(answer: str, options: list[dict], multi_select: bool) -> dic
                 console.print(f"  [green]✓ {label}[/green]")
 
             return {
-                "answer": ", ".join(selected_labels),
+                "answer": ", ".join(display_answers),
+                "answer_values": answer_values,
                 "selected_options": selected_items,
-                "is_free_input": False,
+                "is_free_input": bool(free_answers),
                 "multi_select": True,
             }
 
@@ -272,6 +283,7 @@ def _ask_multiple(questions: list[dict]) -> dict:
             total_questions=total,
         )
         answers.append({
+            "question_id": q.get("question_id", ""),
             "question": q_text,
             **result,
         })
@@ -324,6 +336,7 @@ def _ask_multiple(questions: list[dict]) -> dict:
                     "properties": {
                         "label": {"type": "string", "description": "选项标签"},
                         "description": {"type": "string", "description": "选项说明"},
+                        "value": {"type": "string", "description": "稳定选项值；若指定，需与用户可见说明一致，回答后按此值记录"},
                     },
                     "required": ["label"],
                 },
@@ -339,9 +352,10 @@ def _ask_multiple(questions: list[dict]) -> dict:
             "questions": {
                 "type": "string",
                 "description": (
-                    "多问题模式：JSON 数组格式，最多 4 个问题。"
+                    "多问题模式：有效 JSON 数组，1—4 个问题；非法或超限时明确拒绝，不截断或退回单问题。"
                     '格式: [{"question": "...", "options": [{"label": "...", "description": "..."}], '
                     '"multi_select": false}]'
+                    "。每题可提供 confirmation_type；宿主逐题裁决与复用，只在同一张卡展示未决题。"
                     "。提供 questions 时忽略 question/options/multi_select 参数。"
                 ),
             },
@@ -365,22 +379,19 @@ def _ask_multiple(questions: list[dict]) -> dict:
                 "type": "string",
                 "description": "关联的 AnalysisSpec id，可选。",
             },
+            "reuse_decision_id": {
+                "type": "string",
+                "description": "同一业务决定换显示文案时，引用当前历史中原确认ID；原多题卡须引用该题question_id。宿主核验当前对象、版本、原权限及原问题/选项；仍只复用原题原回答，不能变更其含义。不能核定时继续询问，勿猜ID。",
+            },
             "measurement_mapping": {
                 "type": "string",
                 "description": (
-                    "仅当用户所说的业务指标与数据列或数值尺度的对应关系确有歧义，"
-                    "且该歧义会改变回答时使用。JSON 对象："
-                    '{"exact_span":"用户原文中的逐字片段","dataset":"当前数据集名",'
-                    '"column":"当前数值列名"}。当原文请求一段数值序列时，再提供'
-                    '"x_column":"当前横轴列名","x_start":起点整数,"x_end":终点整数；'
-                    "宿主核对原文、列、范围、版本并生成一次业务选项；"
-                    "不得填写技术哈希、代替用户回答或为方法许可使用。"
-                    "跨轮 group_aggregate 口径歧义可提交同一字段："
-                    '{"kind":"group_aggregate","exact_span":"旧用户原文逐字片段",'
-                    '"dataset":"原数据集","derived_dataset":"派生数据集",'
-                    '"receipt_id":"已执行回执","order_column":"订单ID列",'
-                    '"amount_column":"金额列"}；宿主只在当前会话、版本和回执闭合时'
-                    "生成一次含继续关系、计数口径与求和映射的业务确认。"
+                    "仅当用户的业务指标与当前数据列或尺度关系确有歧义且影响回答时使用。"
+                    "JSON 对象：exact_span 为用户原文逐字片段，dataset 为当前数据集，"
+                    "column 为数值列；序列另给 x_column、x_start、x_end。"
+                    "source_message_ref 可指定规范原消息 ID；省略时只绑定当前原用户消息，不搜索相似历史。"
+                    "账面净收益口径另给 cost_scopes（1–4 组，每组1–2个真实数值成本列）；宿主生成明确减法公式选项。"
+                    "宿主校验原文、列、范围及版本并生成业务选项；模型不得代替用户回答。"
                 ),
             },
         },
@@ -399,6 +410,7 @@ def ask_user_question(
     related_task_id: int = 0,
     related_spec_id: str = "",
     measurement_mapping: str = "",
+    reuse_decision_id: str = "",
 ) -> str:
     """向用户展示问题并获取回答。支持单问题和多问题模式。"""
 
@@ -408,26 +420,31 @@ def ask_user_question(
     if questions:
         try:
             parsed_questions = json.loads(questions)
-        except json.JSONDecodeError:
-            parsed_questions = []
+        except (TypeError, json.JSONDecodeError):
+            raise ValueError("questions 必须是有效 JSON 数组，包含 1—4 个问题。") from None
 
-        if isinstance(parsed_questions, list) and parsed_questions:
-            # 限制最多 4 个问题
-            parsed_questions = parsed_questions[:4]
+        if not isinstance(parsed_questions, list) or not 1 <= len(parsed_questions) <= 4:
+            raise ValueError("questions 必须是有效 JSON 数组，包含 1—4 个问题。")
+        for index, item in enumerate(parsed_questions):
+            if (not isinstance(item, dict)
+                    or not isinstance(item.get("question"), str)
+                    or not item["question"].strip()):
+                raise ValueError(f"questions[{index}].question 必须是非空文本。")
 
-            # 统一使用 suspension 模式（CLI 和 Web）
-            combined_q = "; ".join(q.get("question", "") for q in parsed_questions)
-            raise UserConfirmationRequired(
-                question=combined_q,
-                options=[],
-                context=json.dumps(parsed_questions, ensure_ascii=False),
-                confirmation_type=confirmation_type,
-                blocking_reason=blocking_reason,
-                state_updates=state_updates,
-                related_task_id=related_task_id,
-                related_spec_id=related_spec_id,
-                measurement_mapping=measurement_mapping,
-            )
+        # 先完整核验本批，保留原顺序与选项，再进入原确认流程。
+        combined_q = "; ".join(q["question"] for q in parsed_questions)
+        raise UserConfirmationRequired(
+            question=combined_q,
+            options=[],
+            context=json.dumps(parsed_questions, ensure_ascii=False),
+            confirmation_type=confirmation_type,
+            blocking_reason=blocking_reason,
+            state_updates=state_updates,
+            related_task_id=related_task_id,
+            related_spec_id=related_spec_id,
+            measurement_mapping=measurement_mapping,
+            reuse_decision_id=reuse_decision_id,
+        )
 
     # ── 解析单问题选项 ──
     parsed_options = []
@@ -455,4 +472,5 @@ def ask_user_question(
         related_task_id=related_task_id,
         related_spec_id=related_spec_id,
         measurement_mapping=measurement_mapping,
+        reuse_decision_id=reuse_decision_id,
     )

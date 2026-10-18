@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from typing import Optional
 
 import numpy as np
@@ -11,6 +12,7 @@ import pandas as pd
 
 from data_agent.session.workspace import workspace
 from data_agent.tools.registry import registry
+from data_agent.agent.publication.native import MINIMAL_PRODUCT_CONTRACTS
 from data_agent.utils.column_semantics import is_identifier_name, is_monetary_name
 
 
@@ -79,7 +81,7 @@ def _is_integer_like(values: list) -> bool:
     """判断数值列是否实际为整数（如 20250101 形式的日期、ID 等）。"""
     if not values:
         return False
-    return all(isinstance(v, (int, np.integer)) or (isinstance(v, float) and v == int(v)) for v in values)
+    return all(isinstance(v, (int, np.integer)) or (isinstance(v, float) and np.isfinite(v) and v == int(v)) for v in values)
 
 
 def _looks_like_date_int(values: list) -> bool:
@@ -91,7 +93,7 @@ def _looks_like_date_int(values: list) -> bool:
         if len(s) != 8:
             return False
         try:
-            int(s[:4]), int(s[4:6]), int(s[6:8])
+            date(int(s[:4]), int(s[4:6]), int(s[6:8]))
         except ValueError:
             return False
     return True
@@ -270,6 +272,9 @@ def apply_conversion(series: pd.Series, suggested_type: str) -> pd.Series:
     if suggested_type == "bool":
         return series.apply(lambda x: _BOOL_MAP.get(str(x).strip().lower(), x) if pd.notna(x) else x)
 
+    if suggested_type == "category":
+        return series.astype("category")
+
     return series
 
 
@@ -282,17 +287,30 @@ _AUTO_CONVERT_TYPES = {"datetime", "percentage_to_float", "date_int_to_datetime"
 _NOTIFY_CONVERT_TYPES = {"numeric_with_suffix", "numeric"}
 
 
-def _conversion_audit(source: pd.Series, converted: pd.Series) -> dict[str, int | float]:
-    """Describe parse loss without treating an unparseable value as zero."""
-    source_non_null = int(source.notna().sum())
-    converted_values = int(converted.loc[source.notna()].notna().sum())
-    failures = source_non_null - converted_values
-    return {
-        "source_non_null": source_non_null,
-        "converted_values": converted_values,
-        "conversion_failures": failures,
-        "conversion_failure_rate": round(failures / source_non_null, 6) if source_non_null else 0.0,
-    }
+def _conversion_audit(source: pd.Series, converted: pd.Series, *, target_type="", error="") -> dict:
+    """Count actual compatible outputs; retained bad text is not a conversion."""
+    from numbers import Number
+    from datetime import datetime
+    non_null=source.notna();source_non_null=int(non_null.sum())
+    valid=converted.notna()
+    if target_type=="bool":
+        valid=converted.map(lambda v:isinstance(v,(bool,np.bool_))).astype(bool)
+    elif target_type in {"numeric","percentage_to_float","numeric_with_suffix"}:
+        valid=converted.map(lambda v:isinstance(v,Number) and not isinstance(v,(bool,np.bool_)) and pd.notna(v)).astype(bool)
+    elif target_type in {"datetime","date_int_to_datetime"}:
+        valid=converted.map(lambda v:pd.notna(v) and isinstance(v,(datetime,np.datetime64))).astype(bool)
+    elif target_type=="category" and not isinstance(converted.dtype,pd.CategoricalDtype):
+        valid=valid & False
+    converted_values=0 if error else int(valid.loc[non_null].sum())
+    failures=source_non_null-converted_values
+    result={"source_non_null":source_non_null,"converted_values":converted_values,
+        "conversion_failures":failures,"conversion_failure_rate":round(failures/source_non_null,6) if source_non_null else 0.0}
+    if target_type:
+        result.update(column=source.name,to=target_type,from_dtype=str(source.dtype),new_dtype=str(converted.dtype),
+            original_missing=int(source.isna().sum()),remaining_missing=int(converted.isna().sum()),
+            new_missing=int(converted.loc[non_null].isna().sum()),
+            reason=error or ("部分非缺失值未转换为所选目标；保留该策略原有坏值处理方式" if failures else ""))
+    return result
 
 
 def auto_clean(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict], list[dict]]:
@@ -406,9 +424,35 @@ def _try_coerce_object_to_numeric(df: pd.DataFrame) -> tuple[pd.DataFrame, list[
 
 # ── 工具接口 ──────────────────────────────────────────────
 
+def _type_suggestions_result(df: pd.DataFrame, name: str) -> dict:
+    """One rule owner for type advice and storage-owned receipt verification."""
+    suggestions = []
+    for col in df.columns:
+        info = infer_column_type(df[col])
+        if info["suggested_type"] != "keep":
+            suggestions.append(info)
+    return {
+        "dataset": name,
+        "columns_analyzed": len(df.columns),
+        "suggestions": suggestions,
+        "observation": {
+            "source_rows": len(df),
+            "columns_analyzed": len(df.columns),
+            "max_unique_values_per_column": 20,
+            "max_displayed_values_per_column": 8,
+            "sampling": "每列非缺失唯一值不超过20个时全部使用，否则以固定随机种子42抽取20个；展示其中前8个。",
+        },
+        "limitations": [
+            "类型建议来自列名、原dtype、唯一值数及既有样本规则，置信度是规则标签；不表示全列转换已通过验收或业务语义已确认。",
+            "仅给出建议，不修改数据；低基数整数仅可能是类别编码，需确认。空建议集合只表示当前规则没有提出转换。",
+        ],
+    }
+
+
 @registry.register(
     name="suggest_column_types",
-    description="分析数据集各列的类型，给出智能类型转换建议。在 load_data 之后调用。",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["suggest_column_types"],
+    description="分析各列并给出类型转换建议及样本范围；每列最多20个非缺失唯一值，置信度为规则标签，不代表全列转换已验收。不修改数据。在 load_data 之后调用。",
 )
 def suggest_column_types(name: str) -> str:
     df = workspace.get(name)
@@ -416,26 +460,18 @@ def suggest_column_types(name: str) -> str:
         available = list(workspace.list_datasets().keys())
         return json.dumps({"error": f"数据集 '{name}' 不存在。可用: {available}"}, ensure_ascii=False)
 
-    suggestions = []
-    for col in df.columns:
-        info = infer_column_type(df[col])
-        if info["suggested_type"] != "keep":
-            suggestions.append(info)
-
-    return json.dumps({
-        "dataset": name,
-        "columns_analyzed": len(df.columns),
-        "suggestions": suggestions,
-    }, ensure_ascii=False, indent=2)
+    return json.dumps(_type_suggestions_result(df, name), ensure_ascii=False, indent=2)
 
 
 @registry.register(
     name="apply_type_conversion",
+    capability={"capability_id":"data.apply_type_conversion","category":"data_transform"},
+    output_contract={"version":"native_operation_effect.v1","adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation"]},
     description="对指定列执行类型转换。column 为列名，target_type 为: datetime/numeric/percentage_to_float/bool/category/date_int_to_datetime/numeric_with_suffix。也可以传 auto=true 自动应用所有建议转换。",
     schema_overrides={
         "name": {"description": "数据集名称"},
         "column": {"description": "目标列名"},
-        "target_type": {"description": "目标类型", "enum": ["datetime", "numeric", "percentage_to_float", "bool", "category", "date_int_to_datetime", "numeric_with_suffix"]},
+        "target_type": {"description": "目标类型", "enum": ["", "datetime", "numeric", "percentage_to_float", "bool", "category", "date_int_to_datetime", "numeric_with_suffix"]},
         "auto": {"description": "是否自动应用所有建议转换"},
     },
 )
@@ -452,50 +488,40 @@ def apply_type_conversion(
     df = df.copy()
 
     if auto:
-        applied = []
+        applied=[];audits=[];skipped=[]
         for col in df.columns:
-            info = infer_column_type(df[col])
-            st = info["suggested_type"]
-            if st in ("keep",) or info["confidence"] == "low":
+            info=infer_column_type(df[col]);st=info["suggested_type"]
+            if st=="keep" or info["confidence"]=="low" or st=="category_maybe":
+                skipped.append({"column":col,"suggested_type":st,"reason":info["reason"]})
                 continue
-            if st == "category_maybe":
-                continue
+            original=df[col].copy();error=""
             try:
-                df[col] = apply_conversion(df[col], st)
-                applied.append({"column": col, "converted_to": st})
-            except Exception as e:
-                applied.append({"column": col, "error": str(e)})
-
-        target_name = workspace.next_analysis_name(name, "type_clean")
-        derive_result = workspace.derive(name, target_name, df, expression="automatic safe type conversions")
-        if derive_result.startswith("Error:"):
-            return json.dumps({"error": derive_result}, ensure_ascii=False)
-        return json.dumps({
-            "dataset": target_name,
-            "source_dataset": name,
-            "auto_applied": applied,
-        }, ensure_ascii=False, indent=2)
-
-    # 手动转换单列
-    if not column or not target_type:
-        return json.dumps({"error": "手动模式需指定 column 和 target_type"}, ensure_ascii=False)
-
-    if column not in df.columns:
-        return json.dumps({"error": f"列 '{column}' 不存在。可用: {list(df.columns)}"}, ensure_ascii=False)
-
-    try:
-        df[column] = apply_conversion(df[column], target_type)
-        target_name = workspace.next_analysis_name(name, "type_clean")
-        derive_result = workspace.derive(name, target_name, df, expression=f"{column}: {target_type}")
-        if derive_result.startswith("Error:"):
-            return json.dumps({"error": derive_result}, ensure_ascii=False)
-        return json.dumps({
-            "dataset": target_name,
-            "source_dataset": name,
-            "converted": {"column": column, "to": target_type, "new_dtype": str(df[column].dtype)},
-        }, ensure_ascii=False, indent=2)
-    except Exception as e:
-        return json.dumps({"error": f"转换失败: {e}"}, ensure_ascii=False)
+                df[col]=apply_conversion(original,st)
+                applied.append({"column":col,"converted_to":st})
+            except Exception as exc:
+                error=str(exc);applied.append({"column":col,"error":error})
+            audits.append(_conversion_audit(original,df[col],target_type=st,error=error))
+        expression="automatic safe type conversions"
+    else:
+        if not column or not target_type:
+            return json.dumps({"error":"手动模式需指定 column 和 target_type"},ensure_ascii=False)
+        if column not in df.columns:
+            return json.dumps({"error":f"列 '{column}' 不存在。可用: {list(df.columns)}"},ensure_ascii=False)
+        if target_type not in {"datetime","numeric","percentage_to_float","bool","category","date_int_to_datetime","numeric_with_suffix"}:
+            return json.dumps({"error":"未知目标类型"},ensure_ascii=False)
+        original=df[column].copy()
+        try:df[column]=apply_conversion(original,target_type)
+        except Exception as exc:return json.dumps({"error":f"转换失败: {exc}"},ensure_ascii=False)
+        audits=[_conversion_audit(original,df[column],target_type=target_type)]
+        expression=f"{column}: {target_type}"
+    target_name=workspace.next_analysis_name(name,"type_clean")
+    derive_result=workspace.derive(name,target_name,df,expression=expression)
+    if derive_result.startswith("Error:"):return json.dumps({"error":derive_result},ensure_ascii=False)
+    result={"dataset":target_name,"source_dataset":name,"conversion_audit":audits,
+        "status":"partial" if any(r["conversion_failures"] or r["reason"] for r in audits) else "complete"}
+    if auto:result.update(auto_applied=applied,skipped=skipped)
+    else:result["converted"]={"column":column,"to":target_type,"new_dtype":str(df[column].dtype)}
+    return json.dumps(result,ensure_ascii=False,indent=2)
 
 
 # ── 显式数据清洗 ────────────────────────────────────────
@@ -517,6 +543,8 @@ _OUTLIER_STRATEGIES = {
 
 @registry.register(
     name="clean_data",
+    capability={"capability_id":"data.clean_data","category":"data_transform"},
+    output_contract={"version":"native_operation_effect.v1","adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation"]},
     description=(
         "对数据集执行显式清洗：缺失值处理、去重、异常值处理。"
         "missing_strategy: keep（保留缺失值）/ drop（删除行）/ fill_mean / fill_median / fill_mode / fill_constant。"
@@ -551,6 +579,11 @@ def clean_data(
     # 确定目标列
     target_cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else list(df.columns)
 
+    if missing_strategy not in {"keep", *_FILL_STRATEGIES} or outlier_strategy not in _OUTLIER_STRATEGIES:
+        return json.dumps({"error": "未知清洗策略"}, ensure_ascii=False)
+    if len(target_cols) != len(set(target_cols)) or any(c not in df.columns for c in target_cols):
+        return json.dumps({"error": "目标列不存在或重复"}, ensure_ascii=False)
+
     # 1. 去重是业务语义选择：没有稳定订单/事件主键时，完全重复行也可能是有效观测。
     if deduplicate:
         before_dedup = len(df)
@@ -561,50 +594,47 @@ def clean_data(
             "removed": removed_dedup,
         })
 
-    # 2. 缺失值处理
-    missing_before = df[target_cols].isnull().sum().to_dict()
-    total_missing = sum(missing_before.values())
-
-    if total_missing > 0:
-        if missing_strategy == "keep":
-            report["actions"].append({
-                "action": "missing_keep",
-                "columns_affected": {k: int(v) for k, v in missing_before.items() if v > 0},
-            })
-        elif missing_strategy == "drop":
-            before = len(df)
-            df = df.dropna(subset=[c for c in target_cols if c in df.columns])
-            report["actions"].append({
-                "action": "missing_drop",
-                "removed_rows": before - len(df),
-                "columns_affected": {k: int(v) for k, v in missing_before.items() if v > 0},
-            })
-        elif missing_strategy == "fill_mean":
-            for col in target_cols:
-                if col in df.columns and df[col].dtype in ("float64", "int64", "float32", "int32"):
-                    df[col] = df[col].fillna(df[col].mean())
-            report["actions"].append({"action": "missing_fill_mean", "filled": total_missing})
-        elif missing_strategy == "fill_median":
-            for col in target_cols:
-                if col in df.columns and df[col].dtype in ("float64", "int64", "float32", "int32"):
-                    df[col] = df[col].fillna(df[col].median())
-            report["actions"].append({"action": "missing_fill_median", "filled": total_missing})
-        elif missing_strategy == "fill_mode":
-            for col in target_cols:
-                if col in df.columns:
-                    mode_val = df[col].mode()
-                    if len(mode_val) > 0:
-                        df[col] = df[col].fillna(mode_val.iloc[0])
-            report["actions"].append({"action": "missing_fill_mode", "filled": total_missing})
-        elif missing_strategy == "fill_constant" and fill_value:
-            for col in target_cols:
-                if col in df.columns:
-                    try:
-                        val = float(fill_value) if df[col].dtype in ("float64", "int64") else fill_value
-                    except ValueError:
-                        val = fill_value
-                    df[col] = df[col].fillna(val)
-            report["actions"].append({"action": "missing_fill_constant", "filled": total_missing, "value": fill_value})
+    # Count actual changes at the imputation stage; row deletion is not filling.
+    missing_before = df[target_cols].isna().sum().to_dict()
+    handling = {"strategy": missing_strategy, "columns": []}
+    if missing_strategy == "drop":
+        before = len(df)
+        df = df.dropna(subset=target_cols)
+        report["actions"].append({"action": "missing_drop", "removed_rows": before-len(df)})
+    for col in target_cols:
+        count = int(missing_before[col]); reason = ""
+        if count and missing_strategy.startswith("fill_"):
+            value = None
+            try:
+                if missing_strategy in {"fill_mean", "fill_median"}:
+                    if not pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_bool_dtype(df[col]):
+                        reason = "非数值列，所选均值/中位数策略不适用"
+                    else:
+                        value = df[col].mean() if missing_strategy == "fill_mean" else df[col].median()
+                        if pd.isna(value) or not np.isfinite(value):
+                            reason = "没有可用的有限数值，无法求填充值"
+                elif missing_strategy == "fill_mode":
+                    modes = df[col].mode()
+                    if modes.empty: reason = "没有非缺失观测，众数未知"
+                    else: value = modes.iloc[0]
+                elif fill_value:
+                    try: value = float(fill_value) if df[col].dtype in ("float64", "int64") else fill_value
+                    except ValueError: value = fill_value
+                else:
+                    reason = "未指定固定填充值"
+                if not reason:
+                    df[col] = df[col].fillna(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                reason = "所选填充值无法应用于原列类型："+str(exc)
+        after = int(df[col].isna().sum())
+        filled = count-after if missing_strategy.startswith("fill_") else 0
+        if count and missing_strategy == "keep": reason = "按明确选择保留缺失"
+        handling["columns"].append({"column": col, "missing_before": count,
+            "filled": filled, "missing_after_strategy": after, "reason": reason})
+    handling["filled"] = sum(r["filled"] for r in handling["columns"])
+    handling["rows_after_strategy"] = len(df)
+    if missing_strategy != "drop":
+        report["actions"].append({"action": "missing_"+missing_strategy, "filled": handling["filled"]})
 
     # 3. 异常值处理（仅数值列）
     outlier_report = []
@@ -635,6 +665,11 @@ def clean_data(
     if outlier_report:
         report["actions"].append({"action": f"outlier_{outlier_strategy}", "details": outlier_report})
 
+    for row in handling["columns"]:
+        row["missing_after"] = int(df[row["column"]].isna().sum())
+    handling["remaining"] = sum(r["missing_after"] for r in handling["columns"])
+    report["missing_handling"] = handling
+    report["status"] = "partial" if missing_strategy != "keep" and handling["remaining"] else "complete"
     report["final_rows"] = len(df)
     report["rows_removed"] = report["original_rows"] - len(df)
 

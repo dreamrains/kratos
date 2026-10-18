@@ -682,10 +682,7 @@ def test_compare_periods_shortcut():
 def test_top_n_boundary():
     from data_agent.tools.eda import top_n
     result = top_n("test", sort_by="sales", n=0)
-    data = json.loads(result)
-    if data["n"] != 0:
-        return f"n=0 should return 0 records, got {data['n']}"
-    return True
+    return True if result.startswith("Error:") else "n=0 must refuse under the approved positive-integer boundary"
 
 
 def test_top_n_large_n():
@@ -773,24 +770,16 @@ def test_classification_basic():
     return True
 
 
-def test_forecast_simple():
+def test_forecast_retired_alias_rejected():
     from data_agent.tools.ml import forecast
-    result = forecast("test", target_col="sales", method="simple", periods=5)
-    r = assert_ok(result, "forecast_simple")
-    if r is not True:
-        return r
-    data = json.loads(result)
-    if len(data["forecast"]) != 5:
-        return f"should have 5 forecast points, got {len(data['forecast'])}"
-    if "diagnostics" not in data:
-        return "should have diagnostics"
-    return True
+    result = json.loads(forecast("test", target_col="sales", method="simple", periods=5))
+    return result.get("error_type")=="invalid_parameter" and result.get("field")=="method" and "forecast" not in result
 
 
 def test_forecast_too_few_points():
     from data_agent.tools.ml import forecast
     workspace.add("short_ts", pd.DataFrame({"val": [1, 2, 3]}))
-    result = forecast("short_ts", target_col="val", method="simple")
+    result = forecast("short_ts", target_col="val", method="auto")
     if "error" not in result and "Error" not in result:
         return "should error for too few points"
     return True
@@ -812,7 +801,7 @@ test("regression: 四种方法", test_regression_methods)
 test("regression: 交叉验证", test_regression_cv)
 test("regression: 数据太少", test_regression_too_few_data)
 test("classification: 基本分类", test_classification_basic)
-test("forecast: simple", test_forecast_simple)
+test("forecast: 退役simple明确拒绝", test_forecast_retired_alias_rejected)
 test("forecast: 数据太少", test_forecast_too_few_points)
 test("attribution: 归因分析", test_attribution_analysis)
 
@@ -827,7 +816,7 @@ _reset_test_data()
 
 def test_ab_test_auto():
     from data_agent.tools.statistics import ab_test
-    result = ab_test("test", group_col="channel", metric_col="sales")
+    result = ab_test("test", group_col="region", metric_col="sales")
     r = assert_ok(result, "ab_test")
     if r is not True:
         return r
@@ -856,8 +845,8 @@ def test_ab_test_single_group():
         "group": ["A", "A", "A"], "val": [1, 2, 3]
     }))
     result = ab_test("one_group", group_col="group", metric_col="val")
-    if "Error" not in result:
-        return "should error for single group"
+    if json.loads(result).get("error_type")!="invalid_ab_groups":
+        return "should return invalid_ab_groups for single group"
     return True
 
 
@@ -883,8 +872,8 @@ def test_causal_missing_time():
     from data_agent.tools.statistics import causal_analysis
     result = causal_analysis("did_test", treatment_col="treatment",
                              outcome_col="outcome", method="did")
-    if "Error" not in result:
-        return "should error when time_col missing"
+    if "error" not in json.loads(result):
+        return "should return structured error when time_col missing"
     return True
 
 
@@ -1036,8 +1025,8 @@ _reset_test_data()
 def test_file_write_read():
     from data_agent.tools.file_ops import write_file, read_file
     write_file("unit_test.txt", "hello world")
-    content = read_file("unit_test.txt")
-    if "hello world" not in content:
+    content = json.loads(read_file("unit_test.txt"))["content"]
+    if content != "hello world":
         return f"content mismatch: {content[:100]}"
     return True
 
@@ -1053,11 +1042,11 @@ def test_file_read_missing():
 def test_file_edit():
     from data_agent.tools.file_ops import write_file, edit_file, read_file
     write_file("edit_test.txt", "line1\nline2\nline3")
-    result = edit_file("edit_test.txt", "line2", "modified")
+    result = str(edit_file("edit_test.txt", "line2", "modified"))
     if "Error" in result:
         return f"edit failed: {result}"
-    content = read_file("edit_test.txt")
-    if "modified" not in content:
+    content = json.loads(read_file("edit_test.txt"))["content"]
+    if content != "line1\nmodified\nline3":
         return "edit should have taken effect"
     return True
 

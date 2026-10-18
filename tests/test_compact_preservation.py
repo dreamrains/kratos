@@ -73,10 +73,15 @@ class TestCompactPreservation:
         out_dir = tmp_path / "sessions" / "compact_preservation" / "tool_outputs"
         out_dir.mkdir(parents=True)
 
-        def fail_write(self, data, encoding=None):
-            raise OSError("disk full")
+        from pathlib import Path
+        real_open = Path.open
 
-        monkeypatch.setattr("pathlib.Path.write_text", fail_write)
+        def fail_write(self, *args, **kwargs):
+            if self.parent == out_dir and args and args[0] == "x":
+                raise OSError("disk full")
+            return real_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", fail_write)
         micro_compact("compact_preservation", messages)
 
         assert messages[0]["content"] == original, "持久化失败时不得进行有损替换"
@@ -95,3 +100,27 @@ class TestCompactPreservation:
         stored_after = sorted(out_dir.glob("tc_twice*.txt"))
         assert len(stored_after) == len(stored_before)
         assert stored_after[0].read_text(encoding="utf-8") == original
+
+
+import pytest
+
+
+@pytest.mark.parametrize("identity", ["tc_big", "D:unowned", "C:unowned", "call:opaque", "CON.txt", "COM1.txt", "LPT¹.txt", "../escape", "call\\escape", "调用", "control\x01id", "x" * 300])
+def test_opaque_call_id_persists_only_in_owned_output_directory(tmp_path, monkeypatch, identity):
+    from data_agent.agent import compact
+    from data_agent.config import get_config
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path / "sessions")
+    body = "original\n" * 2500 + "TAIL=999"
+    root = compact._session_tool_outputs_dir("opaque_ids")
+    path = compact._content_addressed_path(root, identity, body)
+    assert path.resolve().parent == root.resolve()
+    compact.persist_large_output("opaque_ids", identity, body)
+    assert path.read_text(encoding="utf-8") == body
+    if identity == "tc_big":
+        assert path.name.startswith("tc_big__")
+    messages = [_tool_message(identity, body)] + [_recent_filler(i) for i in range(8)]
+    compact.micro_compact("opaque_ids", messages)
+    assert messages[0]["tool_call_id"] == identity
+    assert messages[0]["content"] != body
+    assert path.read_text(encoding="utf-8") == body

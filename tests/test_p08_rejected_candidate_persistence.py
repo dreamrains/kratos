@@ -19,40 +19,47 @@ def _make_loop(tmp_path, monkeypatch, sid):
     return AgentLoop(client=None, session_id=sid)
 
 
-def _rejected_dir(tmp_path, sid):
-    return tmp_path / "sessions" / sid / "publication_rejected"
 
 
-def test_second_rejected_candidate_is_persisted_for_audit(tmp_path, monkeypatch):
-    """恢复额度用尽后的拒绝同样必须落盘（此前第二次起全文丢失）。"""
-    loop = _make_loop(tmp_path, monkeypatch, "rej_second")
-    loop._turn_publication_recovery_used = True
-
-    recovered = loop._recover_publication_narrative(
-        {"role": "assistant", "content": "候选全文：D30 外推 3.6%。"},
-        "[unbound_time_point_claim] 时间点数值主张未绑定到具体来源。",
-    )
-
-    assert recovered is False
-    files = sorted(_rejected_dir(tmp_path, "rej_second").glob("candidate_*.md"))
-    assert files, "被拒候选全文必须落盘供审计"
-    body = files[0].read_text(encoding="utf-8")
-    assert "候选全文：D30 外推 3.6%。" in body
-    assert "[unbound_time_point_claim]" in body
+from tests.test_trusted_publication_semantics import engine,execute
+from tests.test_trusted_publication_runtime import request
 
 
-def test_first_rejected_candidate_is_persisted_alongside_recovery(tmp_path, monkeypatch):
-    loop = _make_loop(tmp_path, monkeypatch, "rej_first")
+def test_second_rejected_candidate_is_persisted_for_audit(engine):
+    from data_agent.agent.publication.runtime import publish,commit,read_answer
+    from data_agent.session.history import load_session
+    from data_agent.agent.publication.contracts import digest
+    import json
+    loop,cfg=engine
+    request(loop,"计算当前记录数",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'quantity': 'rows'}})
+    execute(loop,"describe_dataset",{"name":"orders"})
+    first="第一稿候选：D30 外推 3.6%。"
+    second="第二稿候选：D30 外推 5%。"
+    assert publish(loop,first)[1]
+    body,error=publish(loop,second)
+    assert error is None and "D30 外推" not in body and "12" in body
+    assert commit(loop,{"role":"assistant"},body) is None
+    records=[json.loads(p.read_text(encoding="utf-8")) for p in (cfg.sessions_resolved/loop.session_id/"publication_rejected").glob("candidate_*.json")]
+    assert {r["raw_draft"] for r in records}=={first,second}
+    assert all(r["draft_digest"]==digest(r["raw_draft"]) and r["reasons"] for r in records)
+    message=load_session(loop.session_id)["messages"][-1]
+    answer=read_answer(loop.session_id,message["answer_ref"])
+    assert answer["draft_digest"]==digest(second) and message["content"]==answer["body"]==body
 
-    recovered = loop._recover_publication_narrative(
-        {"role": "assistant", "content": "第一稿候选全文。"},
-        "[code] 校验错误",
-    )
 
-    assert recovered is True
-    files = sorted(_rejected_dir(tmp_path, "rej_first").glob("candidate_*.md"))
-    assert files
-    assert "第一稿候选全文。" in files[0].read_text(encoding="utf-8")
+def test_first_rejected_candidate_is_persisted_alongside_recovery(engine):
+    from data_agent.agent.publication.runtime import publish,snapshot_for_turn
+    from tests.test_trusted_publication_runtime import draft
+    import json
+    loop,cfg=engine
+    request(loop,"计算当前记录数",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'quantity': 'rows'}})
+    execute(loop,"describe_dataset",{"name":"orders"})
+    candidate="第一稿候选全文。"
+    assert publish(loop,candidate)[1]
+    files=list((cfg.sessions_resolved/loop.session_id/"publication_rejected").glob("candidate_*.json"))
+    assert len(files)==1 and json.loads(files[0].read_text(encoding="utf-8"))["raw_draft"]==candidate
+    body,error=publish(loop,draft(snapshot_for_turn(loop)))
+    assert error is None and "12" in body and candidate not in body
 
 
 def test_index_session_skips_rejected_messages(tmp_path, monkeypatch):

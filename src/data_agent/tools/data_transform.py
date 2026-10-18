@@ -12,11 +12,53 @@ from data_agent.tools.registry import registry
 
 
 def _sum_preserving_missing(series):
+    if pd.api.types.is_integer_dtype(series.dtype):
+        observed = series.dropna()
+        return sum(int(value) for value in observed) if not observed.empty else None
     return series.sum(min_count=1)
+
+
+def _resample_input(frame, date_col):
+    """The original date coercion, with actual exclusion counts."""
+    ts_frame=frame.copy()
+    missing=int(ts_frame[date_col].isna().sum())
+    if not pd.api.types.is_datetime64_any_dtype(ts_frame[date_col]):
+        ts_frame[date_col]=pd.to_datetime(ts_frame[date_col],errors="coerce")
+    excluded=int(ts_frame[date_col].isna().sum())
+    audit={"source_rows":len(frame),"effective_rows":len(frame)-excluded,"excluded_rows":excluded,
+        "missing_date_rows":missing,"invalid_date_rows":excluded-missing}
+    return ts_frame.dropna(subset=[date_col]).set_index(date_col),audit
+
+
+def _transform_parameters(arguments):
+    """One interpretation for public structured fields and legacy JSON."""
+    raw=arguments.get("params") or ""
+    try:p=json.loads(raw) if raw else {}
+    except (TypeError,json.JSONDecodeError) as exc:raise ValueError("params 必须是 JSON 对象") from exc
+    if not isinstance(p,dict):raise ValueError("params 必须是 JSON 对象")
+    fields={"condition":"condition","columns":"columns","rename_mapping":"mapping","sort_by":"by",
+        "ascending":"ascending","group_by":"group_by","date_col":"date_col","freq":"freq",
+        "resample_agg":"agg","other_name":"other_name","merge_on":"on","merge_how":"how",
+        "pivot_index":"index","pivot_columns":"columns","pivot_values":"values",
+        "melt_id_vars":"id_vars","melt_value_vars":"value_vars"}
+    for source,target in fields.items():
+        if arguments.get(source) is not None:p[target]=arguments[source]
+    aggregations=arguments.get("aggregations")
+    if aggregations is not None:
+        p["agg"]={item["column"]:item["functions"] for item in aggregations}
+    return p
+
+
+def _transform_sources(arguments):
+    names=[arguments["name"]]
+    if arguments.get("operation")=="merge":names.append(_transform_parameters(arguments).get("other_name",""))
+    return list(dict.fromkeys(names))
 
 
 @registry.register(
     name="transform_data",
+    capability={"capability_id":"data.transform_data","category":"data_transform"},
+    output_contract={"version":"native_business_product.v1","adapter":"data_agent.agent.publication.native.resolve_native_claims","effect_adapter":"data_agent.agent.publication.native.resolve_operation_effect","kinds":["operation","measurement","table"]},
     description=(
         "对数据集执行变换操作。"
         "使用场景：数据预处理（筛选/排序/重命名）、多维聚合、时间重采样、数据合并。"
@@ -29,7 +71,7 @@ def _sum_preserving_missing(series):
         "数据变换失败。常见原因："
         "列名不存在（用 preview_data 查看列名）、"
         "数据类型不匹配（用 describe_dataset 检查类型）、"
-        "聚合函数名拼写错误（支持 sum/mean/count/min/max/median/std）。"
+        "聚合函数名拼写错误（支持 sum/mean/count/size/nunique/min/max/median/std）。"
     ),
     parameters={
         "type": "object",
@@ -78,8 +120,8 @@ def _sum_preserving_missing(series):
                         "column": {"type": "string", "description": "聚合目标列"},
                         "functions": {
                             "type": "array",
-                            "items": {"type": "string", "enum": ["sum", "mean", "count", "size", "min", "max", "median", "std"]},
-                            "description": "count 是非缺失记录数；size 是总记录数，两者之差为缺失数；sum 的全缺失分组保留缺失而非零。",
+                            "items": {"type": "string", "enum": ["sum", "mean", "count", "size", "nunique", "min", "max", "median", "std"]},
+                            "description": "count 是非缺失记录数；size 是总记录数；nunique 是非缺失唯一值数。sum 的全缺失分组保留缺失而非零。",
                         },
                     },
                     "required": ["column", "functions"],
@@ -129,22 +171,22 @@ def transform_data(
     params: str = "",
     save_as: str = "",
     # 结构化参数（由 Schema 层传递，函数内合并到 params dict）
-    condition: str = "",
+    condition: str | None = None,
     columns: list | str | None = None,
     rename_mapping: dict | str | None = None,
     sort_by: list | str | None = None,
-    ascending: bool = True,
+    ascending: bool | None = None,
     group_by: list | str | None = None,
     aggregations: list | None = None,
-    date_col: str = "",
-    freq: str = "",
+    date_col: str | None = None,
+    freq: str | None = None,
     resample_agg: dict | str | None = None,
-    other_name: str = "",
-    merge_on: str = "",
-    merge_how: str = "inner",
-    pivot_index: str = "",
-    pivot_columns: str = "",
-    pivot_values: str = "",
+    other_name: str | None = None,
+    merge_on: str | None = None,
+    merge_how: str | None = None,
+    pivot_index: str | None = None,
+    pivot_columns: str | None = None,
+    pivot_values: str | None = None,
     melt_id_vars: list | str | None = None,
     melt_value_vars: list | str | None = None,
 ) -> str:
@@ -164,50 +206,10 @@ def transform_data(
         suffix = _op_suffix.get(operation, operation)
         target_name = workspace.next_analysis_name(name, suffix)
 
-    # 合并结构化参数到 params dict
     try:
-        p = json.loads(params) if params else {}
-    except json.JSONDecodeError:
-        return json.dumps({"error": "params 必须是有效的 JSON"}, ensure_ascii=False)
-
-    # 结构化参数 → params dict（结构化参数优先，覆盖 params 中的同名字段）
-    if condition and "condition" not in p:
-        p["condition"] = condition
-    if columns is not None and "columns" not in p:
-        p["columns"] = columns
-    if rename_mapping is not None and "mapping" not in p:
-        p["mapping"] = rename_mapping
-    if sort_by is not None and "by" not in p:
-        p["by"] = sort_by
-    if not ascending and "ascending" not in p:
-        p["ascending"] = ascending
-    if group_by is not None and "group_by" not in p:
-        p["group_by"] = group_by
-    if aggregations is not None and "agg" not in p:
-        # aggregations: [{"column": "x", "functions": ["sum", "mean"]}] → {"x": ["sum", "mean"]}
-        p["agg"] = {a["column"]: a["functions"] for a in aggregations if "column" in a and "functions" in a}
-    if date_col and "date_col" not in p:
-        p["date_col"] = date_col
-    if freq and "freq" not in p:
-        p["freq"] = freq
-    if resample_agg is not None and "agg" not in p:
-        p["agg"] = resample_agg
-    if other_name and "other_name" not in p:
-        p["other_name"] = other_name
-    if merge_on and "on" not in p:
-        p["on"] = merge_on
-    if merge_how != "inner" and "how" not in p:
-        p["how"] = merge_how
-    if pivot_index and "index" not in p:
-        p["index"] = pivot_index
-    if pivot_columns and "columns" not in p:
-        p["columns"] = pivot_columns
-    if pivot_values and "values" not in p:
-        p["values"] = pivot_values
-    if melt_id_vars is not None and "id_vars" not in p:
-        p["id_vars"] = melt_id_vars
-    if melt_value_vars is not None and "value_vars" not in p:
-        p["value_vars"] = melt_value_vars
+        p=_transform_parameters(locals())
+    except (ValueError,KeyError,TypeError) as exc:
+        return json.dumps({"error":str(exc),"error_type":"invalid_parameter"},ensure_ascii=False)
 
     try:
         if operation == "merge":
@@ -236,6 +238,10 @@ def transform_data(
                     columns=p.get("columns"),
                     values=p.get("values"),
                 ).reset_index()
+                # Datetime pivot values become Timestamp column labels, which
+                # cannot cross the workspace/receipt JSON boundary. Column
+                # names are schema identifiers here, so normalize all labels.
+                result.columns = [str(column) for column in result.columns]
 
         elif operation == "filter":
             condition = p.get("condition", "")
@@ -301,8 +307,12 @@ def transform_data(
                 # 兼容旧格式
                 agg_func = p.get("agg_func", "count")
                 agg_col = p.get("agg_col", "")
-                if agg_func in ("count", "size"):
+                if agg_func == "size":
                     result = df.groupby(group_by, dropna=False).size().reset_index(name="count")
+                elif agg_func == "count":
+                    if not agg_col:
+                        return json.dumps({"error":"count 需要指定 agg_col 列；计算行数请使用 size", "error_type":"invalid_parameter"},ensure_ascii=False)
+                    result = df.groupby(group_by, dropna=False)[agg_col].count().reset_index(name="count")
                 elif agg_func == "sum":
                     result = df.groupby(group_by, dropna=False)[agg_col].sum(min_count=1).reset_index()
                 elif agg_func == "mean":
@@ -324,16 +334,12 @@ def transform_data(
             if date_col not in df.columns:
                 return json.dumps({"error": f"列 '{date_col}' 不存在"}, ensure_ascii=False)
 
-            # 确保日期列是 datetime 类型
-            ts_df = df.copy()
-            if not pd.api.types.is_datetime64_any_dtype(ts_df[date_col]):
-                ts_df[date_col] = pd.to_datetime(ts_df[date_col], errors="coerce")
+            ts_df,resample_audit = _resample_input(df,date_col)
 
             # pandas >=2.2 deprecates 'M'/'Y' in favor of 'ME'/'YE'
             _freq_map = {"M": "ME", "Y": "YE", "Q": "QE"}
             freq = _freq_map.get(freq, freq)
 
-            ts_df = ts_df.dropna(subset=[date_col]).set_index(date_col)
 
             if not agg_spec:
                 # 默认对所有数值列求和
@@ -341,13 +347,16 @@ def transform_data(
                 for col in ts_df.select_dtypes(include="number").columns:
                     agg_spec[col] = "sum"
 
+            agg_spec={col:([_sum_preserving_missing if f=="sum" else f for f in funcs]
+                if isinstance(funcs,list) else _sum_preserving_missing if funcs=="sum" else funcs)
+                for col,funcs in agg_spec.items()}
             resampled = ts_df.resample(freq).agg(agg_spec)
             result = resampled.reset_index()
 
             # 扁平化多级列名
             if isinstance(result.columns, pd.MultiIndex):
                 result.columns = [
-                    f"{col}_{func}" if func else col
+                    f"{col}_{'sum' if func == '_sum_preserving_missing' else func}" if func else col
                     for col, func in result.columns
                 ]
 
@@ -371,13 +380,24 @@ def transform_data(
         {k: v for k, v in p.items() if k in ("group_by", "freq", "date_col", "condition", "agg")},
         ensure_ascii=False,
     ) if p else ""
-    derive_result = workspace.derive(name, target_name, result, expression=f"{operation}: {expression}")
+    sources=list(dict.fromkeys([name,other_name])) if operation=="merge" else [name]
+    derive_result = (workspace.derive_multi(sources,target_name,result,expression=f"{operation}: {expression}")
+        if operation=="merge" else workspace.derive(name,target_name,result,expression=f"{operation}: {expression}"))
     if derive_result.startswith("Error:"):
         return json.dumps({"error": derive_result}, ensure_ascii=False)
+    from data_agent.tools.data_understand import _observed_date_scope
     return json.dumps({
         "dataset": target_name,
         "source_dataset": name,
+        "source_datasets": sources,
+        "parameters": p,
+        **({"source_observation": {"rows": len(df), "observation_window": _observed_date_scope(df)}}
+           if operation == "group_aggregate" else {}),
         "operation": operation,
+        **({"resample_audit":resample_audit,"status":"partial" if resample_audit["excluded_rows"] else "complete"}
+           if operation=="resample" else {}),
         "rows": len(result),
         "columns": list(result.columns),
+        **({"measurement_records": json.loads(result.to_json(orient="records",date_format="iso",double_precision=15))}
+           if operation in {"group_aggregate","resample","pivot"} else {}),
     }, ensure_ascii=False, indent=2)

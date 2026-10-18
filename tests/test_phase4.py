@@ -130,7 +130,7 @@ class TestMultiDatasetSupport:
                 result = interpret_dataset("solo")
                 from data_agent.tools.registry import ToolResult
                 if isinstance(result, ToolResult):
-                    assert "cross_dataset_hints" not in (result.data or {})
+                    assert (result.data or {}).get("cross_dataset_hints") == []  # Explicit empty table supports formal delivery.
 
 
 # === 4.4 User Proficiency Detection ===

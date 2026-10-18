@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
 {% block body %}
-<div class="flex h-full min-h-0 overflow-hidden" x-data="chatApp()" x-init="init()">
+<div class="flex h-full min-h-0 overflow-hidden" x-data="chatApp()" x-init="init()"
+     @keydown.escape.window="if (workbenchDrawerOpen) closeWorkbenchDrawer()"
+     @resize.window="if (workbenchDrawerOpen && window.innerWidth >= 1280) closeWorkbenchDrawer(false)">
 
     <!-- Sidebar -->
     <aside class="w-72 min-h-0 overflow-hidden sidebar-panel border-r border-stone-200 dark:border-stone-800 flex flex-col shrink-0 transition-all duration-200"
-           :class="{ 'w-0 border-r-0': sidebarCollapsed }">
+           :class="{ 'w-0 border-r-0': sidebarCollapsed }" :inert="workbenchDrawerOpen">
 
         <!-- Header -->
         <div class="p-4 border-b border-stone-200 dark:border-stone-800">
@@ -130,7 +132,7 @@
     </aside>
 
     <!-- Main Area -->
-    <main class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-stone-50 dark:bg-stone-950">
+    <main class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-stone-50 dark:bg-stone-950" :inert="workbenchDrawerOpen">
 
         <!-- Top Bar -->
         <header class="h-11 border-b border-stone-200 dark:border-stone-800 flex items-center px-4 shrink-0 top-bar z-10">
@@ -152,6 +154,9 @@
                     <span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span>
                     本地执行
                 </span>
+                <button type="button" x-ref="workbenchOpener" @click="openWorkbenchDrawer()"
+                        class="xl:hidden px-2 py-1 text-xs rounded-lg border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 shrink-0"
+                        aria-controls="analysisWorkbench" :aria-expanded="workbenchDrawerOpen" title="打开分析工作台">工作台</button>
                 <!-- Compact button (left of capacity indicator) -->
                 <button @click="compactContext()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors flex items-center justify-center" :disabled="!currentSessionId || isCompact" :class="{'opacity-40 cursor-not-allowed': !currentSessionId || isCompact}" title="压缩上下文">
                     <span class="kratos-icon kratos-icon-compact" style="--kratos-icon-url: url('{{ url_for('static', filename='icons/kratos-compress.svg') }}')" aria-hidden="true"></span>
@@ -470,14 +475,15 @@
             <div class="px-4 pb-4 pt-2">
                 <div class="max-w-3xl mx-auto">
                     <div class="relative input-box">
+                        <p x-show="sessionReadOnly" class="px-4 text-sm text-stone-500">历史会话仅供查阅与导出，请新建会话开始分析。</p>
                         <textarea x-ref="inputBox" x-model="inputText" @keydown.enter="if(!$event.shiftKey) { $event.preventDefault(); sendMessage() }"
                                   :placeholder="hasActiveConfirmation ? '请先回答上方问题，或点击「取消」结束当前提问…' : '描述你的数据分析任务...'" rows="1"
-                                  class="composer-input w-full resize-none bg-transparent px-4 pr-24 text-sm focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" :disabled="isLoading || hasActiveConfirmation"></textarea>
+                                  class="composer-input w-full resize-none bg-transparent px-4 pr-24 text-sm focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" :disabled="sessionReadOnly || isLoading || hasActiveConfirmation"></textarea>
                         <div class="composer-actions absolute right-2 flex items-center gap-1">
                             <label class="composer-icon-btn hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 cursor-pointer transition-colors" :class="{ 'animate-pulse text-brand-500': isUploading }">
                                 <svg x-show="!isUploading" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
                                 <svg x-show="isUploading" class="w-5 h-5 task-spinner" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                                <input type="file" multiple class="hidden" accept=".csv,.tsv,.xlsx,.json,.jsonl" @change="uploadFile($event)">
+                                <input type="file" multiple class="hidden" accept=".csv,.tsv,.xlsx,.json,.jsonl" @change="uploadFile($event)" :disabled="sessionReadOnly || isLoading || hasActiveConfirmation">
                             </label>
                             <!-- Pause button -->
                             <button x-show="isLoading || hasActiveConfirmation" @click="interruptTurn()" aria-label="停止生成"
@@ -485,7 +491,7 @@
                                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                             </button>
                             <!-- Send button -->
-                            <button x-show="!isLoading && !hasActiveConfirmation" @click="sendMessage()" aria-label="发送消息" :disabled="isUploading || (!inputText.trim() && !uploadedFiles.length)"
+                            <button x-show="!isLoading && !hasActiveConfirmation" @click="sendMessage()" aria-label="发送消息" :disabled="sessionReadOnly || isUploading || (!inputText.trim() && !uploadedFiles.length)"
                                     class="composer-icon-btn send-btn text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7"/></svg>
                             </button>
@@ -510,17 +516,25 @@
         </div>
     </main>
 
-    <!-- Workbench Panel -->
-    <aside class="hidden xl:flex min-h-0 overflow-hidden shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col transition-all duration-200"
-           :class="trustInspectorCollapsed ? 'w-14' : 'w-[22rem]'">
+    <!-- One workbench panel: desktop sidebar and narrow-screen drawer share its contents. -->
+    <button type="button" x-cloak x-show="workbenchDrawerOpen" @click="closeWorkbenchDrawer()"
+            class="workbench-drawer-backdrop xl:hidden" tabindex="-1" aria-label="关闭工作台遮罩"></button>
+    <aside id="analysisWorkbench" x-ref="workbenchPanel" :role="workbenchDrawerOpen ? 'dialog' : null"
+           :aria-modal="workbenchDrawerOpen ? 'true' : null" aria-labelledby="analysisWorkbenchTitle"
+           @keydown.tab="trapWorkbenchFocus($event)"
+           class="hidden xl:flex min-h-0 overflow-hidden shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col transition-all duration-200"
+           :class="(trustInspectorCollapsed ? 'w-14' : 'w-[22rem]') + (workbenchDrawerOpen ? ' is-drawer-open' : '')">
         <div class="h-11 min-w-0 border-b border-stone-200 dark:border-stone-800 px-3 flex items-center justify-between">
             <div x-show="!trustInspectorCollapsed" x-transition.opacity class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">分析工作台</p>
+                <p id="analysisWorkbenchTitle" class="text-sm font-medium text-stone-800 dark:text-stone-200">分析工作台</p>
                 <p class="text-[10px] text-stone-400 truncate"
                    :title="(currentSessionId && currentSessionId !== '_pending_') ? currentSessionId : ''"
                    x-text="(currentSessionId && currentSessionId !== '_pending_') ? ('会话：' + currentSessionId) : '未绑定会话'"></p>
             </div>
             <div class="flex items-center gap-2">
+                <button type="button" x-ref="workbenchClose" @click="closeWorkbenchDrawer()"
+                        class="xl:hidden p-1.5 rounded-lg text-stone-500 hover:bg-stone-200/60 dark:hover:bg-stone-800"
+                        aria-label="关闭工作台">关闭</button>
                 <!-- Compact analysis stage indicator -->
                 <div x-show="!trustInspectorCollapsed && analysisSummary.stage" class="flex items-center gap-1.5">
                     <span class="w-1.5 h-1.5 rounded-full"
@@ -535,7 +549,7 @@
                 <button x-show="!trustInspectorCollapsed" @click="loadAnalysisState(); loadTrustView(); loadSessionArtifacts(); loadTasks()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" title="Refresh">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-3M19 5A9 9 0 005 8"/></svg>
                 </button>
-                <button @click="trustInspectorCollapsed = !trustInspectorCollapsed" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" :title="trustInspectorCollapsed ? '展开工作台' : '收起工作台'">
+                <button @click="trustInspectorCollapsed = !trustInspectorCollapsed" class="hidden xl:inline-flex p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" :title="trustInspectorCollapsed ? '展开工作台' : '收起工作台'">
                     <svg x-show="!trustInspectorCollapsed" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
                     <svg x-show="trustInspectorCollapsed" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
                 </button>
@@ -558,7 +572,7 @@
                     <div class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="conclusion.claim"></div>
                     <details x-show="conclusion.summary" class="workbench-conclusion-details mt-1">
                       <summary>查看计算详情</summary>
-                      <div class="workbench-conclusion-summary" x-text="conclusion.summary"></div>
+                      <div class="workbench-conclusion-summary prose prose-sm dark:prose-invert max-w-none" x-html="renderMarkdown(conclusion.summary, null, false)"></div>
                     </details>
                   </div>
                 </template>
@@ -566,7 +580,7 @@
                 <button type="button" x-show="hiddenListCount('workbench-verified', verifiedConclusions())"
                         class="text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 underline"
                         @click="showMoreListItems('workbench-verified', verifiedConclusions())"
-                        x-text="'展开其余 ' + hiddenListCount('workbench-verified', verifiedConclusions()) + ' 条'"></button>
+                        x-text="hiddenListCount('workbench-verified', verifiedConclusions()) <= 6 ? '展开其余 ' + hiddenListCount('workbench-verified', verifiedConclusions()) + ' 条' : '再显示 6 条（剩余 ' + hiddenListCount('workbench-verified', verifiedConclusions()) + ' 条）'"></button>
                 <button type="button" x-show="canCollapseList('workbench-verified')"
                         class="text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 underline"
                         @click="collapseListItems('workbench-verified')">收起</button>
@@ -588,8 +602,13 @@
                         <span class="inline-block px-1.5 py-0.5 rounded bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 border border-stone-200 dark:border-stone-700" x-text="finding.status_label"></span>
                       </div>
                       <div class="text-[11px] text-stone-500 dark:text-stone-400 mt-1" x-show="finding.basis" x-text="'依据：' + finding.basis"></div>
-                      <div class="text-[11px] text-stone-500 dark:text-stone-400" x-show="finding.gap" x-text="'尚缺：' + finding.gap"></div>
-                      <div class="text-[11px] text-stone-500 dark:text-stone-400" x-show="finding.next_step" x-text="'下一步：' + finding.next_step"></div>
+                      <div class="text-[11px] text-stone-500 dark:text-stone-400 whitespace-pre-line" x-show="finding.gap_explanation" x-text="'已审说明：' + finding.gap_explanation"></div>
+                      <div class="text-[11px] text-stone-500 dark:text-stone-400" x-show="!finding.gap_explanation && finding.gap" x-text="'宿主缺口：' + finding.gap"></div>
+                      <details class="text-[11px] text-stone-500 dark:text-stone-400" x-show="finding.gap_explanation && finding.gap">
+                        <summary>查看宿主缺口记录</summary>
+                        <div x-text="finding.gap"></div>
+                      </details>
+                      <div class="text-[11px] text-stone-500 dark:text-stone-400 whitespace-pre-line" x-show="finding.next_step" x-text="(finding.next_step_status === 'reviewed' ? '条件性建议（已审）：' : '下一步（未核）：') + finding.next_step"></div>
                     </div>
                   </template>
                   <div x-show="!pendingFindings().length" class="text-xs text-stone-400 mt-1">暂无待验证发现</div>

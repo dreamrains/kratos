@@ -160,3 +160,120 @@ def test_terminal_statuses_cannot_be_confirmed(tmp_path: Path):
     assert store.confirm(rejected.id).status == MemoryStatus.REJECTED
     assert store.confirm(deprecated.id).status == MemoryStatus.DEPRECATED
     assert store.confirm(promoted.id).status == MemoryStatus.PROMOTED
+
+
+# S3: rollback of mutations whose public result cannot be read before commit.
+import json
+import sqlite3
+from tests.test_trusted_publication_semantics import engine
+
+
+def _memory_storage_rows(root):
+    with sqlite3.connect(root / "knowledge.sqlite3") as conn:
+        conn.row_factory=sqlite3.Row
+        return [dict(r) for r in conn.execute("SELECT * FROM memory_items ORDER BY id")]
+
+
+def _memory_storage_fixture(engine,monkeypatch):
+    from data_agent.tools import knowledge_tools
+    from data_agent.web.app import create_app
+    _,cfg=engine;store=MemoryStore(cfg.knowledge_dir)
+    monkeypatch.setattr(knowledge_tools,"_memory_store",store)
+    app=create_app();app.config["PROPAGATE_EXCEPTIONS"]=False
+    return store,app.test_client()
+
+
+def _memory_storage_call(store,http,route,action,item):
+    from data_agent.tools.registry import registry
+    if route=="registry":
+        name="create_memory_candidate" if action=="create" else "confirm_memory"
+        args={"text":"NEW MEMORY","summary":"NEW SUMMARY"} if action=="create" else {"memory_id":item.id}
+        result=registry.execute(name,args)
+        return {"error":True} if "error" in json.loads(result.summary) else result.data
+    if route=="http":
+        base="/api/management/memory"
+        if action=="create":response=http.post(base,json={"text":"NEW MEMORY","summary":"NEW SUMMARY"})
+        elif action=="update":response=http.patch(base+"/"+item.id,json={"text":"NEW MEMORY","summary":"NEW SUMMARY"})
+        else:response=http.post(base+"/"+item.id+"/"+action)
+        return {"error":True} if response.status_code>=400 else response.get_json()
+    try:
+        if action=="create":return store.create_candidate("NEW MEMORY",summary="NEW SUMMARY")
+        if action=="update":return store.update(item.id,text="NEW MEMORY",summary="NEW SUMMARY")
+        return getattr(store,action)(item.id)
+    except Exception as exc:return {"error":type(exc).__name__}
+
+
+_MEMORY_STORAGE_ROUTES=[(action,route) for action,routes in [
+    ("create",["store","registry","http"]),("confirm",["store","registry","http"]),
+    ("update",["store","http"]),("reject",["store","http"]),("deprecate",["store","http"]),
+    ("mark_promoted",["store"]),("touch_used",["store"])] for route in routes]
+
+
+@pytest.mark.parametrize("action,route",_MEMORY_STORAGE_ROUTES)
+@pytest.mark.parametrize("fault",["raise","missing"])
+def test_memory_storage_readback_failure_keeps_original_database(engine,monkeypatch,action,route,fault):
+    store,http=_memory_storage_fixture(engine,monkeypatch)
+    item=store.create_candidate("OLD MEMORY",summary="OLD SUMMARY",source_session_id="owned")
+    if action in {"deprecate","mark_promoted"}:item=store.confirm(item.id)
+    before=_memory_storage_rows(store.root);original=MemoryStore._item_from_row;fired=[]
+    old_status=item.status.value
+    def reject_changed(self,row):
+        changed=(row["id"]!=item.id if action=="create" else row["text"]!="OLD MEMORY" if action=="update" else row["hit_count"]>0 if action=="touch_used" else row["status"]!=old_status)
+        if changed:
+            fired.append(True)
+            if fault=="missing":return None
+            raise OSError("memory result readback failed")
+        return original(self,row)
+    with monkeypatch.context() as m:
+        m.setattr(MemoryStore,"_item_from_row",reject_changed)
+        result=_memory_storage_call(store,http,route,action,item)
+        assert fired and isinstance(result,dict) and "error" in result,result
+    assert _memory_storage_rows(store.root)==before
+    assert MemoryStore(store.root).get(item.id).text=="OLD MEMORY"
+
+
+@pytest.mark.parametrize("route",["store","registry","http"])
+@pytest.mark.parametrize("action",["create","confirm"])
+def test_memory_storage_sql_rejection_is_not_reported_as_success(engine,monkeypatch,route,action):
+    store,http=_memory_storage_fixture(engine,monkeypatch);item=store.create_candidate("OLD MEMORY")
+    before=_memory_storage_rows(store.root)
+    event="INSERT" if action=="create" else "UPDATE"
+    with store.db.connect() as conn:conn.execute(f"CREATE TRIGGER deny_write BEFORE {event} ON memory_items BEGIN SELECT RAISE(ABORT, 'memory denied'); END")
+    result=_memory_storage_call(store,http,route,action,item)
+    assert isinstance(result,dict) and "error" in result,result
+    assert _memory_storage_rows(store.root)==before
+
+
+@pytest.mark.parametrize("action",["create","confirm","update","reject","deprecate","mark_promoted","touch_used"])
+def test_memory_storage_commit_failure_keeps_original_database(tmp_path,action):
+    store=MemoryStore(tmp_path/"knowledge");item=store.create_candidate("OLD MEMORY")
+    if action in {"deprecate","mark_promoted"}:item=store.confirm(item.id)
+    before=_memory_storage_rows(store.root)
+    event="INSERT" if action=="create" else "UPDATE"
+    with store.db.connect() as conn:
+        conn.execute("CREATE TABLE allowed_guard (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE deferred_guard (id INTEGER REFERENCES allowed_guard(id) DEFERRABLE INITIALLY DEFERRED)")
+        conn.execute(f"CREATE TRIGGER fail_commit AFTER {event} ON memory_items BEGIN INSERT INTO deferred_guard VALUES(1); END")
+    result=_memory_storage_call(store,None,"store",action,item)
+    assert isinstance(result,dict) and "error" in result,result
+    assert _memory_storage_rows(store.root)==before
+    with store.db.connect() as conn:assert conn.execute("SELECT COUNT(*) FROM deferred_guard").fetchone()[0]==0
+
+
+@pytest.mark.parametrize("text",["","中文记忆","line\r\nline\nend\r"])
+def test_memory_storage_exact_text_roundtrip_and_status_contract(tmp_path,text):
+    store=MemoryStore(tmp_path/"knowledge");item=store.create_candidate(text,source_session_id="s1",tags=["exact"])
+    assert MemoryStore(store.root).get(item.id).text==text
+    confirmed=store.confirm(item.id);assert confirmed.status==MemoryStatus.CONFIRMED and confirmed.confidence==pytest.approx(.75)
+    assert store.confirm(item.id)==confirmed
+    updated=store.update(item.id,text=text,summary="updated");assert updated.text==text and updated.summary=="updated"
+    assert store.deprecate(item.id).status==MemoryStatus.DEPRECATED
+    with pytest.raises(ValueError):store.update(item.id,text="no")
+    assert store.reject(item.id).status==MemoryStatus.DEPRECATED
+
+
+def test_memory_storage_missing_touch_keeps_original_none_semantics(tmp_path):
+    store=MemoryStore(tmp_path/"knowledge")
+    assert store.touch_used("missing") is None and store.confirm("missing") is None
+    assert store.update("missing",text="no") is None and store.reject("missing") is None
+    assert _memory_storage_rows(store.root)==[]

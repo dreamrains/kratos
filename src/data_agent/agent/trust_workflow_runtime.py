@@ -8,7 +8,6 @@ from typing import Any
 
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.intent_refinement import refine_intent_with_data
-from data_agent.agent.verification import verify_analysis_claims
 from data_agent.utils.logging import get_logger
 
 
@@ -36,50 +35,6 @@ def refine_turn_intent_with_state(user_input: str, intent: TurnIntent, state: An
         return intent
 
 
-def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False) -> dict[str, Any] | None:
-    """Create one compact verification report for recorded evidence claims."""
-
-    try:
-        current_plan_id = _current_analysis_plan_id(state)
-        evidence_records = _current_plan_records(
-            _list_attr(state, "evidence_records"),
-            current_plan_id,
-        )
-        claims = _extract_claims(evidence_records)
-        if not claims:
-            return None
-
-        signature = _evidence_signature(state, evidence_records)
-        fingerprint = _evidence_fingerprint(state, evidence_records)
-        if not force and _promote_verification_identity(state, signature, fingerprint):
-            return None
-
-        report = verify_analysis_claims(
-            claims=claims,
-            evidence_records=evidence_records,
-            route_proposals=_list_attr(state, "route_proposals"),
-            cleaning_logs=_list_attr(state, "cleaning_logs"),
-            current_plan_id=current_plan_id,
-        )
-        ref = _compact_verification_ref(report, signature, fingerprint)
-        add_ref = getattr(state, "add_verification_report_ref", None)
-        if callable(add_ref):
-            stored = add_ref(ref)
-        else:
-            reports = getattr(state, "verification_reports", None)
-            if isinstance(reports, list):
-                reports.append(ref)
-            stored = ref
-        save = getattr(state, "save", None)
-        if callable(save):
-            save()
-        return stored
-    except Exception as exc:
-        logger.warning(
-            "Trust workflow verification skipped",
-            extra={"extra_data": {"error": str(exc), "user_input": (user_input or "")[:200]}},
-        )
-        return None
 
 
 def _workspace_data_identities() -> dict[str, dict]:
@@ -146,11 +101,24 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
     """Create one compact hypothesis set for a runnable analysis route."""
 
     try:
+        from data_agent.agent.question_need_detector import explicit_task_reason
+
+        # Explicit hypothesis audits use stable IDs scoped to a real plan.
+        # A pre-plan set would become historical as soon as the model records
+        # its plan, leaving earlier relation proposals attached to the wrong
+        # identity. Ordinary exploratory sets may still be created without one.
+        if explicit_task_reason(user_input) in {
+            "hypothesis_task", "competing_hypotheses", "evidence_reassessment",
+        }:
+            plan = getattr(state, "analysis_plan", None)
+            if not isinstance(plan, dict) or not str(plan.get("id") or "").strip():
+                return None
         from data_agent.agent.analysis_entry import decide_analysis_entry
         from data_agent.agent.hypotheses import (
             build_hypothesis_set,
             hydrate_hypothesis_refs,
             persist_hypothesis_set,
+            receipt_verified_descriptive_directions,
             receipt_verified_hypothesis_measurements,
             update_hypotheses_from_evidence,
         )
@@ -167,10 +135,39 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
             evidence_records, _workspace_data_identities(),
         )
         verified_measurements = receipt_verified_hypothesis_measurements(state, fresh_evidence)
+        verified_directions = receipt_verified_descriptive_directions(state, fresh_evidence)
         hypothesis_set = build_hypothesis_set(user_input, decision, state)
         dataset = str(hypothesis_set.get("dataset") or "")
         route = str(hypothesis_set.get("route") or "")
         plan_id = str(hypothesis_set.get("plan_id") or "")
+        # A new plan on the same dataset must not leave a decided historical
+        # set looking current after its underlying version has changed.
+        stale_record_ids = {str(item.get("evidence_id") or "") for item in exclusions
+                            if item.get("dataset") == dataset}
+        if stale_record_ids:
+            records_by_id = {str(item.get("id") or ""): item for item in evidence_records}
+            for prior_ref in list(_list_attr(state, "hypothesis_sets")):
+                if (prior_ref.get("dataset") != dataset
+                        or prior_ref.get("id") == hypothesis_set.get("id")):
+                    continue
+                prior_plan = str(prior_ref.get("plan_id") or "")
+                prior_exclusions = [item for item in exclusions
+                                    if str(item.get("evidence_id") or "") in stale_record_ids
+                                    and str(records_by_id.get(str(item.get("evidence_id") or ""), {}).get("plan_id") or "") == prior_plan]
+                if not prior_exclusions:
+                    continue
+                hydrated_prior = hydrate_hypothesis_refs([prior_ref])
+                if not hydrated_prior:
+                    continue
+                refreshed_prior = update_hypotheses_from_evidence(
+                    hydrated_prior[0], fresh_evidence, verified_measurements=verified_measurements,
+                    verified_directions=verified_directions,
+                )
+                refreshed_prior["evidence_exclusions"] = prior_exclusions
+                prior_stored = persist_hypothesis_set(str(getattr(state, "session_id", "")), refreshed_prior)
+                if prior_ref.get("created_at"):
+                    prior_stored["created_at"] = prior_ref["created_at"]
+                state.add_hypothesis_set_ref(prior_stored)
         existing_ref = _find_hypothesis_set_ref(state, dataset, route, plan_id)
         if existing_ref:
             hydrated = hydrate_hypothesis_refs([existing_ref])
@@ -190,10 +187,12 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
                 return None
             hypothesis_set = update_hypotheses_from_evidence(
                 hydrated[0], fresh_evidence, verified_measurements=verified_measurements,
+                verified_directions=verified_directions,
             )
         elif fresh_evidence:
             hypothesis_set = update_hypotheses_from_evidence(
                 hypothesis_set, fresh_evidence, verified_measurements=verified_measurements,
+                verified_directions=verified_directions,
             )
         if exclusions:
             hypothesis_set["evidence_exclusions"] = exclusions
@@ -245,123 +244,3 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
-
-
-def _extract_claims(evidence_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    claims: list[dict[str, Any]] = []
-    for record in evidence_records:
-        claim = record.get("claim")
-        if isinstance(claim, str) and claim.strip():
-            structured_claim = dict(record)
-            structured_claim["claim"] = claim.strip()
-            claims.append(structured_claim)
-    return claims
-
-
-def _current_plan_records(
-    evidence_records: list[dict[str, Any]],
-    current_plan_id: str,
-) -> list[dict[str, Any]]:
-    if not current_plan_id:
-        return evidence_records
-    return [
-        record
-        for record in evidence_records
-        if str(record.get("plan_id") or "").strip() == current_plan_id
-    ]
-
-
-def _evidence_signature(state: Any, evidence_records: list[dict[str, Any]]) -> str:
-    evidence_ids = [str(record.get("id") or index) for index, record in enumerate(evidence_records)]
-    route_ids = [str(route.get("id")) for route in _list_attr(state, "route_proposals") if route.get("id")]
-    cleaning_ids = [str(log.get("id")) for log in _list_attr(state, "cleaning_logs") if log.get("id")]
-    signature = "|".join(evidence_ids) + "|routes:" + ",".join(route_ids) + "|cleaning:" + ",".join(cleaning_ids)
-    current_plan_id = _current_analysis_plan_id(state)
-    if current_plan_id:
-        signature += "|plan:" + current_plan_id
-    return signature
-
-
-def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) -> str:
-    payload = {
-        "evidence_records": evidence_records,
-        "route_proposals": _list_attr(state, "route_proposals"),
-        "cleaning_logs": _list_attr(state, "cleaning_logs"),
-        "current_plan_id": _current_analysis_plan_id(state),
-    }
-    encoded = json.dumps(payload, sort_keys=True, default=str)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
-
-
-def _current_analysis_plan_id(state: Any) -> str:
-    for attr_name in ("analysis_plan", "analysis_spec"):
-        plan = getattr(state, attr_name, None)
-        if isinstance(plan, dict):
-            plan_id = str(plan.get("id") or "").strip()
-            if plan_id:
-                return plan_id
-    return ""
-
-
-def _promote_verification_identity(state: Any, signature: str, fingerprint: str) -> bool:
-    reports = getattr(state, "verification_reports", None)
-    if not isinstance(reports, list):
-        return False
-
-    for index, report in enumerate(reports):
-        if not isinstance(report, dict):
-            continue
-        if (
-            report.get("evidence_signature") == signature
-            and report.get("evidence_fingerprint") == fingerprint
-        ):
-            if index != len(reports) - 1:
-                reports.append(reports.pop(index))
-                save = getattr(state, "save", None)
-                if callable(save):
-                    save()
-            return True
-    return False
-
-
-def _compact_verification_ref(report: dict[str, Any], signature: str, fingerprint: str) -> dict[str, Any]:
-    checks = report.get("claim_checks") if isinstance(report, dict) else []
-    if not isinstance(checks, list):
-        checks = []
-    failed_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "failed")
-    downgraded_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "downgraded")
-    passed_evidence_ids = [
-        str(check.get("evidence_id"))
-        for check in checks
-        if isinstance(check, dict)
-        and check.get("status") == "passed"
-        and check.get("evidence_id")
-    ]
-    downgraded_evidence_ids = [
-        str(check.get("evidence_id"))
-        for check in checks
-        if isinstance(check, dict)
-        and check.get("status") == "downgraded"
-        and check.get("evidence_id")
-    ]
-    failed_evidence_ids = [
-        str(check.get("evidence_id"))
-        for check in checks
-        if isinstance(check, dict)
-        and check.get("status") == "failed"
-        and check.get("evidence_id")
-    ]
-    return {
-        "id": "verify_" + str(report.get("id") or "")[:16],
-        "source_report_id": report.get("id"),
-        "overall_status": report.get("overall_status", "unknown"),
-        "claim_count": len(checks),
-        "failed_count": failed_count,
-        "downgraded_count": downgraded_count,
-        "passed_evidence_ids": passed_evidence_ids,
-        "downgraded_evidence_ids": downgraded_evidence_ids,
-        "failed_evidence_ids": failed_evidence_ids,
-        "evidence_signature": signature,
-        "evidence_fingerprint": fingerprint,
-        "route_proposal_ids": list(report.get("route_proposal_ids") or []),
-    }

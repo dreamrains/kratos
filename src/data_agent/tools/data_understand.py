@@ -11,7 +11,8 @@ import pandas as pd
 
 from data_agent.session.workspace import workspace
 from data_agent.tools._utils import get_df, persist_detail, validate_pandas_expr
-from data_agent.tools.registry import registry
+from data_agent.tools.registry import ToolResult, registry
+from data_agent.agent.publication.native import MINIMAL_PRODUCT_CONTRACTS
 
 
 def _observed_date_scope(df: pd.DataFrame) -> dict:
@@ -29,6 +30,7 @@ def _observed_date_scope(df: pd.DataFrame) -> dict:
 
 @registry.register(
     name="describe_dataset",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["describe_dataset"],
     description="描述数据集的结构概览：字段名、类型、缺失率、基本统计。详细统计量自动持久化。",
 )
 def describe_dataset(name: str) -> str:
@@ -75,14 +77,19 @@ def describe_dataset(name: str) -> str:
                 detail_info["datetime_range"]["span_days"] = span.days
         elif pd.api.types.is_numeric_dtype(df[col]):
             desc = df[col].describe()
+            number=lambda value: None if pd.isna(value) else value.item() if hasattr(value,"item") else value
+            observed=df[col].dropna()
+            total=(sum(int(value) for value in observed) if pd.api.types.is_integer_dtype(df[col]) else df[col].sum(min_count=1)) if len(observed) else None
+            total=number(total)
             detail_info["stats"] = {
-                "mean": round(float(desc["mean"]), 4),
-                "std": round(float(desc["std"]), 4),
-                "min": _safe_val(desc["min"]),
-                "25%": _safe_val(desc["25%"]),
-                "50%": _safe_val(desc["50%"]),
-                "75%": _safe_val(desc["75%"]),
-                "max": _safe_val(desc["max"]),
+                "sum": total,
+                "mean": number(desc["mean"]),
+                "std": number(desc["std"]),
+                "min": number(df[col].min()),
+                "25%": number(desc["25%"]),
+                "50%": number(desc["50%"]),
+                "75%": number(desc["75%"]),
+                "max": number(df[col].max()),
             }
         else:
             top_vals = df[col].value_counts().head(5)
@@ -102,93 +109,116 @@ def describe_dataset(name: str) -> str:
     return json.dumps(summary, ensure_ascii=False, indent=2)
 
 
+def _quality_result(df: pd.DataFrame, name: str) -> dict:
+    """One diagnostic implementation for execution and source-owner verification."""
+    rows = len(df)
+    issues, diagnostics = [], []
+    for position, column in enumerate(df.columns):
+        values = df.iloc[:, position]
+        missing = int(values.isna().sum())
+        observed = values.dropna()
+        unique = int(observed.nunique())
+        constant = "unknown" if not len(observed) else "constant" if unique == 1 else "not_constant"
+        if missing:
+            issues.append({"type": "missing_values", "column": column, "count": missing,
+                           "percentage": round(missing / rows * 100, 2)})
+        if constant == "constant":
+            issues.append({"type": "constant_column", "column": column, "unique_values": unique})
+        numeric = pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values)
+        finite = observed[np.isfinite(observed)] if numeric else observed.iloc[:0]
+        non_finite = len(observed) - len(finite) if numeric else 0
+        if non_finite:
+            issues.append({"type": "non_finite_values", "column": column, "count": non_finite,
+                           "percentage": round(non_finite / rows * 100, 2)})
+        iqr = {"status": "not_assessed", "method": "1.5*IQR", "quantile_interpolation": "linear",
+               "effective_n": len(finite), "excluded_missing": missing, "excluded_non_finite": non_finite,
+               "outlier_count": None, "bounds": None, "q1": None, "q3": None, "iqr": None,
+               "reason": "非数值列，未作IQR异常判定" if not numeric else "无有限观测，未作异常判定"}
+        if numeric and len(finite):
+            if pd.api.types.is_complex_dtype(values):
+                iqr["reason"] = "复数无有序实数范围，未作IQR异常判定"
+            else:
+                q1, q3 = (float(finite.quantile(q, interpolation="linear")) for q in (.25, .75))
+                spread = q3 - q1
+                lower, upper = q1 - 1.5 * spread, q3 + 1.5 * spread
+                if not all(np.isfinite(v) for v in (q1, q3, spread, lower, upper)):
+                    iqr["reason"] = "IQR范围无法有限表示，未作异常判定"
+                else:
+                    iqr.update(q1=q1, q3=q3, iqr=spread)
+                    if spread == 0:
+                        iqr["reason"] = "IQR为0，未作异常判定"
+                    else:
+                        count = int(((finite < lower) | (finite > upper)).sum())
+                        bounds = {"lower": lower, "upper": upper}
+                        iqr.update(status="computed", outlier_count=count, bounds=bounds, reason=None)
+                        if count:
+                            issues.append({"type": "outliers", "column": column, "count": count,
+                                           "percentage": round(count / rows * 100, 2), "bounds": bounds})
+        diagnostics.append({"column": column, "position": position + 1, "dtype": str(values.dtype),
+            "source_rows": rows, "missing_count": missing, "non_missing_count": len(observed),
+            "unique_values": unique, "constant_status": constant, "non_finite_count": non_finite, "iqr": iqr})
+    duplicates = int(df.duplicated().sum())
+    if duplicates:
+        issues.append({"type": "duplicate_rows", "count": duplicates,
+                       "percentage": round(duplicates / rows * 100, 2)})
+    return {"dataset": name, "rows": rows, "observation_window": _observed_date_scope(df),
+        "total_issues": len(issues), "issues": issues, "column_diagnostics": diagnostics,
+        "observation": {"source_rows": rows, "source_columns": len(df.columns),
+            "duplicate_rows_count": duplicates, "percentage_denominator": "source_rows",
+            "iqr_scope": "每列有限观测；缺失与非有限值单独披露"},
+        "limitations": ["这些基础诊断不表示数据已就绪；具体方法仍须核验其实际使用列及前提。",
+            "1.5×IQR仅为诊断规则，不证明记录必然错误；IQR为0或无有限范围时未作异常判定。",
+            "缺失和非有限值的业务含义未知；各问题可以重叠，问题总数是问题项数而非错误记录数。"]}
+
+
 @registry.register(
     name="detect_data_quality",
-    description="检测数据质量问题：缺失、异常值、重复行、常量列。",
+    description="基础质量诊断：缺失、重复行、有观测的常量列、非有限数及有限观测的1.5×IQR。公开逐列有效/排除数和未舍入边界；无范围或IQR为0时不作异常判定。诊断不表示数据已就绪或记录必然错误。",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["detect_data_quality"],
 )
 def detect_data_quality(name: str) -> str:
     df, err = get_df(name)
     if err:
-        return err
+        return json.dumps({"error": err}, ensure_ascii=False)
+    return json.dumps(_quality_result(df, name), ensure_ascii=False, indent=2)
 
-    rows = df.shape[0]
-    issues = []
 
-    # 缺失检测
-    missing = df.isnull().sum()
-    for col, count in missing.items():
-        if count > 0:
-            issues.append({
-                "type": "missing_values",
-                "column": col,
-                "count": int(count),
-                "percentage": round(count / rows * 100, 2),
-            })
-
-    # 常量列
-    for col in df.columns:
-        if df[col].nunique() <= 1:
-            issues.append({
-                "type": "constant_column",
-                "column": col,
-                "unique_values": int(df[col].nunique()),
-            })
-
-    # 重复行
-    dup_count = int(df.duplicated().sum())
-    if dup_count > 0:
-        issues.append({
-            "type": "duplicate_rows",
-            "count": dup_count,
-            "percentage": round(dup_count / rows * 100, 2),
-        })
-
-    # 数值列异常值（IQR方法）
-    for col in df.select_dtypes(include=[np.number]).columns:
-        q1 = df[col].quantile(0.25)
-        q3 = df[col].quantile(0.75)
-        iqr = q3 - q1
-        if iqr > 0:
-            lower = q1 - 1.5 * iqr
-            upper = q3 + 1.5 * iqr
-            outlier_count = int(((df[col] < lower) | (df[col] > upper)).sum())
-            if outlier_count > 0:
-                issues.append({
-                    "type": "outliers",
-                    "column": col,
-                    "count": outlier_count,
-                    "percentage": round(outlier_count / rows * 100, 2),
-                    "bounds": {"lower": round(float(lower), 4), "upper": round(float(upper), 4)},
-                })
-
-    return json.dumps({
-        "dataset": name,
-        "rows": rows,
-        "observation_window": _observed_date_scope(df),
-        "total_issues": len(issues),
-        "issues": issues,
-    }, ensure_ascii=False, indent=2)
+def _preview_result(df: pd.DataFrame, name: str, n: int = 10) -> dict:
+    """Keep the source order and original preview serialization in one implementation."""
+    if type(n) is not int or not 1 <= n <= 50:
+        raise ValueError("预览行数 n 必须是 1—50 的整数。")
+    preview = df.head(n)
+    rows = preview.astype(object).where(pd.notna(preview), None).to_dict("records")
+    rows = json.loads(json.dumps(rows, ensure_ascii=False, default=str))
+    return {"dataset": name, "data": rows, "rows": len(rows), "columns": list(preview.columns),
+        "shape": {"rows": len(df), "columns": len(df.columns)},
+        "observation": {"requested_rows": n, "returned_rows": len(rows), "source_rows": len(df),
+            "preview_limit": 50, "row_order": "current_dataset_order", "scope": "first_rows"}}
 
 
 @registry.register(
     name="preview_data",
-    description="预览数据集的前 N 行。",
+    description="按数据集当前顺序预览前 N 行，n 仅支持 1—50 的整数（默认10）。公开请求行数、实际返回行数和源表总行数；预览不表示全表交付或随机抽样。",
+    schema_overrides={"n": {"minimum": 1, "maximum": 50}},
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["preview_data"],
 )
-def preview_data(name: str, n: int = 10) -> str:
+def preview_data(name: str, n: int = 10) -> ToolResult | str:
+    if type(n) is not int or not 1 <= n <= 50:
+        return ToolResult(summary="预览行数 n 必须是 1—50 的整数。", data={"error": "unsupported_preview_rows"})
     df, err = get_df(name)
     if err:
-        return err
-
-    n = min(int(n), 50)
-    preview = df.head(n)
-    return preview.to_string()
+        return ToolResult(summary=err, data={"error": err})
+    result = _preview_result(df, name, n)
+    return ToolResult(summary=f"前行预览：请求 {n} 行，实际返回 {result['rows']} 行，源表共 {len(df)} 行。仅当前顺序预览，不表示全表交付。\n" + df.head(n).to_string(), data=result)
 
 
 @registry.register(
     name="derive_field",
+    capability={"capability_id":"data.derive_field","category":"data_transform"},
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["derive_field"],
     description="从已有字段派生新列。expression 仅支持列引用、算术、比较、布尔运算，如 'revenue / users'；不支持函数调用、np.select/np.where 或 import。复杂条件请用受限 run_python 分析或已有 transform_data 操作。",
 )
-def derive_field(name: str, field_name: str, expression: str) -> str:
+def derive_field(name: str, field_name: str, expression: str) -> str | ToolResult:
     df, err = get_df(name)
     if err:
         return err
@@ -201,7 +231,23 @@ def derive_field(name: str, field_name: str, expression: str) -> str:
         new_col = df.eval(expression)
         new_df = df.copy()
         new_df[field_name] = new_col
-        return workspace.derive(name, f"{name}_{field_name}", new_df, expression)
+        target = f"{name}_{field_name}"
+        summary = workspace.derive(name, target, new_df, expression)
+        if summary.startswith("Error:"):
+            return summary
+        import ast
+        program=ast.parse(expression,mode="eval").body
+        algebra=dict(workspace.get_metadata(name,"_column_algebra") or {})
+        algebra.pop(field_name,None)
+        if any(isinstance(n,ast.Div) for n in ast.walk(program)):
+            algebra[field_name]={"operator":"non_additive"}
+            if isinstance(program,ast.BinOp) and isinstance(program.op,ast.Div) and isinstance(program.left,ast.Name) and isinstance(program.right,ast.Name) and program.left.id in df.columns and program.right.id in df.columns:
+                algebra[field_name].update(numerator=program.left.id,denominator=program.right.id)
+        workspace.set_metadata(target,"_column_algebra",algebra)
+        return ToolResult(summary=summary, data={"dataset": target, "source_dataset": name,
+            "operation": "derive_field", "field_name": field_name, "expression": expression,
+            "rows": len(new_df), "source_rows": len(df),
+            "preserved_columns": [str(c) for c in df.columns if c != field_name]})
     except Exception as e:
         return f"Error deriving field: {e}"
 
@@ -226,117 +272,36 @@ _AGG_KEYWORDS = {
 
 
 def _detect_grain(df: pd.DataFrame, columns_info: list[dict]) -> dict:
-    """推断数据粒度，返回 {grain, grain_hint}。
-
-    grain 枚举：
-      individual              — 每行代表一个实体（用户/订单/事件）
-      daily_aggregate         — 每行代表一天的数据汇总
-      monthly_aggregate       — 每行代表一月的数据汇总
-      multi_dimension_aggregate — 多维度聚合（如每天×渠道）
-      unknown                 — 无法判断
-    """
+    """Existing grain rules produce candidates, never method eligibility."""
     rows = len(df)
+    def candidate(grain, basis):
+        return {"grain":grain, "grain_hint":f"粒度启发候选：{grain}；依据：{basis}。尚未核验每行的业务分析单位；具体方法须另核其实际前提。",
+                "grain_basis":{"status":"candidate_only","confidence":"low" if grain=="unknown" else "heuristic", "rule":basis}}
     if rows == 0:
-        return {"grain": "unknown", "grain_hint": "数据为空"}
-
-    # 收集列特征
+        return candidate("unknown", "原表无记录")
     date_cols = [c for c in columns_info if c["likely_type"] == "date"]
-    date_col_names = [c["name"] for c in date_cols]
-
-    # 1. 检测唯一标识列 → individual
     id_patterns = ["id", "uid", "user_id", "order_id", "device_id", "uuid", "openid"]
     for c in columns_info:
-        col_lower = c["name"].lower().replace(" ", "")
-        if any(p in col_lower for p in id_patterns) and c["unique_values"] >= rows * 0.8:
-            return {
-                "grain": "individual",
-                "grain_hint": (
-                    f"每行代表一个独立实体（检测到标识列 '{c['name']}'，唯一值 {c['unique_values']}/{rows}）。"
-                    "可做个体级分析（用户画像、分群等）。"
-                ),
-            }
-
-    # 2. 基于时间列判断聚合粒度
-    if date_cols:
-        for dc in date_cols:
-            col_name = dc["name"]
-            nunique_dates = dc["unique_values"]
-
-            # 日期 unique 数 ≈ 行数 → 每行对应一个时间段（纯时间聚合）
-            if rows > 0 and nunique_dates >= rows * 0.8:
-                # 判断是日聚合还是月聚合
-                if pd.api.types.is_datetime64_any_dtype(df[col_name]):
-                    date_vals = df[col_name].dropna()
-                    if len(date_vals) >= 2:
-                        sorted_vals = date_vals.sort_values()
-                        diffs = sorted_vals.diff().dropna()
-                        if len(diffs) > 0:
-                            median_diff = diffs.median()
-                            if median_diff.days <= 2:
-                                grain = "daily_aggregate"
-                                grain_label = "天"
-                            elif median_diff.days <= 8:
-                                grain = "weekly_aggregate"
-                                grain_label = "周"
-                            elif median_diff.days <= 35:
-                                grain = "monthly_aggregate"
-                                grain_label = "月"
-                            else:
-                                grain = "period_aggregate"
-                                grain_label = f"{median_diff.days}天"
-
-                            # 检查是否有聚合指标关键词增强判断
-                            has_agg_cols = _has_aggregate_keywords(columns_info)
-                            hint = (
-                                f"每行代表一{grain_label}的汇总数据"
-                                f"（时间列 '{col_name}'，共 {nunique_dates} 个时间点，{rows} 行）。"
-                                "不含用户个体信息，不可做用户画像、用户分群等个体级分析。"
-                                "可做趋势分析、指标对比、周期性检测等聚合级分析。"
-                            )
-                            if has_agg_cols:
-                                hint += "（检测到聚合指标列，确认此为聚合数据）"
-                            return {"grain": grain, "grain_hint": hint}
-
-            # 日期 unique 数 << 行数 → 每个日期有多行（可能是多维聚合或事件明细）
-            elif rows > 0 and nunique_dates < rows * 0.5 and nunique_dates > 1:
-                # 检查是否有维度列（category 列，非日期非数值）
-                dim_cols = [
-                    c for c in columns_info
-                    if c["likely_type"] == "category" and c["name"] != col_name
-                ]
-                if dim_cols:
-                    # 通过"实际行数 vs 预期行数（日期数 × 维度值数）"区分聚合与明细
-                    # 聚合：每个 (日期 × 维度) 组合仅一行，rows ≈ dates × dims
-                    # 明细：每个组合有多行，rows >> dates × dims
-                    expected_rows = nunique_dates
-                    for dc in dim_cols:
-                        expected_rows *= dc["unique_values"]
-                    fill_ratio = rows / expected_rows if expected_rows > 0 else 0
-
-                    if 0.5 <= fill_ratio <= 2.0:
-                        return {
-                            "grain": "multi_dimension_aggregate",
-                            "grain_hint": (
-                                f"数据为多维聚合（时间列 '{col_name}' × 维度列 {[d['name'] for d in dim_cols[:3]]}）。"
-                                f"每个时间点有 {rows // nunique_dates} 行。"
-                                "可做维度对比分析，但不可做个体级分析。"
-                            ),
-                        }
-
-    # 3. 无时间列，但有聚合指标关键词
+        if any(p in c["name"].lower().replace(" ", "") for p in id_patterns) and c["unique_values"] >= rows * 0.8:
+            return candidate("individual", f"标识名称列 {c['name']} 的唯一值 {c['unique_values']}/{rows} 达到80%阈值；不保证实体唯一性")
+    for dc in date_cols:
+        col_name, nunique_dates = dc["name"], dc["unique_values"]
+        if nunique_dates >= rows * 0.8:
+            vals, _ = _date_observation(df[col_name])
+            diffs = vals.dropna().sort_values().diff().dropna() if vals is not None else pd.Series(dtype="timedelta64[ns]")
+            if len(diffs):
+                median_diff = diffs.median()
+                grain = "daily_aggregate" if median_diff.days <= 2 else "weekly_aggregate" if median_diff.days <= 8 else "monthly_aggregate" if median_diff.days <= 35 else "period_aggregate"
+                return candidate(grain, f"时间候选列 {col_name} 唯一值 {nunique_dates}/{rows} 达到80%；已解析时间的中位间隔为 {median_diff}，沿用间隔天数阈值2/8/35；间隔不证明已汇总")
+        elif 1 < nunique_dates < rows * 0.5:
+            dims = [c for c in columns_info if c["likely_type"]=="category" and c["name"]!=col_name]
+            expected = nunique_dates
+            for c in dims: expected *= c["unique_values"]
+            if dims and expected > 0 and 0.5 <= rows / expected <= 2:
+                return candidate("multi_dimension_aggregate", f"时间 {col_name} × 维度 {[c['name'] for c in dims]} 的组合数 {expected}，行数 {rows}，比值 {rows/expected} 位于0.5—2；未核验组合唯一性")
     if _has_aggregate_keywords(columns_info):
-        return {
-            "grain": "aggregate",
-            "grain_hint": (
-                "检测到聚合指标列（如 ARPU、付费率等），数据为汇总粒度。"
-                "不可做个体级分析（用户画像、分群等）。"
-            ),
-        }
-
-    return {
-        "grain": "unknown",
-        "grain_hint": "无法确定数据粒度。分析前请确认每行代表什么（用户/订单/日汇总等）。",
-    }
+        return candidate("aggregate", "至少两个列名匹配既有聚合关键词；列名不证明实际聚合")
+    return candidate("unknown", "现有标识、时间间隔和聚合名称规则未得到候选")
 
 
 def _has_aggregate_keywords(columns_info: list[dict]) -> bool:
@@ -354,8 +319,9 @@ def _has_aggregate_keywords(columns_info: list[dict]) -> bool:
 
 @registry.register(
     name="quick_profile",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["quick_profile"],
     description=(
-        "一次性获取数据全貌：结构、类型推断、质量评估、就绪度。"
+        "一次性获取结构、类型推断和列级基础诊断；空表明确无可分析记录，其他问题为诊断警告。具体方法前提由所选方法及实际使用列核验。"
         "使用场景：首次接触新数据集时快速了解数据特征。"
         "不适用场景：只需要某个特定信息（用 describe_dataset/detect_data_quality 更轻量）。"
         "参数说明：compact=True 返回精简版（适合 load_data 后自动调用）。"
@@ -363,20 +329,34 @@ def _has_aggregate_keywords(columns_info: list[dict]) -> bool:
     ),
 )
 def quick_profile(name: str, compact: bool = False) -> str:
-    from data_agent.session.workspace import workspace
+    df,err=get_df(name)
+    if err:return err
+    identity=workspace.get_data_identity(name)
+    cached=workspace.get_metadata(name,"_profile_cache")
+    if cached and workspace.get_metadata(name,"_profile_identity")==identity and not compact:return cached
+    result=_quick_profile_result(df,name,compact)
+    output=json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)
+    if not compact:
+        workspace.set_metadata(name,"_profile_cache",output)
+        workspace.set_metadata(name,"_profile_identity",identity)
+    return output
 
-    # Check cache: if profile was already computed for this dataset and data hasn't changed
-    cached = workspace.get_metadata(name, "_profile_cache")
-    cached_shape = workspace.get_metadata(name, "_profile_shape")
-    df, err = get_df(name)
-    if err:
-        return err
 
-    current_shape = f"{df.shape[0]}x{df.shape[1]}"
-    if cached and cached_shape == current_shape and not compact:
-        return cached
+_DIAGNOSTIC_LIMITATIONS=["仅为当前数据列级基础诊断；缺失、重复、异常和原样本量阈值是诊断提示，不裁决整个分析是否可做。", "具体可行性由所选方法及实际使用列的真实前提决定；基础检查不授予统计、预测或因果验证。"]
 
+
+def _column_diagnostics(frame):
+    result={}
+    for column in frame.columns:
+        values=frame[column];numeric=pd.api.types.is_numeric_dtype(values)
+        finite=np.isfinite(values.to_numpy(dtype=float,na_value=np.nan)) if numeric else None
+        result[str(column)]={"source_rows":len(values),"observed_count":int(values.notna().sum()),"missing_count":int(values.isna().sum()),"unique_values":int(values.nunique()),"finite_count":int(finite.sum()) if numeric else None,"nonfinite_count":int((values.notna() & ~finite).sum()) if numeric else 0}
+    return result
+
+
+def _quick_profile_result(df,name,compact=False):
     rows, cols = df.shape
+    diagnostics=_column_diagnostics(df)
     columns_info = []
     quality_issues = []
     warnings = []
@@ -406,6 +386,8 @@ def quick_profile(name: str, compact: bool = False) -> str:
             "unique_values": nunique,
         }
         columns_info.append(col_info)
+        if diagnostics[str(col)]["nonfinite_count"]:
+            warnings.append(f"列 {col!r} 含 {diagnostics[str(col)]['nonfinite_count']} 条非有限观测；具体方法须核对实际有效范围。")
 
         # 质量问题检测
         if missing_pct >= 50:
@@ -440,6 +422,9 @@ def quick_profile(name: str, compact: bool = False) -> str:
     # 异常值计数
     outlier_count = 0
     for col in df.select_dtypes(include=[np.number]).columns:
+        if diagnostics[str(col)]["nonfinite_count"]:
+            warnings.append(f"列 {col!r} 含非有限值，原IQR异常值检查未计算；不补零或自动清洗。")
+            continue
         q1 = df[col].quantile(0.25)
         q3 = df[col].quantile(0.75)
         iqr = q3 - q1
@@ -450,9 +435,10 @@ def quick_profile(name: str, compact: bool = False) -> str:
 
     # 就绪度
     readiness = "ready"
-    if quality_issues:
-        readiness = "blocked"
-    elif warnings:
+    if rows==0:
+        readiness="blocked"
+        quality_issues.append("没有可分析记录；列级诊断不验证任何方法前提。")
+    elif quality_issues or warnings:
         readiness = "ready_with_warnings"
 
     # 时间列检测 → 建议 resample
@@ -492,7 +478,7 @@ def quick_profile(name: str, compact: bool = False) -> str:
                 "date": date_cols_names or None,
             },
             "quality": {
-                "missing": len([q for q in quality_issues if "缺失" in q]),
+                "missing": sum(row["missing_count"]>0 for row in diagnostics.values()),
                 "outliers": outlier_count,
                 "duplicates": dup_count,
             },
@@ -517,7 +503,7 @@ def quick_profile(name: str, compact: bool = False) -> str:
             "shape": [rows, cols],
             "columns": columns_info,
             "quality": {
-                "missing": len([q for q in quality_issues if "缺失" in q]),
+                "missing": sum(row["missing_count"]>0 for row in diagnostics.values()),
                 "outliers": outlier_count,
                 "duplicates": dup_count,
             },
@@ -529,34 +515,32 @@ def quick_profile(name: str, compact: bool = False) -> str:
             "suggested_analyses": suggested_analyses[:5],
         }
 
-    output = json.dumps(result, ensure_ascii=False, indent=2)
-
-    # Cache the result for future calls (full mode only, not compact)
-    if not compact:
-        from data_agent.session.workspace import workspace
-        workspace.set_metadata(name, "_profile_cache", output)
-        workspace.set_metadata(name, "_profile_shape", f"{rows}x{cols}")
-
-    return output
+    result.update(dataset=name,column_diagnostics=diagnostics,method_preconditions_verified=False,limitations=_DIAGNOSTIC_LIMITATIONS)
+    return result
 
 
 @registry.register(
     name="assess_readiness",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["assess_readiness"],
     description=(
-        "评估数据是否已就绪可进行分析。检查项：时间粒度一致性、样本量充足性、"
-        "关键列缺失率、常量列、多表关系、数据时效性。"
-        "首次加载新数据集时应在 DAG 第一阶段调用。"
+        "报告时间粒度、样本量提示、逐列缺失与非有限值、常量列及数据时效性等基础诊断。"
+        "空表明确无可分析记录；其他问题只作诊断警告，不裁决整个分析可行性，也不验证具体方法前提。"
     ),
 )
 def assess_readiness(name: str, intent: str = "") -> str:
-    """评估数据就绪度，返回结构化报告。"""
-    df, err = get_df(name)
-    if err:
-        return err
+    df,err=get_df(name)
+    if err:return err
+    return json.dumps(_readiness_result(df,name,intent),ensure_ascii=False,indent=2,allow_nan=False)
 
+
+def _readiness_result(df,name,intent=""):
     from datetime import datetime
     rows, cols = df.shape
     findings = []
+    diagnostics=_column_diagnostics(df)
+    if rows==0:findings.append({"severity":"block","check":"empty_data","message":"没有可分析记录。"})
+    for column,diagnostic in diagnostics.items():
+        if diagnostic["nonfinite_count"]:findings.append({"severity":"warning","check":"nonfinite","column":column,"message":f"列 {column!r} 含 {diagnostic['nonfinite_count']} 条非有限观测；具体方法须核对实际有效范围。"})
 
     # 1. Time granularity consistency
     for col in df.columns:
@@ -583,7 +567,7 @@ def assess_readiness(name: str, intent: str = "") -> str:
             findings.append({
                 "severity": "warning",
                 "check": "sample_size",
-                "message": f"当前{rows}行数据，{intent}建模建议≥{min_rows}行，结果置信度可能较低",
+                "message": f"当前{rows}行数据，{intent}建模建议≥{min_rows}行，仅为原经验提示，不是样本充分性或置信度检验",
             })
 
     # 3. Key column missing rate
@@ -591,14 +575,16 @@ def assess_readiness(name: str, intent: str = "") -> str:
         missing_pct = df[col].isnull().sum() / rows * 100 if rows > 0 else 0
         if missing_pct >= 50:
             findings.append({
-                "severity": "block",
+                "severity": "warning",
                 "check": "missing_data",
-                "message": f"列 '{col}' 缺失率 {missing_pct:.0f}%，分析结果不可靠",
+                "column":str(col),
+                "message": f"列 '{col}' 缺失率 {missing_pct:.0f}%，影响取决于具体方法及实际使用列",
             })
         elif missing_pct > 30:
             findings.append({
                 "severity": "warning",
                 "check": "missing_data",
+                "column":str(col),
                 "message": f"列 '{col}' 缺失率 {missing_pct:.0f}%，部分分析可能受影响",
             })
 
@@ -608,7 +594,7 @@ def assess_readiness(name: str, intent: str = "") -> str:
             findings.append({
                 "severity": "info",
                 "check": "constant_column",
-                "message": f"列 '{col}' 仅含单一值或方差≈0，无法用于维度拆解",
+                "message": f"列 '{col}' 有 {df[col].nunique()} 个非缺失唯一值；影响由所选方法判断",
             })
 
     # 5. Data freshness
@@ -639,15 +625,15 @@ def assess_readiness(name: str, intent: str = "") -> str:
 
     recommendations = []
     if has_block:
-        recommendations.append("先处理阻断级数据质量问题，再进入正式分析。")
+        recommendations.append("没有可分析记录；请提供所需数据后再检查具体方法前提。")
     if has_warning:
         recommendations.append("分析结论需要显式说明数据质量警告和可能影响。")
     if any(f["check"] == "time_granularity" for f in findings):
         recommendations.append("时间序列或前后对比前，先确认时间粒度和缺失时间段。")
     if any(f["check"] == "sample_size" for f in findings):
-        recommendations.append("样本量不足时降低置信度，优先做描述性分析。")
+        recommendations.append("原经验样本量建议不能替代具体方法实际要求，不据此判定统计置信度。")
     if not recommendations:
-        recommendations.append("数据已通过基础就绪检查，可进入目标分析。")
+        recommendations.append("未发现现有基础检查中的问题；具体方法前提仍未评估。")
 
     # Build summary
     icon_map = {"block": "BLOCK", "warning": "WARN", "info": "INFO"}
@@ -655,9 +641,9 @@ def assess_readiness(name: str, intent: str = "") -> str:
     for f in findings:
         summary_lines.append(f"  [{icon_map.get(f['severity'], '?')}] {f['message']}")
     if not findings:
-        summary_lines.append("  [OK] 所有检查通过，数据已就绪")
+        summary_lines.append("  [OK] 未发现现有基础检查问题；方法前提未评估")
 
-    return json.dumps({
+    return {
         "dataset": name,
         "summary": "\n".join(summary_lines),
         "overall": overall,
@@ -665,7 +651,8 @@ def assess_readiness(name: str, intent: str = "") -> str:
         "recommendations": recommendations,
         "rows": rows,
         "cols": cols,
-    }, ensure_ascii=False, indent=2)
+        "column_diagnostics":diagnostics,"method_preconditions_verified":False,"limitations":_DIAGNOSTIC_LIMITATIONS,
+    }
 
 
 # ── 业务语义理解 ──────────────────────────────────────────
@@ -748,14 +735,10 @@ def _classify_columns(df: pd.DataFrame) -> dict:
             time_cols.append(col)
             continue
         if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
-            sample = df[col].dropna().head(20)
-            if not sample.empty:
-                with py_warnings.catch_warnings():
-                    py_warnings.simplefilter("ignore", UserWarning)
-                    parsed = pd.to_datetime(sample, errors="coerce")
-                if float(parsed.notna().mean()) >= 0.8:
-                    time_cols.append(col)
-                    continue
+            _, audit = _date_observation(df[col])
+            if audit["time_candidate"]:
+                time_cols.append(col)
+                continue
 
         # 率类指标
         col_orig_lower = col.lower()
@@ -796,35 +779,47 @@ def _classify_columns(df: pd.DataFrame) -> dict:
         "id_columns": id_cols,
         "time_columns": time_cols,
         "dimensions": dim_cols,
-        "key_metrics": key_metrics[:8],
+        "key_metrics": key_metrics,
         "rate_metrics": rate_metrics,
         "other_numeric": other_numeric,
         "other_text": other_text,
     }
 
 
-def _detect_time_range(df: pd.DataFrame, time_cols: list[str]) -> dict | None:
-    """检测时间列的数据范围，兼容已识别但尚未转换的字符串日期列。"""
-    if not time_cols:
-        return None
-    col = time_cols[0]
-    vals = df[col].dropna()
-    if len(vals) == 0:
-        return None
-    if not pd.api.types.is_datetime64_any_dtype(vals):
+def _date_observation(series: pd.Series):
+    """Parse an observation view; retain the original column and parser rules."""
+    native = pd.api.types.is_datetime64_any_dtype(series)
+    inspected = native or pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)
+    sample = series.dropna().head(20)
+    parsed = None
+    sample_valid = None
+    if inspected:
         with py_warnings.catch_warnings():
             py_warnings.simplefilter("ignore", UserWarning)
-            vals = pd.to_datetime(vals, errors="coerce").dropna()
-        if len(vals) == 0:
-            return None
-    mn, mx = vals.min(), vals.max()
-    span = (mx - mn).days if hasattr(mx - mn, "days") else 0
-    return {
-        "column": col,
-        "min": str(mn)[:10],
-        "max": str(mx)[:10],
-        "span_days": span,
-    }
+            parsed = series if native else pd.to_datetime(series, errors="coerce")
+            sample_parsed = sample if native else pd.to_datetime(sample, errors="coerce")
+        sample_valid = int(sample_parsed.notna().sum())
+    valid = int(parsed.notna().sum()) if parsed is not None else None
+    missing = int(series.isna().sum())
+    return parsed, {"original_dtype":str(series.dtype), "source_rows":len(series), "missing_count":missing,
+                    "inspected":inspected, "parseable_count":valid,
+                    "parse_failed_count":len(series)-missing-valid if valid is not None else None,
+                    "sample_size":len(sample) if inspected else 0, "sample_parseable_count":sample_valid,
+                    "sample_rule":"前20条非缺失；可解析率至少80%；原生日期直接识别",
+                    "confidence":"heuristic", "time_candidate":native or bool(inspected and len(sample) and sample_valid/len(sample)>=0.8)}
+
+
+def _detect_time_range(df: pd.DataFrame, time_cols: list[str]) -> dict | None:
+    """First time candidate's parseable range, including its actual exclusions."""
+    if not time_cols: return None
+    col = time_cols[0]
+    parsed, audit = _date_observation(df[col])
+    if parsed is None or not parsed.notna().any(): return None
+    vals = parsed.dropna(); mn, mx = vals.min(), vals.max()
+    return {"column":col, "min":mn.isoformat(), "max":mx.isoformat(), "span_days":(mx-mn).days,
+            "parseable_count":audit["parseable_count"], "missing_count":audit["missing_count"],
+            "parse_failed_count":audit["parse_failed_count"], "range_complete":audit["parse_failed_count"]==0,
+            "range_basis":"仅可解析观测；普通缺失已披露；坏日期使原时间范围不完整"}
 
 
 def _match_theme(columns_classified: dict) -> tuple[str, str]:
@@ -875,7 +870,7 @@ def _build_suggested_analyses(
         extras.append({"direction": "率指标变动追踪", "tools": ["compare_periods", "contribute_decomposition"], "priority": 4})
 
     # 率类指标追加提示
-    result = list(matched)
+    result = [dict(item) for item in matched]
     for e in extras:
         if not any(a["direction"] == e["direction"] for a in result):
             result.append(e)
@@ -900,48 +895,16 @@ def _build_suggested_analyses(
     }
     for r in result:
         r["reason"] = reasons.get(r["direction"], "")
+        r["status"] = "candidate_only"
+        r["prerequisites"] = "仅根据候选列角色推荐方向；须另核所选方法、分析单位及实际使用列的前提"
 
-    return result[:6]
+    return result
 
 
-@registry.register(
-    name="interpret_dataset",
-    description=(
-        "推断数据集的业务语义：列角色分类、分析信号检测、推荐分析路径。"
-        "输出结构化数据供分析引擎使用，不含 LLM 推断（由 prompt 层完成）。"
-    ),
-)
-def interpret_dataset(name: str) -> str:
-    from data_agent.tools.registry import ToolResult, ArtifactRef
-    from data_agent.agent.execution_scope import (
-        current_context_execution_scope,
-        ensure_dataset_allowed_in_current_context,
-    )
-
-    guard = ensure_dataset_allowed_in_current_context(name)
-    if not guard.allowed:
-        return json.dumps(
-            {"error": guard.message, "error_type": guard.error_type},
-            ensure_ascii=False,
-        )
-
-    df, err = get_df(name)
-    if err:
-        return err
-
+def _interpret_result(df: pd.DataFrame, name: str, other_dfs: dict) -> dict:
+    """Single owner for heuristic interpretation and its source observations."""
+    other_dfs = dict(sorted(other_dfs.items()))
     rows, cols = df.shape
-
-    # 0. 确保字符串日期列被转为 datetime（与 load_data 中 auto_clean 行为一致）
-    for col in df.columns:
-        if df[col].dtype == object and col not in (df.select_dtypes(include=[np.number]).columns):
-            sample = df[col].dropna().head(20)
-            if len(sample) > 0:
-                try:
-                    pd.to_datetime(sample)
-                    df = df.copy()
-                    df[col] = pd.to_datetime(df[col], errors="coerce")
-                except (ValueError, TypeError):
-                    pass
 
     # 1. 列分类
     classified = _classify_columns(df)
@@ -956,7 +919,7 @@ def interpret_dataset(name: str) -> str:
         missing_pct = round(df[col].isnull().sum() / rows * 100, 2) if rows > 0 else 0
         nunique = int(df[col].nunique())
         likely_type = "unknown"
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
+        if col in classified["time_columns"]:
             likely_type = "date"
         elif pd.api.types.is_numeric_dtype(df[col]):
             likely_type = "number"
@@ -986,44 +949,16 @@ def interpret_dataset(name: str) -> str:
     # 6. 主题匹配
     theme, theme_confidence = _match_theme(classified)
 
-    # 7. 多数据集关联分析推荐 (using shared detection function)
+    # All frames are supplied by the scoped tool or the verified host binding.
     cross_dataset_hints = []
-    try:
-        execution_scope = current_context_execution_scope()
-        if execution_scope.active:
-            existing = {
-                dataset: {}
-                for dataset in execution_scope.allowed_datasets
-                if dataset != name
-            }
-        else:
-            existing = {k: v for k, v in workspace.list_datasets().items() if k != name}
-        if existing:
-            from data_agent.utils.data_features import detect_cross_dataset_relationships
-            other_dfs = {}
-            source_fingerprint = workspace.get_data_identity(name).get("source_fingerprint")
-            for other_name in existing:
-                if source_fingerprint and workspace.get_data_identity(other_name).get("source_fingerprint") == source_fingerprint:
-                    continue
-                other_df = workspace.get(other_name)
-                if other_df is not None:
-                    other_dfs[other_name] = other_df
-            if other_dfs:
-                relationships = detect_cross_dataset_relationships({name: df, **other_dfs})
-                relationships = [rel for rel in relationships if name in (rel["left"], rel["right"])]
-                for rel in relationships[:5]:
-                    if rel["left"] == name:
-                        other_name = rel["right"]
-                    else:
-                        other_name = rel["left"]
-                    cross_dataset_hints.append({
-                        "other_dataset": other_name,
-                        "shared_columns": [rel["column"]],
-                        "rows_other": len(other_dfs.get(other_name, [])),
-                        "overlap_pct": rel["overlap_pct"],
-                    })
-    except Exception:
-        pass
+    if other_dfs:
+        from data_agent.utils.data_features import detect_cross_dataset_relationships
+        relationships = detect_cross_dataset_relationships({name:df, **other_dfs})
+        for rel in relationships:
+            if name not in (rel["left"],rel["right"]): continue
+            peer = rel["right"] if rel["left"]==name else rel["left"]
+            cross_dataset_hints.append({"other_dataset":peer,"shared_columns":[rel["column"]],
+                                        "rows_other":len(other_dfs[peer]),"overlap_pct":rel["overlap_pct"]})
 
     if cross_dataset_hints:
         for hint in cross_dataset_hints:
@@ -1031,6 +966,7 @@ def interpret_dataset(name: str) -> str:
                 "direction": f"关联分析: {name} × {hint['other_dataset']}",
                 "tools": ["transform_data(merge)", "correlation_analysis", "compare_periods"],
                 "priority": max(s["priority"] for s in suggested) + 1 if suggested else 4,
+                "status":"candidate_only", "prerequisites":"先核分析单位、键基数、覆盖与时间范围",
                 "reason": f"共享列 {hint['shared_columns'][:3]} 仅为候选线索；先审计分析单位、键基数、覆盖与时间范围，不能据此批准原始 merge。",
             })
 
@@ -1046,31 +982,55 @@ def interpret_dataset(name: str) -> str:
         "analysis_signals": signals,
         "suggested_analyses": suggested,
     }
-    if cross_dataset_hints:
-        data["cross_dataset_hints"] = cross_dataset_hints
+    data["cross_dataset_hints"] = cross_dataset_hints
+    data["dataset"] = name
+    data["dataset_reads"] = [name, *other_dfs]
+    data["heuristic_status"] = "candidate_only"
+    data["grain_basis"] = grain_info["grain_basis"]
+    data["date_observation"] = {}
+    data["column_role_basis"] = {}
+    for col in df:
+        _, audit = _date_observation(df[col])
+        audit["time_candidate"] = col in classified["time_columns"]
+        data["date_observation"][col] = audit
+        roles = [role for role, entries in classified.items() if any((e.get("column") if isinstance(e,dict) else e)==col for e in entries)]
+        data["column_role_basis"][col] = {"status":"candidate_only","confidence":"heuristic","roles":roles,
+            "original_dtype":str(df[col].dtype),"unique_count":int(df[col].nunique()),"source_rows":rows,
+            "rule":"依次按标识名称、原生日期或前20条80%可解析、数值率关键词、低基数非数值、数值基数/金额名称规则；关键指标沿原样本方差排序"}
+    theme_cols = [m["column"] for role in ("key_metrics","rate_metrics","dimensions") for m in classified[role]]
+    matches = {key:[kw for kw in keywords if any(kw in col.lower() for col in theme_cols)] for key,keywords in _THEME_PATTERNS.items()}
+    data["theme_basis"] = {"candidate":theme,"status":"candidate_only","confidence":theme_confidence,
+        "keyword_matches":matches,"confidence_rule":"匹配关键词数至少3为high、至少2为medium，否则low；置信标签未经业务验证"}
+    data["limitations"] = ["列角色、行业主题、粒度和推荐路径均为启发候选，不能据此允许或禁止某类分析；具体方法与分析单位须核验真实前提。",
+        "日期识别沿用前20条非缺失与80%可解析率；解释不转换原列，时间范围仅含可解析值；坏日期使范围不完整。",
+        "跨表共享列与重合率只作线索，不证明关联键、可合并性、来源独立性或因果关系；overlap_pct沿用0—1比例：非缺失去重值交集数除以两侧较小集合大小，原检测器保留4位小数。"]
+    return data
 
-    # CLI summary
-    summary_parts = [f"数据集 '{name}' ({rows}×{cols})"]
-    if theme != "unknown":
-        summary_parts.append(f"行业主题: {theme} (置信度: {theme_confidence})")
-    summary_parts.append(f"粒度: {grain_info['grain']}")
-    if classified["key_metrics"]:
-        metric_names = [m["column"] for m in classified["key_metrics"][:5]]
-        summary_parts.append(f"关键指标: {', '.join(metric_names)}")
-    if classified["dimensions"]:
-        dim_names = [d["column"] for d in classified["dimensions"][:5]]
-        summary_parts.append(f"维度: {', '.join(dim_names)}")
-    if time_range:
-        summary_parts.append(f"时间范围: {time_range['min']} ~ {time_range['max']} ({time_range['span_days']}天)")
-    if suggested:
-        summary_parts.append("推荐分析:")
-        for s in suggested[:4]:
-            summary_parts.append(f"  {s['priority']}. {s['direction']} — {s['reason']}")
 
-    summary = "\n".join(summary_parts)
 
-    return ToolResult(
-        summary=summary,
-        data=data,
-        suggested_next=suggested[0]["tools"][0] if suggested else None,
-    )
+
+@registry.register(
+    name="interpret_dataset",
+    output_contract=MINIMAL_PRODUCT_CONTRACTS["interpret_dataset"],
+    description="解释列角色、行业主题、粒度及跨表线索的启发候选，公开规则依据和日期解析范围；具体方法可行性另核真实前提，不改变原列。",
+)
+def interpret_dataset(name: str) -> str:
+    from data_agent.tools.registry import ToolResult
+    from data_agent.agent.execution_scope import current_context_execution_scope, ensure_dataset_allowed_in_current_context
+    guard = ensure_dataset_allowed_in_current_context(name)
+    if not guard.allowed:
+        return json.dumps({"error":guard.message,"error_type":guard.error_type},ensure_ascii=False)
+    df, err = get_df(name)
+    if err: return ToolResult(summary=err,data={"error":err})
+    scope = current_context_execution_scope()
+    names = scope.allowed_datasets if scope.active else workspace.list_datasets()
+    other_dfs = {}
+    fingerprint = workspace.get_data_identity(name).get("source_fingerprint")
+    for other_name in names:
+        if other_name==name: continue
+        if fingerprint and workspace.get_data_identity(other_name).get("source_fingerprint")==fingerprint: continue
+        other = workspace.get(other_name)
+        if other is not None: other_dfs[other_name]=other
+    data = _interpret_result(df,name,other_dfs)
+    summary = f"数据集 '{name}' ({len(df)}×{len(df.columns)})；主题候选：{data['theme']}；{data['grain_hint']}"
+    return ToolResult(summary=summary,data=data,suggested_next=data["suggested_analyses"][0]["tools"][0] if data["suggested_analyses"] else None)

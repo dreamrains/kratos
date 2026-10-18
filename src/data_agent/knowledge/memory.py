@@ -4,12 +4,14 @@ import json
 import math
 import sqlite3
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 from data_agent.config import get_config
+from data_agent.utils.atomic_files import rollback_atomic_writes
 from data_agent.knowledge.models import MemoryItem, MemoryStatus, MemoryType
-from data_agent.knowledge.sqlite_store import KnowledgeDatabase, row_to_dict, rows_to_dicts
+from data_agent.knowledge.sqlite_store import KnowledgeDatabase, row_to_dict, rows_to_dicts, search_limit
 
 
 def _now() -> str:
@@ -64,85 +66,161 @@ class MemoryStore:
         review_note: str = "",
         dedup_key: str = "",
     ) -> MemoryItem:
-        type_value = _memory_type(memory_type)
-        confidence_value = float(confidence)
-        if not math.isfinite(confidence_value) or confidence_value < 0 or confidence_value > 1:
-            raise ValueError(f"Invalid confidence: {confidence}")
-        dedup_key = dedup_key.strip()
-        existing = self.get_by_dedup_key(dedup_key)
-        if existing is not None:
-            return existing
-
-        item_id = f"mem_{uuid.uuid4().hex[:10]}"
-        now = _now()
         try:
             with self.db.connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO memory_items
-                    (id, type, text, summary, status, confidence, source_session_id,
-                     source_message_ids, source_tool_call_ids, project_id, domain,
-                     tags, last_used_at, hit_count, created_at, updated_at, promotion_target,
-                     reason, source_evidence_ids, needs_review, review_note, dedup_key)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item_id,
-                        type_value.value,
-                        text,
-                        summary,
-                        MemoryStatus.CANDIDATE.value,
-                        confidence_value,
-                        source_session_id,
-                        _json_list(source_message_ids, "source_message_ids"),
-                        _json_list(source_tool_call_ids, "source_tool_call_ids"),
-                        project_id,
-                        domain.strip() or "general",
-                        _json_list(tags, "tags"),
-                        "",
-                        0,
-                        now,
-                        now,
-                        promotion_target,
-                        reason,
-                        _json_list(source_evidence_ids, "source_evidence_ids"),
-                        1 if needs_review else 0,
-                        review_note,
-                        dedup_key,
-                    ),
+                item = self._create_candidate_with_connection(
+                    conn,
+                    text=text,
+                    summary=summary,
+                    memory_type=memory_type,
+                    confidence=confidence,
+                    source_session_id=source_session_id,
+                    source_message_ids=source_message_ids,
+                    source_tool_call_ids=source_tool_call_ids,
+                    project_id=project_id,
+                    domain=domain,
+                    tags=tags,
+                    promotion_target=promotion_target,
+                    reason=reason,
+                    source_evidence_ids=source_evidence_ids,
+                    needs_review=needs_review,
+                    review_note=review_note,
+                    dedup_key=dedup_key,
                 )
         except sqlite3.IntegrityError:
             existing = self.get_by_dedup_key(dedup_key)
             if existing is not None:
                 return existing
             raise
-        item = self.get(item_id)
-        if item is None:
-            raise RuntimeError(f"Created memory item {item_id} could not be loaded")
+        return item
+
+    def _create_candidate_with_connection(
+        self,
+        conn,
+        text: str,
+        summary: str = "",
+        memory_type: MemoryType | str = MemoryType.WORKFLOW_PATTERN,
+        confidence: float = 0.6,
+        source_session_id: str = "",
+        source_message_ids: list[str] | None = None,
+        source_tool_call_ids: list[str] | None = None,
+        project_id: str = "",
+        domain: str = "general",
+        tags: list[str] | None = None,
+        promotion_target: str = "none",
+        reason: str = "",
+        source_evidence_ids: list[str] | None = None,
+        needs_review: bool = False,
+        review_note: str = "",
+        dedup_key: str = "",
+    ) -> MemoryItem:
+        type_value = _memory_type(memory_type)
+        confidence_value = float(confidence)
+        if not math.isfinite(confidence_value) or confidence_value < 0 or confidence_value > 1:
+            raise ValueError(f"Invalid confidence: {confidence}")
+        dedup_key = dedup_key.strip()
+        existing = self._get_by_dedup_key_with_connection(conn, dedup_key)
+        if existing is not None:
+            return existing
+
+        item_id = f"mem_{uuid.uuid4().hex[:10]}"
+        now = _now()
+        conn.execute(
+            """
+            INSERT INTO memory_items
+            (id, type, text, summary, status, confidence, source_session_id,
+             source_message_ids, source_tool_call_ids, project_id, domain,
+             tags, last_used_at, hit_count, created_at, updated_at, promotion_target,
+             reason, source_evidence_ids, needs_review, review_note, dedup_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id,
+                type_value.value,
+                text,
+                summary,
+                MemoryStatus.CANDIDATE.value,
+                confidence_value,
+                source_session_id,
+                _json_list(source_message_ids, "source_message_ids"),
+                _json_list(source_tool_call_ids, "source_tool_call_ids"),
+                project_id,
+                domain.strip() or "general",
+                _json_list(tags, "tags"),
+                "",
+                0,
+                now,
+                now,
+                promotion_target,
+                reason,
+                _json_list(source_evidence_ids, "source_evidence_ids"),
+                1 if needs_review else 0,
+                review_note,
+                dedup_key,
+            ),
+        )
+        item = self._require_with_connection(conn, item_id)
         return item
 
     def get_by_dedup_key(self, dedup_key: str) -> MemoryItem | None:
+        with self.db.connect() as conn:
+            return self._get_by_dedup_key_with_connection(conn, dedup_key)
+
+    def _get_by_dedup_key_with_connection(self, conn, dedup_key: str) -> MemoryItem | None:
         dedup_key = dedup_key.strip()
         if not dedup_key:
             return None
-        with self.db.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM memory_items WHERE dedup_key = ? ORDER BY updated_at DESC LIMIT 1",
-                (dedup_key,),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._item_from_row(row_to_dict(row))
+        row = conn.execute(
+            "SELECT * FROM memory_items WHERE dedup_key = ? ORDER BY updated_at DESC LIMIT 1",
+            (dedup_key,),
+        ).fetchone()
+        return self._item_from_row(row_to_dict(row)) if row is not None else None
+
+    def _refresh_candidate_with_connection(
+        self, conn, item_id: str, *, source_session_id: str, project_id: str,
+        domain: str, tags: list[str], reason: str, source_evidence_ids: list[str],
+        needs_review: bool, review_note: str,
+    ) -> MemoryItem | None:
+        item = self._get_with_connection(conn, item_id)
+        if item is None or item.status not in {MemoryStatus.CANDIDATE, MemoryStatus.REJECTED}:
+            return item
+        now = _now()
+        conn.execute(
+            """
+            UPDATE memory_items
+            SET source_session_id = ?, project_id = ?, domain = ?, tags = ?,
+                reason = ?, source_evidence_ids = ?, needs_review = ?,
+                review_note = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (source_session_id, project_id, domain, _json_list(tags, "tags"),
+             reason, _json_list(source_evidence_ids, "source_evidence_ids"),
+             1 if needs_review else 0, review_note, now, item_id),
+        )
+        refreshed = self._require_with_connection(conn, item_id)
+        expected = replace(
+            item, source_session_id=source_session_id, project_id=project_id,
+            domain=domain, tags=tags, reason=reason,
+            source_evidence_ids=source_evidence_ids, needs_review=needs_review,
+            review_note=review_note, updated_at=now,
+        )
+        if refreshed != expected:
+            raise RuntimeError(f"Refreshed memory item {item_id} did not match the requested metadata")
+        return refreshed
+
+    def _get_with_connection(self, conn, item_id: str) -> MemoryItem | None:
+        row = conn.execute("SELECT * FROM memory_items WHERE id = ?", (item_id,)).fetchone()
+        return self._item_from_row(row_to_dict(row)) if row is not None else None
+
+    def _require_with_connection(self, conn, item_id: str) -> MemoryItem:
+        item = self._get_with_connection(conn, item_id)
+        if item is None:
+            raise RuntimeError(f"Written memory item {item_id} could not be loaded")
+        return item
 
     def get(self, item_id: str) -> MemoryItem | None:
         with self.db.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM memory_items WHERE id = ?",
-                (item_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._item_from_row(row_to_dict(row))
+            return self._get_with_connection(conn, item_id)
 
     def list(
         self,
@@ -170,21 +248,23 @@ class MemoryStore:
         return [self._item_from_row(row) for row in rows_to_dicts(rows)]
 
     def confirm(self, item_id: str) -> MemoryItem | None:
-        item = self.get(item_id)
-        if item is None:
-            return None
-        if item.status != MemoryStatus.CANDIDATE:
-            return item
         with self.db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE memory_items
-                SET status = ?, confidence = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (MemoryStatus.CONFIRMED.value, min(0.95, item.confidence + 0.15), _now(), item_id),
-            )
-        return self.get(item_id)
+            conn.execute("BEGIN")
+            return self._confirm_with_connection(conn, item_id)
+
+    def _confirm_with_connection(self, conn, item_id: str) -> MemoryItem | None:
+        item = self._get_with_connection(conn, item_id)
+        if item is None or item.status != MemoryStatus.CANDIDATE:
+            return item
+        conn.execute(
+            """
+            UPDATE memory_items
+            SET status = ?, confidence = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (MemoryStatus.CONFIRMED.value, min(0.95, item.confidence + 0.15), _now(), item_id),
+        )
+        return self._require_with_connection(conn, item_id)
 
     def reject(self, item_id: str) -> MemoryItem | None:
         return self._set_status(item_id, MemoryStatus.REJECTED, allowed={MemoryStatus.CANDIDATE})
@@ -251,7 +331,8 @@ class MemoryStore:
                     item_id,
                 ),
             )
-        return self.get(item_id)
+            item = self._require_with_connection(conn, item_id)
+        return item
 
     def delete_candidate(self, item_id: str) -> bool:
         item = self.get(item_id)
@@ -272,32 +353,42 @@ class MemoryStore:
     ):
         from data_agent.knowledge.models import KnowledgeSource
 
-        item = self.get(item_id)
-        if item is None:
-            return None
-        if item.status != MemoryStatus.CONFIRMED:
-            raise ValueError("Only confirmed memories can be promoted")
-        knowledge = library.create(
-            title=title or item.summary or item.text[:60],
-            domain=item.domain or "general",
-            content=item.text,
-            summary=summary or item.summary,
-            tags=item.tags,
-            source=KnowledgeSource.MEMORY_PROMOTION,
-        )
-        with self.db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE memory_items
-                SET status = ?, promotion_target = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (MemoryStatus.PROMOTED.value, knowledge.id, _now(), item_id),
-            )
+        if (self.root.resolve() != library.root.resolve()
+                or self.db.path.resolve() != library.db.path.resolve()):
+            raise ValueError("Memory promotion requires the same knowledge root and database")
+        with rollback_atomic_writes():
+            with self.db.connect() as conn:
+                conn.execute("BEGIN")
+                item = self._get_with_connection(conn, item_id)
+                if item is None:
+                    return None
+                if item.status != MemoryStatus.CONFIRMED:
+                    raise ValueError("Only confirmed memories can be promoted")
+                knowledge = library._create_with_connection(
+                    conn,
+                    title=title or item.summary or item.text[:60],
+                    domain=item.domain or "general",
+                    content=item.text,
+                    summary=summary or item.summary,
+                    tags=item.tags,
+                    source=KnowledgeSource.MEMORY_PROMOTION,
+                )
+                conn.execute(
+                    """
+                    UPDATE memory_items
+                    SET status = ?, promotion_target = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (MemoryStatus.PROMOTED.value, knowledge.id, _now(), item_id),
+                )
+                promoted = self._require_with_connection(conn, item_id)
+                if promoted.status != MemoryStatus.PROMOTED or promoted.promotion_target != knowledge.id:
+                    raise RuntimeError("Promoted memory result differs from the created knowledge")
         return knowledge
 
     def search(self, query: str, domain: str = "", limit: int = 5) -> list[MemoryItem]:
-        if limit <= 0:
+        limit = search_limit(limit)
+        if not limit:
             return []
         terms = [term.lower() for term in query.split() if term.strip()]
         if not terms:
@@ -323,7 +414,10 @@ class MemoryStore:
                 """,
                 (now, now, item_id),
             )
-        return self.get(item_id)
+            item = self._get_with_connection(conn, item_id)
+            if item is None and conn.total_changes:
+                raise RuntimeError(f"Written memory item {item_id} could not be loaded")
+        return item
 
     def _set_status(
         self,
@@ -341,7 +435,8 @@ class MemoryStore:
                 "UPDATE memory_items SET status = ?, updated_at = ? WHERE id = ?",
                 (status.value, _now(), item_id),
             )
-        return self.get(item_id)
+            item = self._require_with_connection(conn, item_id)
+        return item
 
     def _item_from_row(self, row: dict) -> MemoryItem:
         return MemoryItem(

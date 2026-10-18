@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from collections import OrderedDict
+from contextlib import closing
 from pathlib import Path
 from typing import Iterable
 
 
 class KnowledgeDatabase:
+    # Process-local, bounded proof cache; connections and transactions are never cached.
+    _initialization_lock = threading.RLock()
+    _initialized = OrderedDict()
+    _initialization_cache_limit = 256
+
     def __init__(self, path: Path):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.initialize()
+        self._initialize(force=False)
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=5)
@@ -19,10 +27,59 @@ class KnowledgeDatabase:
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    def _database_identity(self):
+        try:
+            path = self.path.resolve(strict=True)
+            info = path.stat()
+            birth = getattr(info, "st_birthtime_ns", None)
+            if not info.st_ino or birth is None:
+                return None
+            return (str(path), info.st_dev, info.st_ino, birth)
+        except OSError:
+            return None
+
+    @staticmethod
+    def _schema_version(conn):
+        try:
+            version = conn.execute("PRAGMA schema_version").fetchone()[0]
+            return version if isinstance(version, int) else None
+        except sqlite3.Error:
+            return None
+
+    def _forget_initialization(self):
+        path = str(self.path.resolve())
+        for key in list(self._initialized):
+            if key[1][0] == path:
+                del self._initialized[key]
+
+    def _initialize(self, *, force):
+        with self._initialization_lock:
+            try:
+                before = self._database_identity()
+                with closing(self.connect()) as conn:
+                    identity = self._database_identity()
+                    version = self._schema_version(conn)
+                    key = (type(self), identity)
+                    proven = (identity is not None and identity == before and version is not None
+                              and self._initialized.get(key) == (version, SCHEMA))
+                    if force or not proven:
+                        with conn:
+                            conn.executescript(SCHEMA)
+                            self._migrate(conn)
+                        version = self._schema_version(conn)
+                    after = self._database_identity()
+                    self._forget_initialization()
+                    if identity is not None and identity == after and version is not None:
+                        self._initialized[key] = (version, SCHEMA)
+                        while len(self._initialized) > self._initialization_cache_limit:
+                            self._initialized.popitem(last=False)
+            except Exception:
+                self._forget_initialization()
+                raise
+
     def initialize(self) -> None:
-        with self.connect() as conn:
-            conn.executescript(SCHEMA)
-            self._migrate(conn)
+        """Explicit initialization always checks and applies the existing migrations."""
+        self._initialize(force=True)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(memory_items)").fetchall()}
@@ -45,6 +102,14 @@ class KnowledgeDatabase:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_needs_review ON memory_items(needs_review)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_session ON evidence_records(session_id)")
+
+
+def search_limit(value: int) -> int:
+    """Normalize an integer count; nonpositive counts disable the search."""
+    from numbers import Integral
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError("search limit must be an integer, not bool, float or string")
+    return max(0, int(value))
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:

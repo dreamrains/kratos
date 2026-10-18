@@ -1,175 +1,118 @@
-"""Minimal, conclusion-only Workbench projection."""
-
-from __future__ import annotations
-
-import re
-from typing import Any
+"""Workbench projection of exact accepted answers and explicit gaps."""
+from data_agent.agent.publication.runtime import read_answer
+from data_agent.agent.publication.renderer import claim_text, STATUS_LABELS
 
 
-_CONFIDENCE_ORDER = {"high": 0, "medium": 1}
-_VERIFIED_LIMIT = 6
-_PENDING_LIMIT = 6
-_PENDING_STATUSES = {"proposed", "inconclusive", "contested", "stale"}
+def _basis_text(claim):
+    """Project the original accepted result without exposing its JSON payload."""
+    value = claim["value"]
+    if value is None or isinstance(value, (int, float, bool)) or claim.get("unit") == "hypothesis_status":
+        return claim_text(claim)
+    dataset = claim["scope"]["dataset"]
+    return claim["label"] + ("（来源：" + dataset + "；完整结果见原回答）" if dataset else "（完整结果见原回答）")
 
 
-def build_workbench_view(state: Any) -> dict[str, Any]:
-    """Expose current verified conclusions plus explicitly pending findings.
-
-    Verified conclusions keep their strict fingerprint gate. Pending findings
-    are a separate category: hypothesis explanations that remain undecided
-    carry their own status wording, basis, gap, and next verification step,
-    and never mix into the verified list (P6/U01–U04).
-    """
-    conclusions = _verified_conclusions(state)
-    return {
-        "verified_conclusions": conclusions,
-        "verified_total": len(conclusions),
-        "pending_findings": _pending_findings(state),
-    }
-
-
-def _verified_conclusions(state: Any) -> list[dict[str, str]]:
-    if state is None:
-        return []
-    evidence = _list_attr(state, "evidence_records")
-    reports = _list_attr(state, "verification_reports")
-    latest = reports[-1] if reports else {}
-    verified_ids = _current_verified_evidence_ids(state, evidence, latest)
-    active_dataset = _active_dataset(state)
-    conclusions = []
-    for item in evidence:
-        evidence_id = _text(item.get("id"))
-        confidence = _text(item.get("confidence")) or "medium"
-        claim = _text(item.get("claim"))
-        dataset = _text(item.get("dataset"))
-        if _is_older_named_version(dataset, active_dataset):
+def _reviewed_guidance(answer, requirement, current_claim_ids, sources_current):
+    """Read typed, reviewed original spans; never infer actions from prose."""
+    result = []
+    if not sources_current:
+        return result
+    for trace in answer["render_trace"]:
+        value = trace.get("rendered_text")
+        start, end = trace.get("start"), trace.get("end")
+        refs = trace.get("claim_refs")
+        if (trace.get("kind") != "text" or trace.get("disposition") != "accepted"
+                or trace.get("semantic_reviewed") is not True
+                or trace.get("purpose") not in {"limitation", "conditional_action"}
+                or requirement["id"] not in trace.get("requirement_ids", [])
+                or not isinstance(value, str) or not value
+                or type(start) is not int or type(end) is not int or not 0 <= start < end <= len(answer["body"])
+                or answer["body"][start:end] != value
+                or not isinstance(refs, list) or not set(refs).issubset(current_claim_ids)):
             continue
-        if claim and confidence in _CONFIDENCE_ORDER and evidence_id in verified_ids:
-            conclusions.append({
-                "id": evidence_id,
-                "claim": claim,
-                "summary": _text(item.get("result_summary")),
-                "confidence": confidence,
-                "dataset": dataset,
-            })
-    # The full verified set is projected with its real total; the default
-    # six-item display and expansion happen in the frontend (U01).
-    return sorted(conclusions, key=lambda item: _CONFIDENCE_ORDER[item["confidence"]])
+        result.append({"answer_id": answer["answer_id"], "snapshot_digest": answer["snapshot_digest"],
+                       "requirement_id": requirement["id"], "source_turn": requirement["source_turn"],
+                       "part_id": trace["part_id"], "purpose": trace["purpose"], "claim_refs": refs,
+                       "start": start, "end": end, "text": value})
+    return result
 
 
-def _pending_findings(state: Any) -> list[dict[str, str]]:
+def build_workbench_view(state):
+    conclusions, pending, seen, bases = [], [], set(), {}
     if state is None:
-        return []
-    try:
-        from data_agent.agent.hypotheses import hydrate_hypothesis_refs
-
-        hypothesis_sets = hydrate_hypothesis_refs(_list_attr(state, "hypothesis_sets"))
-    except Exception:
-        hypothesis_sets = _list_attr(state, "hypothesis_sets")
-    findings: list[dict[str, str]] = []
-    active_dataset = _active_dataset(state)
-    for hypothesis_set in hypothesis_sets[:2]:
-        historical_version = _is_older_named_version(
-            _text(hypothesis_set.get("dataset")), active_dataset,
-        )
-        for hypothesis in _list_items(hypothesis_set.get("hypotheses")):
-            status = _text(hypothesis.get("status"))
-            if historical_version:
-                status = "stale"
-            if status not in _PENDING_STATUSES:
-                continue
-            required = [
-                _text(requirement.get("field"))
-                for requirement in _list_items(hypothesis.get("evidence_requirements"))
-                if _text(requirement.get("field"))
-            ][:3]
-            basis_ids = _text_list(hypothesis.get("related_evidence_ids"))[:3] or _text_list(
-                hypothesis.get("supporting_evidence_ids")
-            )[:3]
-            findings.append({
-                "id": _text(hypothesis.get("id")),
-                "claim": _text(hypothesis.get("claim"))[:160],
-                "status": status,
-                "status_label": _status_label(status),
-                "basis": "、".join(basis_ids),
-                "gap": "、".join(required),
-                "next_step": f"补齐区分性证据：{'、'.join(required) if required else '按假设要求补齐字段或方法'}",
-            })
-            if len(findings) >= _PENDING_LIMIT:
-                return findings
-    return findings
-
-
-_NAMED_VERSION_SUFFIX = re.compile(r"(?:[-_\s]+v(?:ersion)?\d+)$", re.I)
-
-
-def _active_dataset(state: Any) -> str:
-    scope = getattr(state, "active_scope", None)
-    return _text(scope.get("active_dataset")) if isinstance(scope, dict) else ""
-
-
-def _is_older_named_version(dataset: str, active_dataset: str) -> bool:
-    """Treat an inactive ``name-vN`` sibling as history in the Workbench.
-
-    Uploads keep immutable dataset names, so a user-supplied replacement such
-    as ``sales-v2`` may coexist with ``sales-v1``. The active sibling is the
-    current version; earlier siblings remain auditable but must not project as
-    currently verified. Unversioned multi-source datasets are unaffected.
-    """
-    if not dataset or not active_dataset or dataset == active_dataset:
-        return False
-    dataset_base = _NAMED_VERSION_SUFFIX.sub("", dataset)
-    active_base = _NAMED_VERSION_SUFFIX.sub("", active_dataset)
-    return dataset_base != dataset and active_base != active_dataset and dataset_base.casefold() == active_base.casefold()
-
-
-def _status_label(status: str) -> str:
-    return {
-        "proposed": "待验证（候选解释）",
-        "inconclusive": "未决（证据不足或不可判定）",
-        "contested": "未决（支持与反证冲突）",
-        "stale": "失效（依赖证据已过期，历史结论）",
-    }.get(status, status)
-
-
-def _list_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _current_verified_evidence_ids(state: Any, evidence: list[dict[str, Any]], report: dict[str, Any]) -> set[str]:
-    expected = _text(report.get("evidence_fingerprint"))
-    if not expected:
-        return set()
-    try:
-        from data_agent.agent.trust_workflow_runtime import (
-            _current_analysis_plan_id, _current_plan_records, _evidence_fingerprint,
-        )
-
-        # Verification signs the current plan's evidence, not every historical
-        # plan in this session. Consumer and producer must use the same scope.
-        current = _current_plan_records(evidence, _current_analysis_plan_id(state))
-        if _evidence_fingerprint(state, current) != expected:
-            return set()
-    except Exception:
-        return set()
-    current_ids = {str(item.get("id")) for item in current}
-    return {str(item) for item in _text_list(report.get("passed_evidence_ids")) if str(item) in current_ids}
-
-
-def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
-    value = getattr(state, name, None)
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
-
-
-def _text_list(value: Any) -> list[str]:
-    return [_text(item) for item in value if _text(item)] if isinstance(value, list) else []
-
-
-def _text(value: Any) -> str:
-    if isinstance(value, str):
-        return " ".join(value.split())
-    if isinstance(value, (int, float, bool)):
-        return str(value)
-    return ""
+        return {"verified_conclusions": [], "verified_total": 0, "pending_findings": []}
+    from data_agent.session.workspace import workspace,persisted_receipt_identity_matches
+    from data_agent.agent.publication.facts import artifact_identity_matches
+    from data_agent.agent.context import get_current_context
+    ctx=get_current_context()
+    receipts, original_bytes = {}, {}
+    for receipt in state.tool_receipts:
+        receipts.setdefault(receipt.get("id"), []).append(receipt)
+    def original_receipt_matches(proof):
+        matches = receipts.get(proof.get("receipt_id"), [])
+        if len(matches) != 1:
+            return False
+        receipt = matches[0]
+        if (receipt.get("tool_name") != proof.get("tool_name")
+                or receipt.get("structured_result_sha256") != proof.get("result_sha256")
+                or receipt.get("data_identities") != proof.get("data_identities")):
+            return False
+        rid = receipt["id"]
+        if rid not in original_bytes:
+            detail = receipt.get("detail_ref") or {}
+            # Reuse the bounded, own-session original-byte authority. This
+            # checks integrity only; no raw data read or new analysis grant.
+            original_bytes[rid] = artifact_identity_matches(state.session_id,
+                {"session_id": state.session_id, "path": detail.get("path", ""),
+                 "sha256": detail.get("sha256", "")})
+        return original_bytes[rid]
+    def identities_current(identities):
+        return all(workspace._receipt_identity_matches(n, i) if ctx is not None and ctx.session_id == state.session_id
+                   else persisted_receipt_identity_matches(state.session_id, n, i) for n, i in identities.items())
+    for reference in reversed(state.accepted_answers):
+        try:
+            answer = read_answer(state.session_id, reference)
+            host = answer["source_snapshot"]
+            accepted = {t["ref"]: t["rendered_text"] for t in answer["render_trace"] if t["kind"] == "claim" and t["disposition"] == "accepted"}
+            for claim in host["claims"]:
+                if claim["id"] in seen or claim["id"] not in accepted:
+                    continue
+                seen.add(claim["id"])
+                sources = {n:i for proof in claim["basis_refs"] for n,i in proof["data_identities"].items()}
+                current = identities_current(sources)
+                current = current and all(original_receipt_matches(p) for p in claim["basis_refs"])
+                source=claim.get("derivation",{}).get("source_artifact")
+                if source: current=current and artifact_identity_matches(state.session_id,source)
+                if not current:
+                    pending.append({"id": claim["id"], "claim": claim["label"], "status": "stale", "status_label": "失效历史结果（当前源身份无法核实）", "basis": "历史已接受结果：" + _basis_text(claim), "gap": "数据版本、原回执或原假设产物身份已变化/无法核实", "next_step": "在当前数据范围重新计算"})
+                    continue
+                bases[claim["id"]] = _basis_text(claim)
+                conclusions.append({"id": claim["id"], "claim": claim["label"], "summary": accepted[claim["id"]], "confidence": "host_verified", "dataset": claim["scope"]["dataset"], "answer_id": reference["answer_id"]})
+            for outcome in answer["requirement_outcomes"]:
+                rid = outcome["requirement_id"]
+                if rid in seen:
+                    continue
+                seen.add(rid)
+                if outcome["status"] not in {"answered", "withdrawn"}:
+                    req = next(r for r in host["requirements"] if r["id"] == rid)
+                    context_ids = set(req["claim_ids"] + req.get("context_claim_ids", []))
+                    scoped_sources = {n: i for c in host["claims"] if c["id"] in context_ids
+                                      for proof in c["basis_refs"] for n, i in proof["data_identities"].items()}
+                    guidance = _reviewed_guidance(answer, req, set(accepted) & set(bases),
+                        identities_current(scoped_sources or host["data_identities"]))
+                    # Only this requirement's accepted deliveries and explicitly
+                    # cited, reviewed evidence belong in its visible basis.
+                    basis_ids = list(dict.fromkeys(req.get("claim_ids", []) + [cid for g in guidance for cid in g["claim_refs"]]))
+                    basis = "；".join(bases[cid] for cid in basis_ids if cid in accepted and cid in bases)
+                    if not basis:
+                        basis = "该需求尚无已核且已接受的结果；具体证据缺口见下方。"
+                    explanations = [g["text"] for g in guidance if g["purpose"] == "limitation"]
+                    actions = [g["text"] for g in guidance if g["purpose"] == "conditional_action"]
+                    pending.append({"id": rid, "claim": req["text"], "status": outcome["status"],
+                        "status_label": STATUS_LABELS.get(outcome["status"],outcome["status"]), "basis": basis,
+                        "gap": outcome["reason"], "gap_explanation": "\n".join(explanations),
+                        "next_step": "\n".join(actions) if actions else "该原接受答案没有可核的同需求已审条件性建议。",
+                        "next_step_status": "reviewed" if actions else "unassessed", "guidance_refs": guidance})
+        except (ValueError, OSError, KeyError, TypeError):
+            pending.append({"id": reference.get("answer_id", ""), "claim": "接受答案来源不可核实", "status": "unassessed", "status_label": "未核实", "basis": "", "gap": "原答案身份或产物不完整", "next_step": "保留历史正文，重新计算当前需求"})
+    return {"verified_conclusions": conclusions, "verified_total": len(conclusions), "pending_findings": pending}

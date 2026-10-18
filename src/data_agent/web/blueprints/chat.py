@@ -14,17 +14,9 @@ chat_bp = Blueprint("chat", __name__)
 
 
 def _token_usage(loop) -> dict | None:
-    from data_agent.agent.compact import estimate_tokens
     from data_agent.config import get_config
-    from data_agent.web.blueprints.sessions import _get_model_context_window
-
-    cfg = get_config()
-    context_window = _get_model_context_window(cfg.model_id)
-    if context_window is None:
-        return None
-
-    used = estimate_tokens(loop.messages)
-    return {"used": used, "threshold": context_window, "pct": min(round(used / max(context_window, 1) * 100), 100)}
+    from data_agent.llm.request_policy import request_budget_status
+    return request_budget_status(get_config(), loop.messages, getattr(loop,"_request_budget_estimate",None))
 
 
 def _feed_events(eq: EventQueue, loop, turn_id: str, gen, runs=None):
@@ -35,6 +27,7 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen, runs=None):
 
     status = "completed"
     errors = []
+    replay_reply_id = ""
 
     def finish(terminal_status):
         from data_agent.llm.request_policy import close_stream
@@ -59,6 +52,14 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen, runs=None):
         last_user = max((i for i, msg in enumerate(saved_messages) if msg.get("role") == "user"), default=-1)
         has_current_reply = any(msg.get("role") == "assistant" for msg in saved_messages[last_user + 1:])
         reply = replies[-1] if replies and has_current_reply else {}
+        if terminal_status == "completed" and replay_reply_id:
+            owners = [item for item in replies if item["reply_id"] == replay_reply_id]
+            if len(owners) != 1:
+                raise ValueError("Replayed accepted reply identity is not unique")
+            reply = owners[0]
+        if getattr(loop,"_post_commit_export_notice",""):
+            notice="；".join(filter(None,[notice,loop._post_commit_export_notice]))
+            if getattr(loop,"_post_commit_export_failed",False) and terminal_status=="completed":terminal_status="failed"
         state = runs.finish(loop.session_id, turn_id, terminal_status, notice=notice) if runs is not None else {}
         eq.put(SSEEvent("turn_end", {
             "session_id": loop.session_id, "turn_id": turn_id,
@@ -89,6 +90,8 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen, runs=None):
                 if event["name"] in ("task_create", "task_update"):
                     eq.put(SSEEvent("task_update", {}))
             elif etype == "text_delta":
+                if event.get("reply_id"):
+                    replay_reply_id = event["reply_id"]
                 eq.put(SSEEvent("text_delta", {"text": event["text"], "turn_id": event.get("turn_id") or turn_id}))
             elif etype == "_response":
                 pass  # Internal event, skip
@@ -240,10 +243,20 @@ def resume_chat():
     except (TypeError, ValueError):
         return jsonify({"error": "expected_version must be an integer"}), 400
 
+    if not session_id:
+        return jsonify({"error": f"Session {session_id} not found"}), 404
     manager = current_app.config["agent_manager"]
     agent_loop = manager.get(session_id)
+    from data_agent.agent.publication.runtime import require_writable, ReadOnlySessionError
+    try:
+        require_writable(session_id)
+    except ReadOnlySessionError as exc:
+        return jsonify({"error": str(exc)}), 409
     if not agent_loop:
-        return jsonify({"error": f"Session {session_id} not found"}), 404
+        from data_agent.session.history import load_session
+        if not session_id or not load_session(session_id):
+            return jsonify({"error": f"Session {session_id} not found"}), 404
+        agent_loop = manager.get_or_create(session_id=session_id)
 
     try:
         agent_loop._confirmation_runtime().get(agent_loop.session_id, confirmation_id)

@@ -31,15 +31,16 @@ def test_run_python_blocks_pandas_and_numpy_io_and_emits_replay_receipt():
 def test_synthesis_keeps_conditional_recommendations_and_explanation_discipline():
     policy = derive_synthesis_policy(
         user_input="recommend a retention intervention",
+        state={"answer_requirements":[{"id":"rq_action","lifecycle_status":"active","semantic_kind":"conditional_action"}]},
         evidence_records=[{"claim": "D7 retention fell", "confidence": "high"}],
     )
     instruction = build_synthesis_instruction(policy).lower()
 
     assert policy.answer_mode == "advisory"
     assert "decision_recommendation" not in policy.suppressed_moves
-    assert "direct evidence, inferential evidence, or suggestive context" in instruction
+    assert "preserving source, unit, window and limitations" in instruction
     assert "competing explanations" in instruction
-    assert "lack of causal proof alone" in instruction
+    assert "complete trigger and stop conditions" in instruction
 
 
 def test_conflict_detection_requires_explicit_shared_identifier_not_token_overlap():

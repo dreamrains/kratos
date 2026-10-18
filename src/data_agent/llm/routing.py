@@ -44,16 +44,33 @@ def _candidate_forms(model_id: str) -> list[str]:
 
 
 def model_context_window(model_id: str) -> Optional[int]:
-    """Best-effort max input tokens across equivalent forms of one model."""
-    import litellm
+    """Compatibility projection of the one local capacity catalogue."""
+    return model_token_limits(model_id)["input"]
 
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
+def _bundled_model_limits():
+    from importlib import resources
+    import json, litellm
+    return json.loads(resources.files(litellm).joinpath("model_prices_and_context_window_backup.json").read_text(encoding="utf-8"))
+
+
+def model_token_limits(model_id: str) -> dict:
+    """Read bundled metadata only; endpoint configuration may override it.
+
+    When no distinct total context is published, max_input_tokens is also
+    used as a conservative shared-context bound. It is never added to output.
+    """
+    catalogue = _bundled_model_limits()
     for form in _candidate_forms(model_id):
-        try:
-            info = litellm.get_model_info(form)
-        except Exception:
-            continue
+        info = catalogue.get(form)
         if isinstance(info, dict):
-            value = info.get("max_input_tokens") or info.get("max_tokens")
-            if value:
-                return int(value)
-    return None
+            incoming = info.get("max_input_tokens") or info.get("max_tokens")
+            if incoming:
+                return {"input": int(incoming), "context": int(incoming),
+                        "output": int(info["max_output_tokens"]) if info.get("max_output_tokens") else None,
+                        "source": "bundled_model_metadata:" + form}
+    return {"input": None, "context": None, "output": None, "source": "unknown"}

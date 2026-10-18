@@ -39,7 +39,7 @@ def test_explicit_identifier_count_applies_even_to_unique_chart_groups(tmp_path)
         tmp_path, "identifier_count", chart_type="bar", data_json=json.dumps(rows),
         x_col="group", y_col="user_id", aggregation="count", title="Users per group",
     )
-    assert "Chart saved:" in result
+    assert "Chart saved:" in str(result)
     metadata = json.loads(next(chart_dir.glob("*.json")).read_text(encoding="utf8"))
     values = metadata["figure"]["data"][0]["y"]
     if isinstance(values, dict):
@@ -249,7 +249,7 @@ def test_duplicate_bar_categories_require_explicit_aggregation(tmp_path):
 def test_duplicate_date_line_requires_explicit_aggregation(tmp_path):
     rows = [
         {"paid_at": "2026-05-01 10:00:00", "revenue": 10},
-        {"paid_at": "2026-05-01 11:00:00", "revenue": 20},
+        {"paid_at": "2026-05-01 10:00:00", "revenue": 20},
     ]
 
     result, chart_dir = _create_chart_in_session(
@@ -259,7 +259,7 @@ def test_duplicate_date_line_requires_explicit_aggregation(tmp_path):
         data_json=json.dumps(rows),
         x_col="paid_at",
         y_col="revenue",
-        title="Daily revenue",
+        title="Timestamp revenue",
     )
 
     assert json.loads(result)["error_code"] == "aggregation_required"
@@ -525,7 +525,7 @@ def test_heatmap_uses_only_explicit_numeric_columns(tmp_path):
         title="A and B correlation",
     )
 
-    assert "Chart saved:" in result
+    assert "Chart saved:" in str(result)
     html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
     assert "unrelated" not in html
 

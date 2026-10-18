@@ -133,9 +133,12 @@ def _to_tool_result(result: Any) -> ToolResult:
     if isinstance(result, ToolResult):
         return result
     summary = str(result)
+    if isinstance(result, dict):
+        # Preserve native mappings on the same result contract; keep the CLI summary.
+        return ToolResult(summary=summary, data=result)
     artifact = _artifact_from_chart_saved(summary)
     if artifact:
-        return ToolResult(summary=summary, artifacts=[artifact])
+        return ToolResult(summary=summary, data={"artifact_path": artifact.path}, artifacts=[artifact])
     return ToolResult.from_str(summary)
 
 
@@ -228,7 +231,7 @@ def _build_recovery_hint(error_json: str) -> str:
 _WRITE_CATEGORIES: frozenset[str] = frozenset({
     "data_transform", "data_write", "artifact", "evidence",
     "report", "visualization", "fallback", "confirmation",
-    "workflow", "interaction.confirmation",
+    "workflow", "interaction.confirmation", "analysis_artifact",
 })
 
 
@@ -255,7 +258,7 @@ def _is_read_only(tool_def) -> bool:
         "load_data", "load_sql", "export_data", "export_output",
         "transform_data", "derive_field", "run_python",
         "ask_user_question", "create_chart",
-        "record_data_requirement", "record_analysis_spec", "record_analysis_plan",
+        "record_data_requirement", "record_analysis_spec", "record_analysis_plan", "record_answer_targets",
         "record_evidence_record",
         "export_conversation",
         "clean_data", "apply_type_conversion",
@@ -326,12 +329,21 @@ TOOL_GROUPS: dict[str, set[str]] = {
 }
 
 
+# Existing knowledge/planning controls remain available without data execution.
+CONSULTATION_TOOLS = frozenset(TOOL_GROUPS["knowledge"] | {
+    "tool_search", "record_data_requirement", "record_analysis_spec",
+    "record_analysis_plan", "task_get", "task_list", "get_analysis_summary",
+    "ask_user_question", "task_create", "task_update",
+})
+
+
 def _cap(
     capability_id: str,
     category: str,
     problem_types: list[str],
     *,
     evidence_fields: list[str] | None = None,
+    input_contract: dict[str, Any] | None = None,
     risk_level: str = "low",
     requires_confirmation: bool = False,
     dependencies: list[str] | None = None,
@@ -342,6 +354,7 @@ def _cap(
         category=category,
         problem_types=problem_types,
         evidence_fields=evidence_fields or [],
+        input_contract=input_contract or {},
         risk_level=risk_level,
         requires_confirmation=requires_confirmation,
         dependencies=dependencies or [],
@@ -353,26 +366,27 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "list_data": _cap("data.list", "data_view", ["data_understanding"]),
     "preview_data": _cap("data.preview", "data_view", ["data_understanding"]),
     "describe_dataset": _cap("data.describe", "profile", ["data_understanding"], evidence_fields=["schema", "rows", "columns"]),
-    "quick_profile": _cap("data.profile", "profile", ["data_understanding", "quality"], evidence_fields=["schema", "missingness", "distribution"]),
+    "quick_profile": _cap("data.profile", "profile", ["data_understanding", "quality"], evidence_fields=["shape", "columns", "quality", "column_diagnostics"]),
     "detect_data_quality": _cap("data.quality", "quality", ["quality"], evidence_fields=["missingness", "duplicates", "outliers"]),
-    "compare_periods": _cap("analysis.period_compare", "trend", ["trend", "attribution"], evidence_fields=["periods", "metric_delta"]),
-    "analyze_time_series": _cap("analysis.time_series", "trend", ["trend", "monitoring"], evidence_fields=["trend", "seasonality"]),
+    "compare_periods": _cap("analysis.period_compare", "trend", ["trend", "attribution"], evidence_fields=["period_a", "period_b", "observation"]),
+    "analyze_time_series": _cap("analysis.time_series", "trend", ["trend", "monitoring"], evidence_fields=["trend", "window_comparisons", "autocorrelation", "seasonality", "observation"]),
     "contribute_decomposition": _cap("analysis.dimension_decomposition", "decomposition", ["attribution", "diagnosis"], evidence_fields=["drivers", "contribution"]),
-    "top_n": _cap("analysis.top_n", "decomposition", ["ranking", "diagnosis"], evidence_fields=["dimension", "metric"]),
+    "top_n": _cap("analysis.top_n", "data_transform", ["ranking", "diagnosis"], evidence_fields=["dimension", "metric"]),
     "funnel_analysis": _cap("analysis.funnel", "funnel", ["funnel", "conversion"], evidence_fields=["steps", "conversion_rate", "dropoff"]),
     "cohort_analysis": _cap("analysis.cohort", "retention", ["retention", "lifecycle"], evidence_fields=["cohort", "retention_rate"]),
-    "correlation_analysis": _cap("analysis.correlation", "relationship", ["drivers", "relationship"], evidence_fields=["correlation", "p_value"]),
-    "synthesize_time_series": _cap("analysis.multi_file_time_synthesis", "multi_file", ["trend", "relationship", "multi_file"], evidence_fields=["source_identities", "coverage", "missing_aligned_dates"]),
-    "ab_test": _cap("analysis.experiment", "experiment", ["evaluation", "causal"], evidence_fields=["effect_size", "significance"], risk_level="medium", requires_confirmation=True),
-    "causal_analysis": _cap("analysis.causal", "causal", ["causal", "evaluation"], evidence_fields=["effect", "assumptions"], risk_level="high", requires_confirmation=True),
-    "attribution_analysis": _cap("analysis.attribution", "attribution", ["attribution", "diagnosis"], evidence_fields=["drivers", "limitations"]),
-    "forecast": _cap("analysis.forecast", "prediction", ["prediction", "monitoring"], evidence_fields=["forecast", "interval"], risk_level="medium", requires_confirmation=True),
-    "regression_analysis": _cap("analysis.regression", "modeling", ["drivers", "prediction"], evidence_fields=["coefficients", "fit"]),
-    "classification": _cap("analysis.classification", "modeling", ["prediction", "segmentation"], evidence_fields=["metrics", "features"], risk_level="medium", requires_confirmation=True),
+    "correlation_analysis": _cap("analysis.correlation", "relationship", ["drivers", "relationship"], evidence_fields=["correlation_matrix", "pairwise_counts", "method"]),
+    "synthesize_time_series": _cap("analysis.multi_file_time_synthesis", "data_transform", ["trend", "relationship", "multi_file"], evidence_fields=["source_identities", "coverage", "missing_aligned_dates"], input_contract={"dataset_argument_separators": {"datasets": ","}}),
+    "ab_test": _cap("analysis.experiment", "experiment", ["evaluation", "causal"], evidence_fields=["groups", "test", "method"], risk_level="medium", requires_confirmation=True),
+    "causal_analysis": _cap("analysis.causal", "causal", ["causal", "evaluation"], evidence_fields=["did_effect", "assumptions", "cell_counts"], risk_level="high", requires_confirmation=True),
+    "attribution_analysis": _cap("analysis.attribution", "attribution", ["attribution", "diagnosis"], evidence_fields=["estimates", "bivariate_associations", "observation", "limitations"]),
+    "forecast": _cap("analysis.forecast", "prediction", ["prediction", "monitoring"], evidence_fields=["forecast", "backtest", "interval", "observation"], risk_level="medium", requires_confirmation=True),
+    "regression_analysis": _cap("analysis.regression", "modeling", ["drivers", "prediction"], evidence_fields=["metrics", "feature_importance", "method", "validation"]),
+    "classification": _cap("analysis.classification", "modeling", ["prediction", "segmentation"], evidence_fields=["metrics", "class_metrics", "label_mapping", "method", "validation"], risk_level="medium", requires_confirmation=True),
     "run_python": _cap("fallback.python", "fallback", ["custom"], risk_level="medium"),
     "ask_user_question": _cap("interaction.confirmation", "confirmation", ["confirmation"], risk_level="low"),
     "record_data_requirement": _cap("artifact.data_requirement", "analysis_artifact", ["planning"], evidence_fields=["required_data", "limitations"]),
     "record_analysis_spec": _cap("artifact.analysis_spec", "analysis_artifact", ["planning"], evidence_fields=["method_plan", "limitations"]),
+    "record_answer_targets": _cap("artifact.answer_targets", "analysis_artifact", ["planning"], evidence_fields=["delivery_id", "catalogue_ids"]),
     "record_analysis_plan": _cap("artifact.analysis_plan", "analysis_artifact", ["planning"], evidence_fields=["method_plan", "visualization_strategy", "statistical_validation_plan"]),
     "record_evidence_record": _cap("artifact.evidence_record", "evidence", ["evidence"], evidence_fields=["claim", "method", "confidence"]),
     "task_create": _cap("workflow.task_create", "workflow", ["planning", "execution"]),
@@ -629,6 +643,7 @@ class ToolRegistry:
         recovery_hint: Optional[str] = None,
         requires: Optional[list[str]] = None,
         capability: ToolCapability | dict[str, Any] | None = None,
+        output_contract: dict[str, Any] | None = None,
     ) -> Callable:
         """装饰器，注册一个工具函数。
 
@@ -658,6 +673,11 @@ class ToolRegistry:
                 requires=requires or [],
                 capability=capability or DEFAULT_TOOL_CAPABILITIES.get(tool_name),
             )
+            if output_contract is not None:
+                from copy import deepcopy
+                cap=deepcopy(self._tools[tool_name].capability) or ToolCapability(capability_id="analysis."+tool_name)
+                cap.output_contract=deepcopy(output_contract)
+                self._tools[tool_name].capability=cap
             if self._tools[tool_name].capability is not None:
                 self._capabilities[tool_name] = self._tools[tool_name].capability
             return func
@@ -865,17 +885,6 @@ class ToolRegistry:
 registry = ToolRegistry()
 
 
-@registry.register(
-    name="tool_search",
-    description=(
-        "搜索可用工具。当当前工具列表中没有需要的工具时，"
-        "用关键词搜索所有已注册工具的名称和描述，返回匹配结果。"
-        "返回的工具会自动激活其所在分组。"
-    ),
-    schema_overrides={
-        "keyword": {"description": "搜索关键词（中文或英文）"},
-    },
-)
 def _tool_search_haystack(tool) -> str:
     """Normalized searchable text: name, description and parameter identifiers.
 
@@ -895,6 +904,18 @@ def _tool_search_haystack(tool) -> str:
     return " ".join(parts).lower().replace("_", " ")
 
 
+@registry.register(
+    name="tool_search",
+    description=(
+        "搜索可用工具。当当前工具列表中没有需要的工具时，"
+        "用关键词搜索所有已注册工具的名称和描述，返回匹配结果。"
+        "返回全部匹配工具、总数与返回数；摘要最多200字符，截短会标明。"
+        "返回的工具会自动激活其所在分组。"
+    ),
+    schema_overrides={
+        "keyword": {"description": "搜索关键词（中文或英文）"},
+    },
+)
 def tool_search(keyword: str) -> str:
     """搜索工具注册中心，返回名称或描述匹配的工具。"""
     if not keyword.strip():
@@ -928,6 +949,7 @@ def tool_search(keyword: str) -> str:
             matches.append({
                 "name": tool.name,
                 "description": tool.description[:200],
+                "description_truncated": len(tool.description) > 200,
                 "relevance": score,
             })
 
@@ -940,6 +962,7 @@ def tool_search(keyword: str) -> str:
     result = {
         "keyword": keyword,
         "matches": len(matches),
-        "tools": matches[:20],
+        "returned": len(matches),
+        "tools": matches,
     }
     return json.dumps(result, ensure_ascii=False, indent=2)

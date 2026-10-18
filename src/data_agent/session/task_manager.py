@@ -1,7 +1,7 @@
-"""任务管理系统：文件级持久化，跨会话可见。
+"""任务管理系统：文件级持久化；宿主管理可跨会话，公开工具按会话/项目范围访问。
 
 参考 Claude Code 的 Task 系统设计：
-Task 是持久化工作项，LLM 完全控制生命周期，系统只做存取和展示。
+一般 Task 保留模型工作项操作；分析 Task 的事实完成及依赖就绪由宿主已核交付投影决定。
 """
 
 from __future__ import annotations
@@ -25,6 +25,9 @@ WORKFLOW_FIELDS = {
     "analysis_spec_id": "",
     "analysis_plan_id": "",
     "step_id": "",
+    "plan_sha256": "",
+    "requirement_ids": [],
+    "required_delivery_ids": [],
     "dataset_inputs": [],
     "dataset_contract_ids": [],
     "combination_mode": "",
@@ -81,6 +84,22 @@ class TaskManager:
         """
         with self._authority_lock:
             yield
+
+    @contextmanager
+    def plan_transaction(self):
+        """Roll back one compound plan projection under its authority lock."""
+        with self._authority_lock:
+            root=self.dir.resolve()
+            before={p:p.read_bytes() for p in root.glob("*.json")}
+            next_id=self._next_id_val
+            try:
+                yield
+            except Exception:
+                for path in root.glob("*.json"):
+                    if path not in before and path.resolve().parent==root:path.unlink()
+                for path,content in before.items():path.write_bytes(content)
+                self._next_id_val=next_id
+                raise
 
     @property
     def dir(self) -> Path:
@@ -174,6 +193,19 @@ class TaskManager:
         except ValueError:
             return None
 
+    @staticmethod
+    def _matches_scope(task: dict, session_id: str = "", project_name: str = "") -> bool:
+        return (not session_id or task.get("session_id") == session_id) and (
+            not project_name or task.get("project_name") == project_name
+        )
+
+    def get_for_scope(self, tid: int, session_id: str = "", project_name: str = "") -> Optional[dict]:
+        """Resolve a public task reference with the same scope as task lists."""
+        if type(tid) is not int or tid <= 0:
+            return None
+        task = self.get(tid)
+        return task if task is not None and self._matches_scope(task, session_id, project_name) else None
+
     def update(
         self,
         tid: int,
@@ -193,6 +225,13 @@ class TaskManager:
             allowed = ("pending", "blocked", "in_progress", "completed", "failed", "superseded", "archived", "deleted")
             if status not in allowed:
                 return None
+            if status == "in_progress" and self._is_stage3c0b_scoped_task(task) and task.get("blockedBy"):
+                return None
+            if status == "completed" and self._is_stage3c0b_scoped_task(task):
+                required=task.get("required_delivery_ids",[])
+                projection=self._task_delivery_projection(task)
+                if not required or any(d not in projection or projection[d]["gap"] is not None for d in required):
+                    return None
             task["status"] = status
 
             if status == "completed":
@@ -235,14 +274,13 @@ class TaskManager:
 
         self._save(task)
         if (
-            status == "completed"
+            status in {"completed", "failed"}
             and self._is_stage3c0b_scoped_task(task)
             and task.get("plan_id")
             and task.get("plan_id") == self.get_active_plan_id(
                 str(task.get("session_id") or ""), str(task.get("project_name") or "")
             )
         ):
-            # Manual task_update and evidence-driven completion share this path.
             self.start_next_ready_stage3c0b_task(
                 session_id=str(task.get("session_id") or ""),
                 project_name=str(task.get("project_name") or ""),
@@ -529,9 +567,14 @@ class TaskManager:
                     record["closure_reason"] = reason
                     self._save(record)
                     closed.append(int(record.get("id") or 0))
-            active = self._read_active_plans()
-            active.pop(self._plan_key(session_id, project_name), None)
-            self._write_active_plans(active)
+            # Keep the terminal structured plan as a read-only scope anchor.
+            # A new explicit plan replaces it; dropping the pointer would make
+            # the next turn attempt an unauthorized return to legacy raw access.
+            tasks=self._session_project_tasks(session_id=session_id,project_name=project_name,include_stale=True)
+            if not any(t.get("plan_id")==plan_id and self._is_stage3c0b_scoped_task(t) for t in tasks):
+                active = self._read_active_plans()
+                active.pop(self._plan_key(session_id, project_name), None)
+                self._write_active_plans(active)
             return closed
 
     def create_plan(
@@ -646,16 +689,7 @@ class TaskManager:
         if not session_id and not project_name:
             return tasks
 
-        if session_id and project_name:
-            scoped = [
-                t for t in tasks
-                if t.get("session_id") == session_id
-                and t.get("project_name") == project_name
-            ]
-        elif session_id:
-            scoped = [t for t in tasks if t.get("session_id") == session_id]
-        else:
-            scoped = [t for t in tasks if t.get("project_name") == project_name]
+        scoped = [t for t in tasks if self._matches_scope(t, session_id, project_name)]
         if include_global:
             scoped.extend([
                 t for t in tasks
@@ -720,216 +754,51 @@ class TaskManager:
                 return task
         return None
 
-    def _evidence_text(self, evidence: dict) -> str:
-        parts = [
-            evidence.get("claim", ""),
-            evidence.get("result_summary", ""),
-            evidence.get("method", ""),
-            " ".join(str(x) for x in evidence.get("tool_calls", []) or []),
-        ]
-        metrics = evidence.get("metrics") or {}
-        if isinstance(metrics, dict):
-            parts.extend(str(k) for k in metrics.keys())
-        return " ".join(str(p) for p in parts if p).lower()
-
-    def _task_match_terms(self, task: dict) -> list[str]:
-        terms = []
-        for key in ("subject", "expected_output", "required_capability"):
-            value = task.get(key)
-            if value:
-                terms.append(str(value))
-        for item in task.get("evidence_requirements") or []:
-            terms.append(str(item))
-        return [t.lower() for t in terms if t]
-
-    def _evidence_has_substantive_work(self, evidence: dict) -> bool:
-        return bool(
-            evidence.get("result_summary")
-            or evidence.get("metrics")
-            or evidence.get("tool_calls")
-        )
-
-    def _evidence_id(self, evidence: dict) -> str:
-        evidence_id = str(evidence.get("id") or "")
-        if evidence_id:
-            return evidence_id
-        try:
-            from data_agent.agent.evidence_contracts import evidence_id_for
-
-            if evidence.get("plan_id") and evidence.get("step_id") and evidence.get("claim_key"):
-                return evidence_id_for(evidence.get("plan_id"), evidence.get("step_id"), evidence.get("claim_key"))
-        except Exception:
-            pass
-        return ""
-
     def _is_stage3c0b_scoped_task(self, task: dict) -> bool:
         return bool(task.get("analysis_plan_id") or task.get("step_id"))
 
-    def _stage3c0b_evidence_requirement(self, evidence: dict) -> str:
-        return str(evidence.get("evidence_requirement") or "")
+    def _task_delivery_projection(self, task):
+        """Rebuild the same native product projection used by publication."""
+        from data_agent.agent.context import get_current_context
+        from data_agent.agent.publication.runtime import collect_products
+        from data_agent.agent.publication.deliveries import project_deliveries, OPEN_KINDS
+        from data_agent.agent.publication.requirements import _source
+        from data_agent.session.history import load_canonical_history
+        ctx=get_current_context()
+        if ctx is None or ctx.session_id!=task.get("session_id"): return {}
+        state=ctx.analysis_state;plan=state.analysis_plan or {}
+        if task.get("analysis_plan_id")!=plan.get("id") or task.get("plan_sha256")!=plan.get("plan_sha256"): return {}
+        step=next((s for s in plan.get("method_plan",[]) if s["step_id"]==task.get("step_id")),None)
+        if step is None or sorted(task.get("required_delivery_ids",[]))!=sorted(d["id"] for d in step["required_deliveries"] if d["kind"] not in OPEN_KINDS) or sorted(task.get("requirement_ids",[]))!=step["requirement_ids"]: return {}
+        history=load_canonical_history(ctx.session_id)
+        active=[r for r in state.answer_requirements if r.get("lifecycle_status")=="active"]
+        for req in active:
+            if req["id"] not in task.get("requirement_ids",[]): continue
+            try:
+                original=_source(history,req["source_message_ref"])
+                if original[req["source_start"]:req["source_end"]]!=req["original_text"]: return {}
+                if any(not ctx.workspace._receipt_identity_matches(n,i) for n,i in req.get("source_data_identities",{}).items()): return {}
+            except (ValueError,OSError,KeyError,TypeError): return {}
+        claims,artifacts,gaps,_,effects=collect_products(state,ctx.session_id)
+        return project_deliveries(active,claims,artifacts,effects=effects,product_gaps=gaps)[1]
 
-    def _stage3c0b_task_matches_evidence(self, task: dict, evidence: dict) -> bool:
-        task_plan_id = str(task.get("analysis_plan_id") or "")
-        if task_plan_id and str(evidence.get("plan_id") or "") != task_plan_id:
-            return False
-
-        task_step_id = str(task.get("step_id") or "")
-        if task_step_id and str(evidence.get("step_id") or "") != task_step_id:
-            return False
-
-        task_contract_ids = [str(item) for item in task.get("dataset_contract_ids") or [] if str(item)]
-        if task_contract_ids:
-            evidence_contract_ids = []
-            if evidence.get("dataset_contract_id"):
-                evidence_contract_ids.append(str(evidence.get("dataset_contract_id")))
-            evidence_contract_ids.extend(
-                str(item) for item in evidence.get("dataset_contract_ids") or [] if str(item)
-            )
-            if not set(task_contract_ids).intersection(evidence_contract_ids):
-                return False
-
-        task_requirements = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
-        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
-        if not task_requirements or not evidence_requirement or evidence_requirement not in task_requirements:
-            return False
-
-        return True
-
-    def _complete_stage3c0b_task_from_evidence(self, task: dict, evidence: dict) -> int | None:
-        if not self._stage3c0b_task_matches_evidence(task, evidence):
-            return None
-
-        evidence_id = self._evidence_id(evidence)
-        evidence_ids = list(task.get("evidence_ids") or [])
-        if evidence_id and evidence_id not in evidence_ids:
-            evidence_ids.append(evidence_id)
-
-        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
-        satisfied = list(task.get("satisfied_evidence_requirements") or [])
-        if evidence_requirement and evidence_requirement not in satisfied:
-            satisfied.append(evidence_requirement)
-
-        required = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
-        all_satisfied = bool(required) and all(item in satisfied for item in required)
-        was_completed = task.get("status") == "completed"
-
-        update_fields = {
-            "evidence_ids": evidence_ids,
-            "result_summary": evidence.get("result_summary", "") or evidence.get("claim", ""),
-            "confidence": evidence.get("confidence", ""),
-            "satisfied_evidence_requirements": satisfied,
-        }
-        if all_satisfied:
-            self.update(
-                task["id"],
-                status="completed",
-                completed_by="evidence",
-                **update_fields,
-            )
-            if not was_completed:
-                return task["id"]
-        else:
-            self.update(task["id"], **update_fields)
-        return None
-
-    def _complete_analysis_spec_plan_from_evidence(
-        self,
-        session_id: str,
-        evidence: dict,
-        analysis_spec_id: str = "",
-    ) -> list[int]:
-        if not self._evidence_has_substantive_work(evidence):
-            return []
-
-        active_tasks = self.list_active_for_scope(session_id=session_id)
-        if any(t.get("analysis_plan_id") or t.get("step_id") for t in active_tasks):
-            return []
-        if any(t.get("source") == "llm_plan" for t in active_tasks):
-            return []
-
-        evidence_id = self._evidence_id(evidence)
-        completed: list[int] = []
-        for task in active_tasks:
-            if task.get("status") not in ("pending", "in_progress"):
-                continue
-            if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
-                continue
-            if task.get("task_kind") == "confirmation" or task.get("node_type") == "confirmation":
-                self.update(
-                    task["id"],
-                    status="superseded",
-                    completed_by="evidence",
-                    result_summary=evidence.get("result_summary", "") or evidence.get("claim", ""),
-                )
-                continue
-            if task.get("source") != "analysis_spec":
-                continue
-
-            evidence_ids = list(task.get("evidence_ids") or [])
-            if evidence_id and evidence_id not in evidence_ids:
-                evidence_ids.append(evidence_id)
-            self.update(
-                task["id"],
-                status="completed",
-                evidence_ids=evidence_ids,
-                result_summary=evidence.get("result_summary", "") or evidence.get("claim", ""),
-                confidence=evidence.get("confidence", ""),
-                completed_by="evidence",
-            )
-            completed.append(task["id"])
-        return completed
-
-    def complete_matching_tasks_from_evidence(
-        self,
-        session_id: str,
-        evidence: dict,
-        analysis_spec_id: str = "",
-    ) -> list[int]:
-        active_tasks = self.list_active_for_scope(session_id=session_id)
-        has_scoped_stage3c0b_tasks = any(self._is_stage3c0b_scoped_task(task) for task in active_tasks)
-        evidence_id = self._evidence_id(evidence)
-        completed: list[int] = []
-        if has_scoped_stage3c0b_tasks:
-            for task in active_tasks:
-                if task.get("status") not in ("pending", "in_progress"):
-                    continue
-                if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
-                    continue
-                if not self._is_stage3c0b_scoped_task(task):
-                    continue
-                completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
-                if completed_task_id is not None:
-                    completed.append(completed_task_id)
+    def reconcile_deliveries(self, session_id):
+        """Receipt arrival advances factual steps only after every delivery closes."""
+        with self._authority_lock:
+            completed=[]
+            for task in self.list_active_for_scope(session_id=session_id):
+                if task.get("status") not in {"pending","in_progress"} or not self._is_stage3c0b_scoped_task(task): continue
+                required=task.get("required_delivery_ids",[])
+                projection=self._task_delivery_projection(task)
+                if required and all(d in projection and projection[d]["gap"] is None for d in required):
+                    if self.update(task["id"],status="completed",completed_by="verified_deliveries"):
+                        completed.append(task["id"])
             return completed
 
-        evidence_text = self._evidence_text(evidence)
-        for task in active_tasks:
-            if task.get("status") not in ("pending", "in_progress"):
-                continue
-            if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
-                continue
-            terms = self._task_match_terms(task)
-            if not any(term and term in evidence_text for term in terms):
-                continue
-            evidence_ids = list(task.get("evidence_ids") or [])
-            if evidence_id and evidence_id not in evidence_ids:
-                evidence_ids.append(evidence_id)
-            self.update(
-                task["id"],
-                status="completed",
-                evidence_ids=evidence_ids,
-                result_summary=evidence.get("result_summary", "") or evidence.get("claim", ""),
-                confidence=evidence.get("confidence", ""),
-                completed_by="evidence",
-            )
-            completed.append(task["id"])
-        if completed:
-            return completed
-        return self._complete_analysis_spec_plan_from_evidence(
-            session_id=session_id,
-            evidence=evidence,
-            analysis_spec_id=analysis_spec_id,
-        )
+    def complete_matching_tasks_from_evidence(self, session_id, evidence, analysis_spec_id=""):
+        # EvidenceRecord claims, confidence and labels are research annotations.
+        # They cannot sign off a DAG step, including a legacy unscoped plan.
+        return self.reconcile_deliveries(session_id)
 
     def list_history_for_scope(
         self,

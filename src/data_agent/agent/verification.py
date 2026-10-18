@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,10 +21,7 @@ REQUIRED_EVIDENCE_FIELDS = (
     "limitations",
 )
 
-CAUSAL_WORDS = ("causal", "caused", "causes", "cause", "导致", "证明", "使得")
-CAUSAL_METHODS = {"causal", "ab_test", "experiment", "did", "difference_in_differences"}
 RISKY_CLEANING_DECISIONS = {"needs_confirmation", "blocked"}
-MATCH_STOPWORDS = {"a", "an", "and", "by", "in", "of", "the", "to"}
 
 
 def _json_safe(value: Any) -> Any:
@@ -50,12 +46,6 @@ def _claim_text(claim: Any) -> str:
     if isinstance(claim, dict):
         return str(claim.get("claim") or claim.get("text") or claim.get("statement") or "")
     return str(claim or "")
-
-
-def _claim_external_id(claim: Any) -> str:
-    if isinstance(claim, dict):
-        return str(claim.get("id") or claim.get("claim_id") or "")
-    return ""
 
 
 def _claim_evidence_id(claim: Any) -> str:
@@ -102,54 +92,6 @@ def _is_missing(value: Any) -> bool:
     return False
 
 
-def _normalize_text(text: Any) -> str:
-    lowered = str(text or "").lower()
-    normalized = re.sub(r"[^\w\u4e00-\u9fff]+", " ", lowered, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", normalized).strip()
-
-
-def _tokens(text: Any) -> set[str]:
-    return {token for token in _normalize_text(text).split() if token and token not in MATCH_STOPWORDS}
-
-
-def _text_match_score(left: str, right: str) -> float:
-    left_norm = _normalize_text(left)
-    right_norm = _normalize_text(right)
-    if not left_norm or not right_norm:
-        return 0.0
-    if left_norm == right_norm:
-        return 1.0
-    if left_norm in right_norm or right_norm in left_norm:
-        shorter = min(len(left_norm), len(right_norm))
-        longer = max(len(left_norm), len(right_norm))
-        return 0.86 if shorter / longer >= 0.45 else 0.0
-
-    left_tokens = _tokens(left_norm)
-    right_tokens = _tokens(right_norm)
-    if not left_tokens or not right_tokens:
-        return 0.0
-    overlap = len(left_tokens & right_tokens)
-    precision = overlap / len(left_tokens)
-    recall = overlap / len(right_tokens)
-    if overlap >= 4 and precision >= 0.65 and recall >= 0.55:
-        return (precision + recall) / 2
-    if overlap >= 3 and precision >= 0.8 and recall >= 0.8:
-        return (precision + recall) / 2
-    return 0.0
-
-
-def _record_ids(record: dict[str, Any]) -> set[str]:
-    fields = (
-        "id",
-        "claim_id",
-        "source_claim_id",
-        "analysis_claim_id",
-        "claim_ref",
-        "claim_reference",
-    )
-    return {str(record[field]) for field in fields if record.get(field)}
-
-
 def _record_matches_current_plan(record: dict[str, Any], current_plan_id: str) -> bool:
     if not current_plan_id:
         return True
@@ -178,20 +120,6 @@ def _find_evidence_by_id(
         for record in evidence_records
         if str(record.get("id") or "") == evidence_id
     ]
-
-
-def _find_evidence(claim: Any, evidence_records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    claim_text = _claim_text(claim)
-    external_id = _claim_external_id(claim)
-    if external_id:
-        for record in evidence_records:
-            if external_id in _record_ids(record):
-                return record
-
-    for record in evidence_records:
-        if _text_match_score(claim_text, str(record.get("claim") or "")) >= 0.74:
-            return record
-    return None
 
 
 def _comparison_measurements(
@@ -279,16 +207,6 @@ def _comparison_issues(
     return referenced_records, issues
 
 
-def _uses_causal_language(text: str) -> bool:
-    lowered = text.lower()
-    return any(word in lowered for word in CAUSAL_WORDS)
-
-
-def _is_causal_method(method: Any) -> bool:
-    normalized = str(method or "").strip().lower()
-    return normalized in CAUSAL_METHODS
-
-
 def _risky_cleaning_issues(evidence: dict[str, Any], cleaning_logs: list[dict[str, Any]]) -> list[str]:
     evidence_dataset = str(evidence.get("dataset") or "")
     issues: list[str] = []
@@ -351,15 +269,12 @@ def _check_claim(
             else:
                 comparison_issues.append(f"Explicit evidence {explicit_evidence_id} was not found")
 
-    if evidence is None and not comparison_issues:
-        evidence = _find_evidence(claim, _current_plan_evidence(evidence_records, current_plan_id))
-
     check = {
         "claim_id": _claim_id(claim, index),
         "claim": text,
         "evidence_id": evidence.get("id") if evidence else None,
         "status": "passed",
-        "strength": "confirmed" if str((evidence or {}).get("confidence") or "").lower() == "high" else "likely",
+        "strength": "unassessed",
         "issues": [],
     }
 
@@ -381,19 +296,15 @@ def _check_claim(
         check["strength"] = "likely"
         check["issues"].append(f"Evidence record is missing required fields: {', '.join(missing)}")
 
-    if _uses_causal_language(text) and not _is_causal_method(evidence.get("method")):
-        check["status"] = "downgraded"
-        check["strength"] = "likely"
-        check["issues"].append(
-            "Claim uses causal language, but evidence method is not causal, ab_test, experiment, did, or difference_in_differences"
-        )
-
     cleaning_issues = _risky_cleaning_issues(evidence, cleaning_logs)
     if cleaning_issues:
         check["status"] = "downgraded"
         check["strength"] = "likely"
         check["issues"].extend(cleaning_issues)
 
+    check["status"] = "downgraded"
+    check["strength"] = "unassessed"
+    check["issues"].append("Evidence annotation is diagnostic only; accepted answer receipt bindings own publication authority")
     return check
 
 

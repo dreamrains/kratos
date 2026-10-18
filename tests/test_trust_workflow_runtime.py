@@ -4,7 +4,6 @@ from data_agent.agent.hypotheses import hydrate_hypothesis_refs
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.trust_workflow_runtime import (
     maybe_create_hypothesis_set,
-    maybe_verify_turn_claims,
     refine_turn_intent_with_state,
 )
 
@@ -76,69 +75,8 @@ def test_runtime_refinement_falls_back_when_state_refs_are_malformed():
     assert refined is base
 
 
-def test_runtime_generates_compact_verification_report_from_evidence_records():
-    state = AnalysisSessionState(session_id="runtime_verify")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12% from 100 to 112",
-        "confidence": "high",
-        "dataset": "sales",
-        "method": "period_compare",
-        "sample_size": 1200,
-        "time_scope": "2026-05-01 to 2026-05-31",
-        "calculation_method": "monthly revenue delta",
-        "method_detail": "compared current revenue against prior revenue",
-        "limitations": ["descriptive comparison only"],
-    }]
-    state.route_proposals = [{"id": "route_trend", "direction": "trend"}]
-
-    ref = maybe_verify_turn_claims("summarize revenue", state)
-
-    assert ref is not None
-    assert ref["id"].startswith("verify_")
-    assert ref["overall_status"] == "pass"
-    assert ref["claim_count"] == 1
-    assert ref["failed_count"] == 0
-    assert ref["downgraded_count"] == 0
-    assert ref["evidence_signature"] == "ev_1|routes:route_trend|cleaning:"
-    assert state.verification_reports[-1] == ref
 
 
-def test_runtime_passes_analysis_plan_id_to_claim_verification(monkeypatch):
-    state = AnalysisSessionState(session_id="runtime_verify_current_plan")
-    state.analysis_plan = {"id": "plan_current", "goal": "Analyze current plan"}
-    state.evidence_records = [{
-        "id": "ev_1",
-        "plan_id": "plan_current",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12% from 100 to 112",
-        "confidence": "high",
-    }]
-    captured = {}
-
-    def fake_verify_analysis_claims(**kwargs):
-        captured.update(kwargs)
-        return {
-            "id": "report_current_plan",
-            "claim_checks": [{
-                "claim_id": "claim_1",
-                "claim": "Revenue increased 12%",
-                "evidence_id": "ev_1",
-                "status": "passed",
-                "strength": "confirmed",
-                "issues": [],
-            }],
-            "route_proposal_ids": [],
-            "overall_status": "pass",
-        }
-
-    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
-
-    ref = maybe_verify_turn_claims("summarize revenue", state)
-
-    assert ref is not None
-    assert captured.get("current_plan_id") == "plan_current"
 
 
 def _stage3c0b_runtime_measurement(**overrides):
@@ -183,234 +121,24 @@ def _stage3c0b_runtime_evidence(evidence_id, claim, *, plan_id="plan_current", *
     return record
 
 
-def test_runtime_rejects_incompatible_current_plan_comparison():
-    state = AnalysisSessionState(session_id="runtime_verify_incompatible_comparison")
-    state.analysis_plan = {"id": "plan_current"}
-    state.evidence_records = [
-        _stage3c0b_runtime_evidence(
-            "ev_current",
-            "Current and new-user conversion rates are comparable.",
-            compare_evidence_ids=["ev_current", "ev_new_users"],
-        ),
-        _stage3c0b_runtime_evidence(
-            "ev_new_users",
-            "New-user conversion rate is 21%.",
-            measurements=[_stage3c0b_runtime_measurement(population_scope="new visitors")],
-        ),
-    ]
-
-    ref = maybe_verify_turn_claims("compare conversion rates", state)
-
-    assert ref is not None
-    assert ref["overall_status"] == "fail"
-    assert ref["failed_count"] == 1
 
 
-def test_runtime_verifies_only_current_plan_claims_and_evidence():
-    state = AnalysisSessionState(session_id="runtime_verify_current_plan_only")
-    state.analysis_plan = {"id": "plan_current"}
-    state.evidence_records = [
-        _stage3c0b_runtime_evidence(
-            "ev_old",
-            "An old-plan claim has no current-plan support.",
-            plan_id="plan_old",
-        ),
-        _stage3c0b_runtime_evidence("ev_current", "Current conversion rate is 18%."),
-    ]
-
-    ref = maybe_verify_turn_claims("summarize current conversion", state)
-
-    assert ref is not None
-    assert ref["overall_status"] == "pass"
-    assert ref["claim_count"] == 1
 
 
-def test_runtime_falls_back_to_analysis_spec_when_analysis_plan_id_is_blank():
-    state = AnalysisSessionState(session_id="runtime_verify_analysis_spec_fallback")
-    state.analysis_plan = {"id": "   "}
-    state.analysis_spec = {"id": "plan_current"}
-    state.evidence_records = [
-        _stage3c0b_runtime_evidence("ev_current", "Current conversion rate is 18%."),
-    ]
-
-    ref = maybe_verify_turn_claims("summarize current conversion", state)
-
-    assert ref is not None
-    assert ref["overall_status"] == "pass"
-    assert ref["evidence_signature"].endswith("|plan:plan_current")
 
 
-def test_runtime_verification_deduplicates_latest_evidence_signature():
-    state = AnalysisSessionState(session_id="runtime_verify_dedupe")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12%",
-        "confidence": "high",
-    }]
-
-    first = maybe_verify_turn_claims("summarize revenue", state)
-    second = maybe_verify_turn_claims("summarize revenue again", state)
-
-    assert first is not None
-    assert second is None
-    assert len(state.verification_reports) == 1
 
 
-def test_runtime_verification_reruns_when_evidence_content_changes_with_same_id():
-    state = AnalysisSessionState(session_id="runtime_verify_content_change")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12%",
-        "confidence": "high",
-    }]
-
-    first = maybe_verify_turn_claims("summarize revenue", state)
-    state.evidence_records[0]["claim"] = "Revenue increased 15%"
-    state.evidence_records[0]["result_summary"] = "Revenue increased 15%"
-    second = maybe_verify_turn_claims("summarize revenue again", state)
-
-    assert first is not None
-    assert second is not None
-    assert first["evidence_signature"] == "ev_1|routes:|cleaning:"
-    assert second["evidence_signature"] == first["evidence_signature"]
-    assert second["evidence_fingerprint"] != first["evidence_fingerprint"]
-    assert state.verification_reports[-1]["evidence_fingerprint"] == second["evidence_fingerprint"]
 
 
-def test_runtime_verification_deduplicates_existing_identity_after_other_report():
-    state = AnalysisSessionState(session_id="runtime_verify_existing_identity")
-    state.evidence_records = [{
-        "id": "ev_a",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12%",
-        "confidence": "high",
-    }]
-
-    first_a = maybe_verify_turn_claims("summarize revenue", state)
-    state.evidence_records = [{
-        "id": "ev_b",
-        "claim": "Costs decreased 3%",
-        "result_summary": "Costs decreased 3%",
-        "confidence": "high",
-    }]
-    report_b = maybe_verify_turn_claims("summarize costs", state)
-    state.evidence_records = [{
-        "id": "ev_a",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12%",
-        "confidence": "high",
-    }]
-    third_a = maybe_verify_turn_claims("summarize revenue again", state)
-    fourth_a = maybe_verify_turn_claims("summarize revenue one more time", state)
-
-    assert first_a is not None
-    assert report_b is not None
-    assert third_a is None
-    assert fourth_a is None
-    assert len(state.verification_reports) == 2
-    assert state.verification_reports[-1]["evidence_signature"] == first_a["evidence_signature"]
 
 
-def test_runtime_verification_reruns_when_cleaning_content_changes_with_same_id():
-    state = AnalysisSessionState(session_id="runtime_verify_cleaning_change")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Revenue increased 12% in May",
-        "result_summary": "Revenue increased 12% from 100 to 112",
-        "confidence": "high",
-        "dataset": "sales",
-        "method": "period_compare",
-        "sample_size": 1200,
-        "time_scope": "2026-05-01 to 2026-05-31",
-        "calculation_method": "monthly revenue delta",
-        "method_detail": "compared May revenue against April revenue",
-        "limitations": ["descriptive comparison only"],
-    }]
-    state.cleaning_logs = [{
-        "id": "clean_1",
-        "dataset": "sales",
-        "decisions": [],
-    }]
-
-    first = maybe_verify_turn_claims("summarize revenue", state)
-    state.cleaning_logs[0]["decisions"].append({
-        "column": "revenue",
-        "decision_type": "needs_confirmation",
-        "impact": "May change aggregate values",
-    })
-    second = maybe_verify_turn_claims("summarize revenue again", state)
-
-    assert first is not None
-    assert second is not None
-    assert first["overall_status"] == "pass"
-    assert second["evidence_signature"] == first["evidence_signature"]
-    assert second["evidence_fingerprint"] != first["evidence_fingerprint"]
-    assert second["overall_status"] == "pass_with_downgrades"
-    assert second["downgraded_count"] == 1
 
 
-def test_runtime_verification_skips_when_no_claims_are_available():
-    state = AnalysisSessionState(session_id="runtime_verify_empty")
-    state.evidence_records = [{"id": "ev_no_claim", "result_summary": "summary only"}]
-
-    ref = maybe_verify_turn_claims("summarize", state)
-
-    assert ref is None
-    assert state.verification_reports == []
 
 
-def test_runtime_verification_force_overrides_signature_dedupe():
-    state = AnalysisSessionState(session_id="runtime_verify_force")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12%",
-        "confidence": "high",
-    }]
-
-    first = maybe_verify_turn_claims("summarize revenue", state)
-    second = maybe_verify_turn_claims("summarize revenue again", state, force=True)
-
-    assert first is not None
-    assert second is not None
-    assert len(state.verification_reports) == 1
-    assert state.verification_reports[-1]["id"] == second["id"]
 
 
-def test_runtime_verification_counts_failed_claim_checks(monkeypatch):
-    state = AnalysisSessionState(session_id="runtime_verify_failed")
-    state.evidence_records = [{
-        "id": "ev_1",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12%",
-        "confidence": "high",
-    }]
-
-    def fake_verify_analysis_claims(**_kwargs):
-        return {
-            "id": "failed_report",
-            "claim_checks": [{
-                "claim_id": "claim_1",
-                "claim": "Revenue increased 12%",
-                "evidence_id": None,
-                "status": "failed",
-                "strength": "unsupported",
-                "issues": ["No evidence record supports this claim"],
-            }],
-            "route_proposal_ids": [],
-            "overall_status": "fail",
-        }
-
-    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
-
-    ref = maybe_verify_turn_claims("summarize revenue", state)
-
-    assert ref is not None
-    assert ref["overall_status"] == "fail"
-    assert ref["claim_count"] == 1
-    assert ref["failed_count"] == 1
 
 
 def test_runtime_creates_hypothesis_set_from_direct_entry_decision(tmp_path):
@@ -440,6 +168,41 @@ def test_runtime_creates_hypothesis_set_from_direct_entry_decision(tmp_path):
         hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
         assert hydrated[0]["route"] == "trend"
         assert len(hydrated[0]["hypotheses"]) >= 2
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_explicit_hypothesis_set_waits_for_current_plan(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = AnalysisSessionState(session_id="runtime_hyp_plan_first", data_state="data_loaded")
+        state.dataset_contracts = [{
+            "dataset": "sales", "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{"dataset": "sales", "direction": "trend"}]
+        request = "请提出并检验至少两种竞争性假设"
+
+        assert maybe_create_hypothesis_set(request, _intent("directed_analysis"), state) is None
+        assert state.hypothesis_sets == []
+        state.set_analysis_spec({"id": "spec_preliminary", "goal": request})
+        preliminary = maybe_create_hypothesis_set(request, _intent("directed_analysis"), state)
+        assert preliminary is None
+        assert state.analysis_plan is None
+        state.analysis_plan = {"id": "plan_current", "goal": request,
+                               "contract_version": "stage3c0b.v1"}
+        ref = maybe_create_hypothesis_set(request, _intent("directed_analysis"), state)
+        assert ref is not None
+        assert ref["plan_id"] == "plan_current"
+        assert all(h["plan_id"] != "spec_preliminary" for h in state.hypothesis_sets)
+        current = next(item for item in hydrate_hypothesis_refs(state.hypothesis_sets)
+                       if item["id"] == ref["id"])
+        assert all(item["id"].startswith(ref["id"])
+                   for item in current["hypotheses"])
     finally:
         cfg.sessions_dir = old_sessions
 
@@ -784,6 +547,26 @@ def test_b04_freshness_gate_is_pure_and_conservative():
     }]
 
 
+def _produce_b04_current_relation_metadata(context, state, local_workspace):
+    from contextlib import nullcontext
+    from data_agent.tools.data_io import _record_trust_workflow
+    context.analysis_state = state
+    first = not any(r.get("artifact_path") for r in state.dataset_contracts)
+    if first:
+        state.dataset_contracts = []
+        state.route_proposals = []
+        state.cleaning_logs = []
+    state.set_active_dataset("sales")
+    state.active_scope["active_mode"] = "data_loaded"
+    frame = local_workspace.get("sales")
+    # Fresh production reads get their own grant; the previous version's
+    # planning grant never becomes raw-frame permission on the new turn.
+    with context.planning_workspace_scope(["sales"]) if first else nullcontext():
+        _record_trust_workflow(session_id=state.session_id, state=state, dataset="sales",
+            df=frame, applied=[], needs_confirm=[], quality={},
+            interpretation_data={"columns_classified":{"time_columns":["date"], "key_metrics":["revenue"]}}, detail_path="")
+
+
 def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path, monkeypatch):
     from data_agent.config import get_config
     from data_agent.agent.context import AgentContext, use_agent_context
@@ -800,14 +583,15 @@ def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path, monkeypat
         local_workspace = Workspace()
         context = AgentContext(session_id="runtime_b04", workspace=local_workspace)
         with use_agent_context(context):
-            local_workspace.add("sales__raw", __import__("pandas").DataFrame({"revenue": [10, 20]}))
+            local_workspace.add("sales__raw", __import__("pandas").DataFrame({"date": __import__("pandas").date_range("2026-01-01", periods=2), "revenue": [10, 20]}))
             local_workspace.derive(
                 "sales__raw", "sales", local_workspace.get("sales__raw"), "initial analysis version",
             )
             first_identity = local_workspace.get_data_identity("sales")
             state = _relation_state("runtime_b04")
+            _produce_b04_current_relation_metadata(context, state, local_workspace)
             first = maybe_create_hypothesis_set(
-                "show revenue trend", _intent("directed_analysis"), state,
+                "show revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state,
             )
             assert first is not None
             hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
@@ -817,21 +601,22 @@ def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path, monkeypat
                 "ev_b04_v1", primary_id, first_identity["fingerprint"],
             )]
             maybe_create_hypothesis_set(
-                "show revenue trend", _intent("directed_analysis"), state,
+                "show revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state,
             )
             before = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
             assert before["hypotheses"][0]["status"] == "supported"
 
             # 真实的同名版本替换：归档 v1，再创建 v2；不篡改旧证据。
             assert local_workspace.archive_version("sales") == "sales__history"
-            local_workspace.add("sales__raw_2", __import__("pandas").DataFrame({"revenue": [10, 10]}))
+            local_workspace.add("sales__raw_2", __import__("pandas").DataFrame({"date": __import__("pandas").date_range("2026-01-01", periods=2), "revenue": [10, 10]}))
             local_workspace.derive(
                 "sales__raw_2", "sales", local_workspace.get("sales__raw_2"), "reloaded analysis version",
             )
             assert local_workspace.get_data_identity("sales__history") == first_identity
+            _produce_b04_current_relation_metadata(context, state, local_workspace)
 
             refreshed = maybe_create_hypothesis_set(
-                "show revenue trend", _intent("directed_analysis"), state,
+                "show revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state,
             )
             assert refreshed is not None
             after = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
@@ -841,5 +626,111 @@ def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path, monkeypat
             # 假设集保留（历史），证据记录本身不删除。
             assert len(state.hypothesis_sets) == 1
             assert state.evidence_records
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_b04_new_plan_does_not_leave_old_version_verdict_current(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.session.workspace import Workspace
+    import pandas as pd
+
+    monkeypatch.setattr(
+        "data_agent.agent.hypotheses.receipt_verified_hypothesis_measurements",
+        _verified_measurements_for_lifecycle,
+    )
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        local_workspace = Workspace()
+        context = AgentContext(session_id="runtime_b04_new_plan", workspace=local_workspace)
+        with use_agent_context(context):
+            local_workspace.add("sales__raw", pd.DataFrame({"date": pd.date_range("2026-01-01", periods=2), "revenue": [10, 20]}))
+            local_workspace.derive(
+                "sales__raw", "sales", local_workspace.get("sales__raw"), "initial version",
+            )
+            v1 = local_workspace.get_data_identity("sales")
+            state = _relation_state("runtime_b04_new_plan")
+            _produce_b04_current_relation_metadata(context, state, local_workspace)
+            state.analysis_plan = {"id": "plan_v1"}
+            first = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state)
+            old_id = hydrate_hypothesis_refs([first])[0]["hypotheses"][0]["id"]
+            record = _binding_evidence("ev_old", old_id, v1["fingerprint"])
+            record["plan_id"] = "plan_v1"
+            state.evidence_records = [record]
+            maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state)
+            assert hydrate_hypothesis_refs([state.hypothesis_sets[0]])[0]["hypotheses"][0]["status"] == "supported"
+
+            assert local_workspace.archive_version("sales") == "sales__history"
+            local_workspace.add("sales__raw_2", pd.DataFrame({"date": pd.date_range("2026-01-01", periods=2), "revenue": [10, 10]}))
+            local_workspace.derive(
+                "sales__raw_2", "sales", local_workspace.get("sales__raw_2"), "new version",
+            )
+            _produce_b04_current_relation_metadata(context, state, local_workspace)
+            state.analysis_plan = {"id": "plan_v2"}
+            maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state)
+            assert len(state.hypothesis_sets) == 2
+            old = hydrate_hypothesis_refs([state.hypothesis_sets[0]])[0]
+            assert old["hypotheses"][0]["status"] == "stale"
+            assert old["hypotheses"][0]["evidence_relations"] == []
+            assert old["evidence_exclusions"][0]["evidence_id"] == "ev_old"
+            new = hydrate_hypothesis_refs([state.hypothesis_sets[1]])[0]
+            assert new["hypotheses"][0]["status"] != "supported"
+            maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state)
+            old_again = hydrate_hypothesis_refs([state.hypothesis_sets[0]])[0]
+            assert old_again["hypotheses"][0]["status"] == "stale"
+            assert old_again["hypotheses"][0]["evidence_relations"] == []
+            assert state.evidence_records == [record]
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_b04_same_plan_other_route_also_loses_old_version_verdict(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.session.workspace import Workspace
+    import pandas as pd
+
+    monkeypatch.setattr(
+        "data_agent.agent.hypotheses.receipt_verified_hypothesis_measurements",
+        _verified_measurements_for_lifecycle,
+    )
+    route = {"value": "trend"}
+    monkeypatch.setattr(
+        "data_agent.agent.analysis_entry.decide_analysis_entry",
+        lambda *_args: {"decision": "direct_analysis", "dataset": "sales", "route": route["value"]},
+    )
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        local_workspace = Workspace()
+        context = AgentContext(session_id="runtime_b04_other_route", workspace=local_workspace)
+        with use_agent_context(context):
+            local_workspace.add("sales__raw", pd.DataFrame({"date": pd.date_range("2026-01-01", periods=2), "revenue": [10, 20]}))
+            local_workspace.derive("sales__raw", "sales", local_workspace.get("sales__raw"), "v1")
+            v1 = local_workspace.get_data_identity("sales")
+            state = _relation_state("runtime_b04_other_route")
+            state.analysis_plan = {"id": "same_plan"}
+            first = maybe_create_hypothesis_set("revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state)
+            primary_id = hydrate_hypothesis_refs([first])[0]["hypotheses"][0]["id"]
+            record = _binding_evidence("ev_same_plan_old", primary_id, v1["fingerprint"])
+            record["plan_id"] = "same_plan"
+            state.evidence_records = [record]
+            maybe_create_hypothesis_set("revenue trend", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state)
+            assert hydrate_hypothesis_refs([state.hypothesis_sets[0]])[0]["hypotheses"][0]["status"] == "supported"
+
+            assert local_workspace.archive_version("sales") == "sales__history"
+            local_workspace.add("sales__raw_2", pd.DataFrame({"date": pd.date_range("2026-01-01", periods=2), "revenue": [10, 10]}))
+            local_workspace.derive("sales__raw_2", "sales", local_workspace.get("sales__raw_2"), "v2")
+            route["value"] = "distribution"
+            maybe_create_hypothesis_set("revenue distribution", _intent("directed_analysis", clarity="clear", recommended_action="run_analysis"), state)
+            assert len(state.hypothesis_sets) == 2
+            old = hydrate_hypothesis_refs([state.hypothesis_sets[0]])[0]
+            assert old["hypotheses"][0]["status"] == "stale"
+            assert old["evidence_exclusions"][0]["evidence_id"] == "ev_same_plan_old"
+            assert state.hypothesis_sets[1]["route"] == "distribution"
     finally:
         cfg.sessions_dir = old_sessions

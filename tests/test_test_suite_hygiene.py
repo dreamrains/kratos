@@ -19,6 +19,9 @@ NON_TEST_SUPPORT_MODULES = {
     "tests/conftest.py",
     "tests/support/__init__.py",
     "tests/support/real_data_manifest.py",
+    "tests/support/publication_runtime.py",  # Extracted shared models/fixtures;no tests are hidden here.
+    "tests/support/plan_inputs.py",  # Canonical history/goal setup shared by plan tests.
+    "tests/support/rendered_text.py",  # Visible Markdown/table observer only; no test functions or exclusions.
 }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from data_agent.tools.evidence_input import EVIDENCE_INPUT_SCHEMA
+from data_agent.agent.analysis_plan_contracts import analysis_plan_schema
 
 import json
 from datetime import datetime
@@ -31,187 +32,6 @@ def _mark_statistical_detail_status(payload: dict) -> dict:
     payload["statistical_detail_gaps"] = gaps
     payload["statistical_detail_status"] = "complete" if not gaps else "missing"
     return payload
-
-_INFERENTIAL_METHOD_MARKERS = (
-    "ab_test", "causal", "did", "difference_in_differences", "t检验", "t-test",
-    "chi", "卡方", "anova", "回归", "regression", "相关分析", "correlation",
-    "显著性", "检验", "forecast", "预测模型", "arima", "wilcoxon", "z检验",
-)
-_INFERENTIAL_STAT_FIELDS = ("significance", "p_value", "confidence_interval", "correlation", "effect_size")
-# An unscoped popularity superlative ("最受欢迎的商品") asserts a population
-# property; scoping wording ("这5条记录内") keeps it a record-level fact.
-_POPULATION_SUPERLATIVES = ("最受欢迎", "最热门", "最畅销", "最流行", "最主流", "大家最爱")
-_RECORD_SCOPE_MARKERS = (
-    "记录内", "样本内", "当前数据", "本表", "已读", "条记录", "这批", "本次导入",
-    "当前筛选", "当前加载", "records", "rows",
-)
-
-
-def _unscoped_population_superlative(claim: str) -> bool:
-    text = str(claim or "")
-    if not any(marker in text for marker in _POPULATION_SUPERLATIVES):
-        return False
-    return not any(marker in text for marker in _RECORD_SCOPE_MARKERS)
-
-
-def _infer_statistical_inference(payload: dict) -> bool:
-    """Host-side classification: does this record make an inferential claim?
-
-    Presence of executed test statistics, an inferential method, significance
-    wording in the claim itself, or an unscoped population superlative marks
-    the record inferential; a plain descriptive total stays descriptive even
-    when the model never said either way.
-    """
-    for field in _INFERENTIAL_STAT_FIELDS:
-        value = payload.get(field)
-        if isinstance(value, (int, float)):
-            return True
-        if isinstance(value, str) and value.strip() and value.strip().lower() not in {"unknown", "n/a", "na"}:
-            return True
-    method = str(payload.get("method", "")).lower()
-    if any(marker in method for marker in _INFERENTIAL_METHOD_MARKERS):
-        return True
-    claim = str(payload.get("claim", "")).lower()
-    if any(word in claim for word in ("显著", "significant", "p值", "p-value", "置信区间")):
-        return True
-    return _unscoped_population_superlative(claim)
-
-
-def _effective_statistical_inference(payload: dict) -> bool:
-    value = payload.get("statistical_inference")
-    if isinstance(value, bool):
-        return value
-    return _infer_statistical_inference(payload)
-
-
-def _observation_window_days(time_scope: str) -> float | None:
-    """Structured window length in days, or None when unparseable.
-
-    An unparseable window must not produce a fabricated adequacy/shortness
-    claim; the caller skips the auto-limitation instead.
-    """
-    import re as _re
-
-    text = str(time_scope or "").strip()
-    if not text:
-        return None
-    match = _re.search(r"(\d+(?:\.\d+)?)\s*(?:个?月|months?)", text, _re.I)
-    if match:
-        return float(match.group(1)) * 30
-    match = _re.search(r"(\d+(?:\.\d+)?)\s*(?:天|日|days?)", text, _re.I)
-    if match:
-        return float(match.group(1))
-    match = _re.search(r"(\d+(?:\.\d+)?)\s*周", text)
-    if match:
-        return float(match.group(1)) * 7
-    match = _re.search(r"(\d+(?:\.\d+)?)\s*年", text)
-    if match:
-        return float(match.group(1)) * 365
-    dates = _re.findall(r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})", text)
-    if len(dates) >= 2:
-        try:
-            from datetime import date as _date
-
-            parsed = [_date(int(y), int(m), int(d)) for y, m, d in dates[:2]]
-            return abs((parsed[1] - parsed[0]).days)
-        except ValueError:
-            return None
-    return None
-
-
-def _auto_generate_limitations(payload: dict) -> list[str]:
-    """Auto-generate common limitations based on analysis context."""
-    auto = []
-    method = str(payload.get("method", "")).lower()
-    limitations = payload.get("limitations", [])
-    inferential = _effective_statistical_inference(payload)
-
-    # Before/after comparison without control group
-    if any(kw in method for kw in ["before_after", "前后对比", "period_compare", "compare_periods"]):
-        if not any("对照" in l for l in limitations):
-            auto.append("无对照组/随机化，结论为描述性关联而非因果关系")
-
-    # Small sample limits statistical power only for inferential claims; an
-    # exact descriptive total over the records at hand is not weakened by n<30.
-    sample_size = payload.get("sample_size")
-    if sample_size and inferential:
-        try:
-            n = int(str(sample_size).replace(",", "").split()[0])
-            if n < 30:
-                if not any("样本" in l for l in limitations):
-                    auto.append(f"样本量({n})不足30，统计功效有限")
-            elif n < 100:
-                if not any("样本" in l for l in limitations):
-                    auto.append(f"样本量({n})较小，结论泛化需谨慎")
-        except (ValueError, TypeError):
-            pass
-
-    # A record that words its claim about the whole population — explicitly
-    # or via an unscoped superlative — still cannot generalize; keep the
-    # scope boundary explicit.
-    claim_text = str(payload.get("claim", ""))
-    claims_population = any(
-        marker in claim_text
-        for marker in ("总体", "全部", "所有", "整体市场", "全量", "整体用户")
-    ) or _unscoped_population_superlative(claim_text)
-    if claims_population:
-        if not any("总体" in l or "外推" in l for l in limitations):
-            auto.append("记录内描述性结果不能外推到总体；如需总体结论需抽样依据或全量数据")
-
-    # Short observation period, judged from a structured window length
-    window_days = _observation_window_days(str(payload.get("time_scope", "")))
-    if window_days is not None and window_days < 60:
-        if not any("时间" in l or "观察" in l for l in limitations):
-            auto.append("观察期较短，可能受短期波动影响")
-
-    # Missing statistical significance
-    significance = str(payload.get("significance", ""))
-    if inferential and (not significance or significance in ("unknown", "")):
-        if not any("统计" in l or "显著" in l for l in limitations):
-            auto.append("未报告统计显著性，差异可能由随机波动导致")
-
-    return auto
-
-
-def _calibrate_confidence(payload: dict) -> list[str]:
-    """Auto-calibrate confidence based on evidence quality signals.
-
-    Returns list of warning strings if confidence should be downgraded.
-    Only calibrates when confidence is "high" — lower levels are kept as-is.
-    Sample-size calibration applies to inferential claims only: a verified
-    descriptive total is not downgraded merely for n<30.
-    """
-    confidence = payload.get("confidence", "")
-    if confidence != "high":
-        return []
-
-    warnings: list[str] = []
-    inferential = _effective_statistical_inference(payload)
-
-    # Check sample size
-    sample_size = payload.get("sample_size")
-    if sample_size is not None and inferential:
-        try:
-            n = int(str(sample_size).replace(",", "").split()[0])
-            if n < 30:
-                warnings.append(f"样本量({n})不足30，高置信度不适用")
-        except (ValueError, TypeError):
-            pass
-
-    # Check significance
-    significance = str(payload.get("significance", "")).lower()
-    if significance and "not significant" in significance:
-        warnings.append("统计不显著，不应标记高置信度")
-    elif significance and "p>" in significance:
-        warnings.append("p值大于0.05，不应标记高置信度")
-
-    # Check for missing limitations
-    limitations = payload.get("limitations")
-    if not limitations:
-        warnings.append("未声明任何局限性，高置信度需要已知限制说明")
-
-    return warnings
-
 
 def _session_id() -> str:
     try:
@@ -309,6 +129,64 @@ def _write_analysis_artifact(kind: str, payload: dict) -> dict:
     return {"saved": artifact_path, "type": kind, "payload": payload}
 
 
+def _persist_analysis_record(kind: str, payload: dict) -> dict:
+    """Commit an analysis record with its existing state, artifact and manifest."""
+    from copy import deepcopy
+    import hashlib
+    from data_agent.config import get_config
+    from data_agent.session.history import list_artifacts
+    from data_agent.utils.atomic_files import rollback_atomic_writes
+
+    sid = _session_id()
+    if not sid:
+        return {"error": "无当前会话，无法保存分析产物"}
+    state = _current_state()
+    before = deepcopy(vars(state)) if state is not None else None
+    try:
+        with rollback_atomic_writes():
+            if state is not None:
+                if kind == "data_requirement":
+                    payload = state.add_data_requirement(payload)
+                elif kind == "analysis_spec":
+                    payload = state.set_analysis_spec(payload)
+                elif kind == "evidence_record":
+                    payload = (state.upsert_evidence_record(payload)
+                               if payload.get("plan_id") and "measurements" in payload
+                               else state.add_evidence_record(payload))
+                else:
+                    raise ValueError("Unsupported analysis record kind")
+            result = _write_analysis_artifact(kind, payload)
+            if state is not None:
+                if kind == "evidence_record":
+                    payload["artifact_path"] = result.get("saved", "")
+                state_path = state.save()
+                if json.loads(state_path.read_text(encoding="utf-8")) != state.to_dict():
+                    raise ValueError("Analysis state readback mismatch")
+            content = json.dumps({k: v for k, v in payload.items() if k != "artifact_path"},
+                                 ensure_ascii=False, sort_keys=True, indent=2)
+            digest = hashlib.sha256((kind + "\0" + content).encode("utf-8")).hexdigest()
+            expected = f"sessions/{sid}/analysis_flow/af_{digest[:40]}.json"
+            path = get_config().sessions_resolved / sid / "analysis_flow" / f"af_{digest[:40]}.json"
+            if result.get("saved") != expected or result.get("type") != kind:
+                raise ValueError("Analysis artifact identity mismatch")
+            if path.read_text(encoding="utf-8") != content:
+                raise ValueError("Analysis artifact readback mismatch")
+            identity = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            description = payload.get("goal") or payload.get("claim") or kind
+            if not any(item.get("path") == expected and item.get("type") == kind
+                       and item.get("sha256") == identity and item.get("description") == description
+                       for item in list_artifacts(sid)):
+                raise ValueError("Analysis artifact manifest mismatch")
+            if state is not None:
+                result["state_stage"] = state.stage
+            return result
+    except BaseException:
+        if state is not None:
+            vars(state).clear()
+            vars(state).update(before)
+        raise
+
+
 @registry.register(
     name="record_data_requirement",
     description=(
@@ -321,6 +199,8 @@ def record_data_requirement(requirement_json: str) -> str:
         payload = json.loads(requirement_json)
     except json.JSONDecodeError:
         return json.dumps({"error": "requirement_json 必须是有效 JSON"}, ensure_ascii=False)
+    if not isinstance(payload, dict):
+        return json.dumps({"error": "requirement_json 必须是 JSON 对象"}, ensure_ascii=False)
     required = [
         "goal",
         "must_have_data",
@@ -333,16 +213,10 @@ def record_data_requirement(requirement_json: str) -> str:
     if missing:
         return json.dumps({"error": f"DataRequirement 缺少字段: {missing}"}, ensure_ascii=False)
 
-    state = _current_state()
-    if state is not None:
-        payload = state.add_data_requirement(payload)
-        state.save()
-
-    result = _write_analysis_artifact("data_requirement", payload)
-    result.pop("payload", None)
-    if state is not None:
-        result["state_stage"] = state.stage
-        result["requirement_id"] = payload.get("id")
+    result = _persist_analysis_record("data_requirement", payload)
+    saved_payload = result.pop("payload", None)
+    if "state_stage" in result:
+        result["requirement_id"] = saved_payload.get("id")
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -358,37 +232,21 @@ def record_analysis_spec(spec_json: str) -> str:
         payload = json.loads(spec_json)
     except json.JSONDecodeError:
         return json.dumps({"error": "spec_json 必须是有效 JSON"}, ensure_ascii=False)
+    if not isinstance(payload, dict):
+        return json.dumps({"error": "spec_json 必须是 JSON 对象"}, ensure_ascii=False)
     required = ["goal", "question_type", "metrics", "dimensions", "required_data", "method_plan", "limitations"]
     missing = [k for k in required if k not in payload]
     if missing:
         return json.dumps({"error": f"AnalysisSpec 缺少字段: {missing}"}, ensure_ascii=False)
 
-    state = _current_state()
-    if state is not None:
-        payload = state.set_analysis_plan(payload)
-        state.save()
+    if payload.get("contract_version"):
+        return json.dumps({"error":"Executable plans must use record_analysis_plan.","error_type":"analysis_spec_display_only"})
+    result = _persist_analysis_record("analysis_spec", payload)
+    saved_payload = result.pop("payload", None)
+    if "state_stage" in result:
+        result["analysis_spec_id"] = saved_payload.get("id")
 
-    result = _write_analysis_artifact("analysis_spec", payload)
-    result.pop("payload", None)
-    if state is not None:
-        result["state_stage"] = state.stage
-        result["analysis_spec_id"] = payload.get("id")
-
-    from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
-
-    if payload.get("contract_version") == STAGE3C0B_CONTRACT_VERSION:
-        try:
-            from data_agent.tools.task_tools import create_workflow_tasks_from_spec
-            result["workflow"] = create_workflow_tasks_from_spec(payload)
-        except Exception as e:
-            result["workflow_error"] = str(e)
-    else:
-        result["workflow"] = {
-            "created": 0,
-            "task_ids": [],
-            "display_only": True,
-            "reason": "legacy_analysis_spec_display_only",
-        }
+    result["workflow"] = {"created":0,"task_ids":[],"reason":"legacy_analysis_spec_display_only","display_only":True}
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -396,34 +254,13 @@ def record_analysis_spec(spec_json: str) -> str:
     name="record_analysis_plan",
     description=(
         "Save an executable Stage 3C0B AnalysisPlan before recording plan-scoped evidence. Required top-level "
-        "fields: contract_version='stage3c0b.v1', goal, method_plan, visualization_strategy. Every method_plan "
-        "item is an object requiring goal, expected_output, evidence_requirements, and dataset_inputs. An "
-        "independent item binds exactly one current dataset; a synthesis item uses combination_mode='synthesis', "
+        "fields: requirement_revision (exact current revision), contract_version='stage3c0b.v2', goal and method_plan; visualization_strategy is optional. Every method_plan "
+        "item requires goal, expected_output, evidence_requirements, dataset_inputs and required_deliveries=[{requirement_id,kind,label,scope}]. Use original active requirement IDs and business deliveries, never tool/statistic/result-path selectors. Operation kind uses scope.operation={action:registered operation name,arguments:exact invocation parameters}; dataset operations also bind datasets; file/skill-only steps use dataset_inputs=[]. Effects are not data claims. Directory metadata uses table with scope.parameters.catalog_scope=current_visible and catalog_output=datasets/transform_history; a real empty visible scope can bind datasets=[] and dataset_inputs=[] without inventing a data version. File excerpt/catalogue uses table parameters.file_scope=current_readable and file_output=content (file_path,file_offset, optional file_limit/file_max_chars/file_sha256) or entries (file_pattern), with datasets=[] and dataset_inputs=[]. Host verifies current session/path permissions, SHA and exact page/enumeration scope; this does not verify conclusions within the file. Ordinary measurements still require actual datasets. Host assigns delivery IDs; reuse existing deliveries with {id} instead of repeating labels. A replan cannot narrow its goals. An "
+        "independent item binds 1 to 16 explicit current datasets; a synthesis item uses combination_mode='synthesis', "
         "dataset_inputs=[], and required_evidence_step_ids. Use the returned analysis_plan_id as evidence plan_id "
         "and the normalized step_id as evidence step_id."
     ),
-    schema_overrides={"plan_json": {
-        "type": ["object", "string"],
-        "description": "Analysis plan object, or a JSON-encoded object for compatibility.",
-        "properties": {
-            "contract_version": {"type": "string", "enum": ["stage3c0b.v1"]},
-            "goal": {"type": "string", "minLength": 1},
-            "method_plan": {"type": "array", "minItems": 1, "items": {
-                "type": "object",
-                "required": ["goal", "expected_output", "evidence_requirements", "dataset_inputs"],
-                "properties": {
-                    "step_id": {"type": "string"},
-                    "goal": {"type": "string", "minLength": 1},
-                    "expected_output": {"type": "string", "minLength": 1},
-                    "evidence_requirements": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-                    "dataset_inputs": {"type": "array", "items": {"type": "string"}},
-                    "combination_mode": {"type": "string", "enum": ["independent", "synthesis"]},
-                    "required_evidence_step_ids": {"type": "array", "items": {"type": "string"}},
-                },
-            }},
-            "visualization_strategy": {"type": "array"},
-        },
-    }},
+    schema_overrides={"plan_json": analysis_plan_schema()},
 )
 def record_analysis_plan(plan_json: str | dict) -> str:
     try:
@@ -432,19 +269,21 @@ def record_analysis_plan(plan_json: str | dict) -> str:
         return json.dumps({"error": "plan_json must be valid JSON"}, ensure_ascii=False)
     if not isinstance(payload, dict):
         return json.dumps({"error": "AnalysisPlan must be a JSON object."}, ensure_ascii=False)
-    required = ["goal", "method_plan", "visualization_strategy"]
-    missing = [k for k in required if k not in payload]
-    if missing:
-        return json.dumps({"error": f"AnalysisPlan missing fields: {missing}"}, ensure_ascii=False)
-
     state = _current_state()
     if payload.get("contract_version"):
         from data_agent.agent.analysis_plan_contracts import validate_analysis_plan_contract
 
         dataset_contracts = None
         if state is not None:
-            dataset_contracts = list(getattr(state, "dataset_contracts", []) or [])
-        validation = validate_analysis_plan_contract(payload, dataset_contracts=dataset_contracts)
+            from data_agent.agent.artifact_refs import hydrate_refs
+            dataset_contracts = hydrate_refs(list(getattr(state, "dataset_contracts", []) or []))
+        from data_agent.session.history import load_canonical_history
+        validation = validate_analysis_plan_contract(
+            payload, dataset_contracts=dataset_contracts,
+            answer_requirements=state.answer_requirements if state is not None else None,
+            requirement_revision=state.requirement_revision if state is not None else None,
+            canonical_history=load_canonical_history(state.session_id) if state is not None else None,
+        )
         if not validation.ok:
             return json.dumps({
                 "error": validation.message,
@@ -460,34 +299,66 @@ def record_analysis_plan(plan_json: str | dict) -> str:
             "error_type": "legacy_plan_display_only",
         }, ensure_ascii=False)
 
-    # Optional fields - pass through if present
-    _valid_depths = {"lightweight", "standard", "comprehensive"}
-    if payload.get("depth") is not None:
-        depth = str(payload["depth"]).strip().lower()
-        if depth not in _valid_depths:
-            return json.dumps({
-                "error": f"Invalid depth: {payload.get('depth')}",
-                "error_type": "invalid_depth",
-                "allowed": sorted(_valid_depths),
-            }, ensure_ascii=False)
-        payload["depth"] = depth
-    # expected_dimensions is optional - just pass through if present
-
     if state is not None:
-        payload = state.set_analysis_plan(payload)
-        state.save()
+        from copy import deepcopy
+        before = deepcopy((state.answer_requirements, state.requirement_revision, state.analysis_plan, state.analysis_spec, state.goal, state.stage))
+        try:
+            from data_agent.session.workspace import workspace
+            from data_agent.agent.publication.requirements import target_datasets
+            planned_requirements={d["requirement_id"] for step in payload["method_plan"] for d in step["required_deliveries"]}
+            for req in validation.requirements:
+                if req.get("lifecycle_status") != "active" or req["id"] not in planned_requirements: continue
+                expected=req.setdefault("source_data_identities",{})
+                for name in target_datasets(req):
+                    identity=workspace._publication_data_identity(name)
+                    pending=req.get("source_binding",{})
+                    if pending.get("status")=="pending" and (name in pending.get("required_load_datasets", []) or identity!=pending.get("initial_data_identities",{}).get(name)):
+                        receipt_id=pending.get("verified_load_receipts",{}).get(name)
+                        loaded=next((r for r in state.tool_receipts if r.get("id")==receipt_id),None)
+                        if not loaded or not workspace._receipt_identity_matches(name,loaded.get("data_identities",{}).get(name,{})):
+                            from data_agent.agent.publication.contracts import ContractError
+                            raise ContractError("replacement_source_unverified","替换目标的新来源尚无成功加载核验。")
+                    if name in expected and identity!=expected[name]:
+                        from data_agent.agent.publication.contracts import ContractError
+                        raise ContractError("requirement_version","Original business source version changed; replace the original requirement first.")
+                    if identity: expected[name]=identity
+                if req.get("source_binding",{}).get("status")=="pending":
+                    if not target_datasets(req) or any(n not in expected for n in target_datasets(req)):
+                        from data_agent.agent.publication.contracts import ContractError
+                        raise ContractError("replacement_source_unverified","替换目标的来源尚未加载。")
+                    req["source_binding"]["status"]="frozen"
+            if state.answer_requirements != validation.requirements:
+                state.answer_requirements = validation.requirements
+                state.requirement_revision += 1
+            from data_agent.session.task_manager import task_manager
+            from data_agent.tools.task_tools import create_workflow_tasks_from_spec
+            with task_manager.plan_transaction():
+                payload = state.set_analysis_plan(payload)
+                workflow = create_workflow_tasks_from_spec(payload)
+                if workflow.get("error"):raise ValueError(workflow["error"])
+                result = _write_analysis_artifact("analysis_plan", payload)
+                state.save()
+        except Exception as exc:
+            (state.answer_requirements, state.requirement_revision, state.analysis_plan, state.analysis_spec, state.goal, state.stage) = before
+            from data_agent.agent.publication.contracts import ContractError
+            if isinstance(exc,ContractError):
+                return json.dumps({"error":str(exc),"error_type":exc.code,"details":{"stage":"plan_source_binding"}},ensure_ascii=False)
+            raise
 
-    result = _write_analysis_artifact("analysis_plan", payload)
+    if state is None:result = _write_analysis_artifact("analysis_plan", payload)
     result.pop("payload", None)
     result["analysis_plan_id"] = payload.get("id")
+    result["plan_sha256"] = payload["plan_sha256"]
+    result["required_deliveries"] = [d for step in payload["method_plan"] for d in step["required_deliveries"]]
+    if state is not None:
+        result["requirement_revision"] = state.requirement_revision
+        from data_agent.agent.context import get_current_context
+        ctx = get_current_context()
+        if ctx is not None: ctx.requirement_revision = state.requirement_revision
     if state is not None:
         result["state_stage"] = state.stage
 
-    try:
-        from data_agent.tools.task_tools import create_workflow_tasks_from_spec
-        result["workflow"] = create_workflow_tasks_from_spec(payload)
-    except Exception as e:
-        result["workflow_error"] = str(e)
+    result["workflow"] = workflow if state is not None else {"created":0,"task_ids":[],"reason":"no_session_state"}
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -522,12 +393,10 @@ def record_evidence_record(record_json: str | dict) -> str:
     payload = dict(payload)
     for derived_key in ("statistical_detail_required_fields", "statistical_inference", "computed_statistics_sources",
                         "statistical_projection_gaps", "reported_statistical_details", "sample_size_source",
-                        "time_scope_source"):
+                        "time_scope_source", "auto_generated_limitations", "calibration_warnings",
+                        "confidence_auto_downgraded", "original_confidence"):
         payload.pop(derived_key, None)
-    # The model never self-declares this flag: the host classifies claim type
-    # from executed statistics and method so descriptive totals are not hit by
-    # inferential-sample rules (C01) and inferential records keep them (C08).
-    payload["statistical_inference"] = _infer_statistical_inference(payload)
+    payload["statistical_inference"] = False  # Updated only by actual bound statistics below.
 
     from data_agent.tools.evidence_input import validate_input, EVIDENCE_INPUT_SCHEMA
     if all(key in payload for key in EVIDENCE_INPUT_SCHEMA["required"]):
@@ -621,9 +490,22 @@ def record_evidence_record(record_json: str | dict) -> str:
                 "error_type": "missing_tool_receipt",
             }, ensure_ascii=False)
         from data_agent.session.workspace import workspace
+        if requested_receipts is None:
+            current_receipts = [
+                receipt for receipt in bound_receipts
+                if all(workspace._receipt_identity_matches(name, identity)
+                       for name, identity in receipt.get("data_identities", {}).items())
+            ]
+            # A source may be reloaded and the same tool run again in one turn.
+            # Keep every current independent result, but do not bind an older
+            # source version to a new EvidenceRecord by tool name alone.
+            if (current_receipts and len(current_receipts) != len(bound_receipts)
+                    and any(payload["dataset"] in receipt.get("data_identities", {})
+                            for receipt in current_receipts)):
+                bound_receipts = current_receipts
         for receipt in bound_receipts:
             for name, identity in receipt.get("data_identities", {}).items():
-                if workspace.get_data_identity(name) != identity:
+                if not workspace._receipt_identity_matches(name, identity):
                     return json.dumps({"error": "Tool result belongs to an earlier data version", "error_type": "stale_data_binding", "dataset": name})
         payload["tool_receipt_ids"] = [str(receipt["id"]) for receipt in bound_receipts]
         payload["result_bindings"] = [
@@ -647,16 +529,6 @@ def record_evidence_record(record_json: str | dict) -> str:
             "allowed": sorted(allowed_confidence),
         }, ensure_ascii=False)
     payload["confidence"] = confidence
-
-    # Phase 3: Auto-calibrate confidence based on evidence quality
-    calibration_warnings = _calibrate_confidence(payload)
-    if calibration_warnings:
-        payload["calibration_warnings"] = calibration_warnings
-        original = payload["confidence"]
-        if original == "high":
-            payload["confidence"] = "medium"
-            payload["confidence_auto_downgraded"] = True
-            payload["original_confidence"] = original
 
     # Optional fields - pass through if present
     if payload.get("competing_hypotheses") is not None:
@@ -702,21 +574,8 @@ def record_evidence_record(record_json: str | dict) -> str:
     if not is_stage3c0b_evidence:
         _mark_statistical_detail_status(payload)
 
-    # Auto-generate limitations based on analysis context
-    auto_lim = _auto_generate_limitations(payload)
-    if auto_lim:
-        payload["auto_generated_limitations"] = auto_lim
-
-    if state is not None:
-        if payload.get("plan_id") and "measurements" in payload:
-            payload = state.upsert_evidence_record(payload)
-        else:
-            payload = state.add_evidence_record(payload)
-    result = _write_analysis_artifact("evidence_record", payload)
-    if state is not None:
-        payload["artifact_path"] = result.get("saved", "")
-        state.save()
-    result.pop("payload", None)
+    result = _persist_analysis_record("evidence_record", payload)
+    payload = result.pop("payload", payload)
     if state is not None:
         result["state_stage"] = state.stage
         result["evidence_id"] = payload.get("id")
@@ -736,27 +595,18 @@ def record_evidence_record(record_json: str | dict) -> str:
         result["statistical_detail_status"] = payload.get("statistical_detail_status")
         result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
         result["statistical_projection_gaps"] = payload.get("statistical_projection_gaps", [])
-    if auto_lim:
-        result["auto_generated_limitations"] = auto_lim
-    if calibration_warnings:
-        result["calibration_warnings"] = calibration_warnings
-        if payload.get("confidence_auto_downgraded"):
-            result["confidence_auto_downgraded"] = True
-            result["original_confidence"] = payload.get("original_confidence")
     return json.dumps(result, ensure_ascii=False)
 
 
 @registry.register(
     name="get_analysis_summary",
-    description="Read-only query: get a structured summary of the current analysis state including evidence records, insights, and stage. Use in conversation mode to answer questions about previous analysis results.",
+    description="Read-only query: get a structured summary of the current analysis state including evidence records, insights, and stage. Use in conversation mode to answer questions about previous analysis results. Navigation only: recorded claims and confidence are research annotations, not current verified data facts.",
 )
 def get_analysis_summary() -> str:
     """Return a structured summary of current analysis state for conversation mode."""
     state = _current_state()
     if state is None:
         return json.dumps({"info": "No active analysis state found"}, ensure_ascii=False)
-
-    from data_agent.agent.analysis_state import analysis_state_summary
 
     summary_parts: dict[str, object] = {
         "stage": state.stage,
@@ -774,7 +624,7 @@ def get_analysis_summary() -> str:
                 "confidence": rec.get("confidence", ""),
                 "method": rec.get("method", ""),
             }
-            if rec.get("sample_size"):
+            if rec.get("sample_size") is not None:
                 entry["sample_size"] = rec.get("sample_size")
             evidence_summary.append(entry)
         summary_parts["evidence_records"] = evidence_summary
@@ -803,3 +653,19 @@ def get_analysis_summary() -> str:
         summary_parts["plan_goal"] = state.analysis_plan.get("goal", "")
 
     return json.dumps(summary_parts, ensure_ascii=False)
+
+
+@registry.register(
+    name="record_answer_targets",
+    description="Select verified host catalogue IDs for existing necessary delivery IDs. No tools, statistics, paths, values or completion declarations. target_json={requirement_revision,bindings:[{delivery_id,catalogue_ids}]}. The host revalidates original source versions, business scope and type.",
+    schema_overrides={"target_json":{"type":"object","additionalProperties":False,"required":["requirement_revision","bindings"],"properties":{"requirement_revision":{"type":"integer"},"bindings":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"object","additionalProperties":False,"required":["delivery_id","catalogue_ids"],"properties":{"delivery_id":{"type":"string"},"catalogue_ids":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string"}}}}}}}},
+)
+def record_answer_targets(target_json: dict) -> str:
+    from data_agent.agent.context import get_current_context
+    from data_agent.session.history import load_canonical_history
+    from data_agent.agent.publication.requirements import record_execution_targets
+    ctx=get_current_context()
+    if ctx is None: raise ValueError("目标登记需要当前会话。")
+    result=record_execution_targets(ctx.analysis_state,load_canonical_history(ctx.session_id),ctx.workspace,target_json)
+    ctx.requirement_revision=ctx.analysis_state.requirement_revision
+    return json.dumps(result,ensure_ascii=False)

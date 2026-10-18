@@ -229,6 +229,9 @@ def validate_derived_measurements(
     """Recompute a closed set of operations; arbitrary expressions are never executed."""
     if not isinstance(derived, list):
         return _error("invalid_derived_measurements", "derived_measurements must be an array.")
+    keys = [_measurement_ref(item, index) for index, item in enumerate(measurements) if isinstance(item, dict)]
+    if len(keys) != len(set(keys)):
+        return _error("ambiguous_derived_operand", "Canonical operand identities must be unique within this EvidenceRecord.")
     operands = {
         _measurement_ref(item, index): item
         for index, item in enumerate(measurements)
@@ -244,6 +247,8 @@ def validate_derived_measurements(
             return _error("invalid_derived_operation", "Derived operation or operand_refs is invalid.", index=index)
         if any(str(ref) not in operands for ref in refs):
             return _error("unbound_derived_operand", "Derived operand does not belong to this EvidenceRecord.", index=index)
+        if operation in {"difference", "ratio", "percent_change", "percentage_point_change"} and len(refs) != 2:
+            return _error("invalid_derived_arity", "This derived operation requires exactly two operands.", index=index)
         source = [operands[str(ref)] for ref in refs]
         values = [_decimal(entry.get("value")) for entry in source]
         if any(value is None for value in values):

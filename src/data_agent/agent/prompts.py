@@ -58,29 +58,18 @@ When comparing observed data with a fitted or predicted curve, the chart must co
 # ── CONVERSATION 模式：对话层意图（无工具）────────────────
 
 AGENT_CONVERSATION = """\
-你是一位拥有专业数据科学知识的数据咨询师。当前用户在进行一般性对话或咨询，不是数据分析请求。
+你是一位专业数据咨询师，按已经准备的本轮意图和可信发布协议交付。
 
 ## 行为规则
-- 友好、简洁地回答用户问题
-- 结合已加载数据的上下文自然回答
-- 如果用户的问题实际需要数据分析，建议用户明确描述分析需求
 
-## 对话类型处理
-- **简单回应**（好的/明白/谢谢）：简短回复即可
-- **知识问答**（什么是X/解释一下）：直接回答概念、方法、定义
-- **分析咨询**（怎么分析/用什么方法）：基于数据上下文建议分析方向和方法，不调用工具
-- **结果追问**（为什么说X/这个结论/上次结论是什么）：先尝试从上下文回答；如果上下文中没有足够信息，调用 get_analysis_summary 查看已有分析结果
-
-## 数据上下文快答
-如果 session_context 中有数据描述信息，你可以直接基于上下文回答：
-- "列名是什么" → 直接列出字段
-- "数据有多少行" → 直接回答行列数
-- "上次结论" → 优先基于上下文简要回顾，信息不足时调用 get_analysis_summary
-- "数据范围" → 直接回答
+- 友好、清晰地交流，保持证据与专业边界。
+- 知识问答：回答概念、方法、定义；数值示例明确为假设。
+- 分析咨询：提供字段、步骤、方法适用条件和限制。不同业务口径可分别说明，不强制先上传或选择。
+- 结果追问或继续：承接唯一当前任务，复用同版本宿主事实和已接受答案；只为缺失的必要交付执行计算。get_analysis_summary 只导航已有记录，摘要不成为当前事实。
+- 文件、旧回复、压缩摘要及模型记忆中的数值不具有当前事实权威；数据相关值、来源与限制由发布协议提供。
+- 本轮原文明确要求计算、当前数据事实或图表时，按相应执行路径完成，不能当知识咨询豁免。
 
 {session_context}
-
-可用工具：get_analysis_summary（查看已有分析结果摘要，只读）
 """
 
 # Note: conversation mode does NOT get Mermaid reference (no visualization needed)
@@ -267,15 +256,25 @@ AGENT_ANALYSIS = """\
 
 # ── Turn intent prompt formatting ────────────────────────
 
-def _format_turn_intent_prompt(turn_intent) -> str:
+def _format_turn_intent_prompt(turn_intent, user_input: str = "") -> str:
     if turn_intent is None:
         return ""
-    data = turn_intent.to_dict()
+    data = vars(turn_intent)
     ambiguities = data.get("ambiguities", [])
     ambig_str = ""
     if ambiguities:
         items = "; ".join(f"{a.get('field','?')}: {a.get('issue','')}" for a in ambiguities[:3])
         ambig_str = f"\n检测到歧义: {items}"
+    from data_agent.agent.question_need_detector import explicit_task_reason
+
+    hypothesis_plan_order = (
+        "\n- 明确的竞争假设或证据重评任务：先调用现有 record_analysis_plan 建立本轮计划，"
+        "再使用该计划生成的假设 ID 记录同版本测量与关系；早于计划的观察可保留为历史，"
+        "但不能拿它们冒充当前计划的关系。"
+        if explicit_task_reason(user_input) in {
+            "hypothesis_task", "competing_hypotheses", "evidence_reassessment",
+        } else ""
+    )
     return f"""\
 <turn_intent>
 {data}
@@ -283,12 +282,14 @@ def _format_turn_intent_prompt(turn_intent) -> str:
 
 ## 本轮执行策略
 根据 intent_type 决定行为：
-- simple_response / knowledge_qa / analysis_consultation / result_followup：直接回答，不调用工具。{ambig_str}
+- simple_response / knowledge_qa / analysis_consultation：交付咨询与方案条件，不执行数据分析。{ambig_str}
+- result_followup：承接当前任务与原答案；复用同版本事实，仅执行未完成交付所必需的计算。不能新增指标或把历史散文当事实。
 - intent_negotiation：帮助用户明确分析需求，推荐 2-3 个数据支持的方向。{ambig_str}
 - data_requirement：列出所需数据，区分必须数据和可选数据。
 - data_operation：直接执行数据操作，不做额外探索。
-- directed_analysis：基于数据特征分析。可选 record_analysis_plan 制定计划。关键发现用 record_evidence_record 记录。
+- directed_analysis：基于数据特征分析。有限探索可先了解结构、预览与质量；正式业务计算必须先用 record_analysis_plan 声明交付和来源。关键发现用 record_evidence_record 记录。
 - comprehensive_report：进行全面分析。调用 record_analysis_plan 制定计划。用 record_evidence_record 记录证据。最后在对话中综合输出结论、证据、方法、局限与下一步，不要生成单独的 brief/formal report artifact。
+{hypothesis_plan_order}
 """
 
 
@@ -432,7 +433,7 @@ _PROFICIENCY_INSTRUCTIONS = {
         "## 用户水平适配（初学者）\n"
         "- 所有统计结果必须附带通俗解释，用户不需要懂统计\n"
         "- 避免使用 p值、相关系数、标准差等专业术语，如必须使用则附带一句话解释\n"
-        "- 结论用\"因为X变了Y%，所以Z\"这样的因果叙述，不要只给数字\n"
+        "- 用通俗语言解释事实与限制；没有因果证据时只描述观察，不将变化解释为因果\n"
         "- 推荐分析方向时说明\"为什么值得分析\"和\"你能从中了解什么\"\n"
         "- 优先使用表格和图表，而非纯数字描述\n"
     ),
@@ -513,10 +514,12 @@ def build_system_prompt(
     proficiency: str = "intermediate",
     user_requirements: str = "",
     audience: str = "general",
+    turn_intent=None,
 ) -> str:
     from data_agent.agent.intent import plan_turn_intent, _PROMPT_LEVEL_MAP
 
-    turn_intent = plan_turn_intent(user_input, session_context) if user_input else None
+    if turn_intent is None:
+        turn_intent = plan_turn_intent(user_input, session_context) if user_input else None
     level = _PROMPT_LEVEL_MAP.get(turn_intent.intent_type, "analysis") if turn_intent else "analysis"
 
     # Build untrusted session context wrapper
@@ -561,7 +564,7 @@ def build_system_prompt(
     strategy_shared = AGENT_STRATEGY_SHARED
     ambiguities = ""
     if turn_intent:
-        ambs = turn_intent.to_dict().get("ambiguities", [])
+        ambs = getattr(turn_intent,"ambiguities",[])
         if ambs:
             ambiguities = "; ".join(f"{a.get('field','?')}: {a.get('issue','')}" for a in ambs[:3])
 
@@ -619,7 +622,7 @@ def build_system_prompt(
             injections.append(f"<loaded_skills>\n{skill_instructions}\n</loaded_skills>")
         if user_requirements_block:
             injections.append(user_requirements_block)
-        intent_prompt = _format_turn_intent_prompt(turn_intent) if turn_intent else ""
+        intent_prompt = _format_turn_intent_prompt(turn_intent, user_input) if turn_intent else ""
         parts = [base]
         if intent_prompt:
             parts.append(intent_prompt)
@@ -646,7 +649,7 @@ def build_system_prompt(
             injections.append(f"<loaded_skills>\n{skill_instructions}\n</loaded_skills>")
         if user_requirements_block:
             injections.append(user_requirements_block)
-        intent_prompt = _format_turn_intent_prompt(turn_intent) if turn_intent else ""
+        intent_prompt = _format_turn_intent_prompt(turn_intent, user_input) if turn_intent else ""
         parts = [base]
         if intent_prompt:
             parts.append(intent_prompt)

@@ -39,28 +39,38 @@ class MCPConfig(BaseModel):
     servers: list[MCPServerConfig] = []
 
 
-def load_mcp_config(path: Path) -> MCPConfig:
-    """从 YAML 文件加载 MCP 服务器配置。"""
-    if not path.exists():
-        return MCPConfig()
-
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-
-    # 处理 servers 为 None 的情况（YAML 文件中 servers 为空列表）
+def _parse_mcp_config(content: bytes) -> MCPConfig:
+    data = yaml.safe_load(content.decode("utf-8")) or {}
     if data.get("servers") is None:
         data["servers"] = []
-
     return MCPConfig(**data)
 
 
-def save_mcp_config(config: MCPConfig, path: Path) -> None:
-    """将 MCP 配置保存到 YAML 文件。"""
-    data = {
-        "servers": [
-            s.model_dump(exclude_none=True) for s in config.servers
-        ]
-    }
+def load_mcp_config(path: Path) -> MCPConfig:
+    """Load the configured YAML; an absent file means no configured servers."""
+    return _parse_mcp_config(path.read_bytes()) if path.exists() else MCPConfig()
+
+
+def mcp_config_state(path: Path) -> dict:
+    """Bind exact file bytes and the existing parsed configuration together."""
+    import hashlib
+    path = path.resolve()
+    content = path.read_bytes() if path.exists() else None
+    config = _parse_mcp_config(content) if content is not None else MCPConfig()
+    return {"path": str(path), "exists": content is not None,
+            "sha256": "sha256:" + hashlib.sha256(content).hexdigest() if content is not None else None,
+            "configuration": config.model_dump(exclude_none=True)}
+
+
+def save_mcp_config(config: MCPConfig, path: Path) -> dict:
+    """Commit one verified YAML snapshot, preserving old bytes on caught failure."""
+    from data_agent.utils.atomic_files import rollback_atomic_writes, write_bytes_atomic
+    data = config.model_dump(exclude_none=True)
+    content = yaml.dump(data, default_flow_style=False, allow_unicode=True).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    with rollback_atomic_writes():
+        write_bytes_atomic(path, content)
+        state = mcp_config_state(path)
+        if state["configuration"] != data or path.read_bytes() != content:
+            raise ValueError("Saved MCP configuration does not match the requested snapshot")
+        return state

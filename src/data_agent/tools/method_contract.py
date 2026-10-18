@@ -22,9 +22,10 @@ def method_receipt(
     limitations: list[str] | None = None,
     claim_ceiling: str = "descriptive",
     reason_code: str = "",
+    data_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the common, JSON-safe portion of a statistical tool result."""
-    identity = workspace.get_data_identity(name)
+    identity = workspace.get_data_identity(name) if data_identity is None else data_identity
     return {
         "method_contract": "analysis_method_result.v1",
         "method": method,

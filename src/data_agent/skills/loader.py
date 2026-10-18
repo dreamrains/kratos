@@ -1,8 +1,9 @@
-"""Global skill discovery and runtime loading."""
+"""Global skill catalogue with session-owned runtime loading."""
 
 from __future__ import annotations
 
 import re
+from weakref import WeakValueDictionary
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -38,8 +39,26 @@ class SkillLoader:
         self._dirs = skills_dirs
         self._skills: dict[str, SkillDef] = {}
         self._loaded: set[str] = set()
+        self._owner = self
+        self._sessions = WeakValueDictionary()
+        self.session_id = None
+
+    def for_session(self, session_id: str) -> SkillLoader:
+        """Share discovery/management; keep a session's loaded set private."""
+        owner = self._owner
+        if session_id not in owner._sessions:
+            view = object.__new__(SkillLoader)
+            view._owner = owner
+            view._dirs = owner._dirs
+            view._skills = owner._skills
+            view._loaded = set()
+            view.session_id = session_id
+            owner._sessions[session_id] = view
+        return owner._sessions[session_id]
 
     def discover(self) -> list[SkillDef]:
+        if self._owner is not self:
+            return self._owner.discover()
         self._skills.clear()
         found: list[SkillDef] = []
 
@@ -65,7 +84,9 @@ class SkillLoader:
                         extra={"extra_data": {"path": str(skill_file), "error": str(exc)}},
                     )
 
-        self._loaded.intersection_update({name for name, skill in self._skills.items() if skill.enabled})
+        enabled = {name for name, skill in self._skills.items() if skill.enabled}
+        for loader in [self, *list(self._sessions.values())]:
+            loader._loaded.intersection_update(enabled)
         return found
 
     def _parse_skill(self, path: Path) -> Optional[SkillDef]:

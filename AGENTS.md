@@ -117,7 +117,7 @@ await chooser.setFiles(paths, { timeoutMs: 10000 });
 - Run the whole frozen matrix in order. For ordinary scenario failures, record the session ID and evidence and continue; diagnose and repair only after the batch finishes.
 - Preserve the established multi-turn browser sequences: B04 uses its frozen initial prompt followed in the same session by `【B04】继续第2步` through `【B04】继续第13步`; B03 and CONTENT-B03 send `好的，继续。` in the same session before using the compression dialog, because a single short turn is intentionally not compressible.
 - Stop a dependent path only for session/data isolation failure, incomplete event transport, evidence-level escalation, or whole-service unavailability.
-- Do not locally rerun only a failed scenario and present it as a complete batch. After a code fix or route change, use a fresh run directory and execute the required complete batch again.
+- Do not locally rerun only a failed scenario and present it as an uninterrupted complete batch. A separately frozen and authorized supplement may cover only an unfinished scenario when the earlier scenarios have intact, independently reviewable receipts and the interruption is an explicit Provider call cap. Record the two result identities and the supplement boundary; a code or route change affecting product behavior still needs the relevant complete batch again.
 - At the end, inspect browser console warnings/errors, refresh the required sessions, verify exports and persisted state, check unique terminal events, and reconcile the runtime trace.
 - Local scripted-browser evidence is not real-Provider, staging, production, or deployment evidence. A real-Provider batch requires a newly frozen exact commit, model, endpoint, fixture/prompt/oracle digest, matrix, budget, ledger path, and new explicit user authorization.
 
@@ -139,7 +139,7 @@ terminal event and zero Provider calls in `tmp/phase9-http-probe-20260926-r1`.
   `provider-calls.jsonl` ledger. The frozen contract must identify
   `control_route=local_http_api` and include the HTTP driver's digest. Freeze a
   new HEAD, launcher/driver/contract, model, endpoint, fixtures, all M01–M06
-  prompts/oracles, 120-call cap and ledger path. Obtain explicit authorization
+  prompts/oracles, a finite call cap and ledger path. Obtain explicit authorization
   for that exact batch; the earlier browser-protocol r2 freeze is invalid for
   this route. No real call may precede that authorization.
 - Use only `scripts/testing/run_p08_http_matrix.py` against the existing local
@@ -147,7 +147,7 @@ terminal event and zero Provider calls in `tmp/phase9-http-probe-20260926-r1`.
   filename and SHA256, passes those tickets to `/api/chat`, consumes SSE, checks
   the single terminal against durable run state, and records session IDs. M04
   uploads v1 and v2 in the frozen order within one session. M06 resumes only
-  the frozen business option. Do not retry or resume a partial batch.
+  the frozen business option. Do not silently retry a partial batch.
 - Run the whole matrix in order. Continue ordinary scenario failures; stop for
   event/session isolation, Provider/accounting, or whole-service failures. Keep
   the Provider ledger separate from HTTP control evidence. At the end reconcile
@@ -159,3 +159,22 @@ terminal event and zero Provider calls in `tmp/phase9-http-probe-20260926-r1`.
   a browser refresh. Mark those UI oracles `unassessed`; do not report full
   browser E4 or Phase 5–8 exit from this batch alone. The user-confirmed manual
   upload is context, not an auditable matrix receipt.
+
+### Call-cap supplement after an otherwise intact matrix
+
+If a frozen matrix reaches its explicit Provider call cap during its final
+scenario, keep the original freeze, ledger, sessions and failure record
+immutable. A user-authorized supplement may run only that unfinished scenario
+through the same app path, with its own fresh directory, freeze, finite cap,
+ledger and exact authorization. Freeze the prior freeze, ledger and HTTP result
+digests and the scenario scope; verify that the old ledger ended at the cap and
+the failed session has no resumable confirmation. Keep the original scenario
+fixtures, prompts and oracles. An already failed turn starts in a fresh isolated
+session; never mutate its old run state or restart an old ledger counter.
+
+Report a composite assessment as two labelled result identities. Previously
+completed scenarios may retain their receipts, but the supplement cannot turn
+the original atomic batch into a pass or assess its visual oracles. If product
+code, model, endpoint, fixture, prompt, oracle or control route changes, do not
+splice results; run the relevant complete matrix on one new identity. Diagnose
+any ordinary semantic failures separately from this cost-saving supplement.

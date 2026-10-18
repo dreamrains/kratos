@@ -170,7 +170,7 @@ def default_is_host_verified(candidate: Any) -> bool:
     """A safe_default only counts when its origin is host-verifiable (Q12)."""
     params: Mapping[str, Any] = getattr(candidate, "resolution_params", {}) or {}
     origin = str(params.get("default_origin") or "").strip()
-    return origin in HOST_VERIFIED_DEFAULT_ORIGINS
+    return getattr(candidate, "source", "") != "ask_user_question" and origin in HOST_VERIFIED_DEFAULT_ORIGINS
 
 
 def represents_business_gap(candidate: Any) -> bool:
@@ -290,3 +290,37 @@ def decision_context_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         "business_scope": business_scope,
         "confirmation_type": confirmation_type,
     }
+
+
+def resolved_question_records(record):
+    """Read reusable item answers from their one original confirmation record."""
+    from dataclasses import replace
+    import json
+    from .models import ConfirmationRequest, ConfirmationStatus
+    bindings = getattr(record, "resolution_params", {}).get("question_bindings")
+    if not bindings:
+        return (record,)
+    if record.status != ConfirmationStatus.RESOLVED:
+        return ()
+    try:
+        answers = json.loads(record.response)
+        if not isinstance(answers, list) or len(answers) != len(bindings):
+            return ()
+        by_id = {item["question_id"]: item for item in answers}
+        if len(by_id) != len(answers):
+            return ()
+        result = []
+        for binding in bindings:
+            answer = by_id[binding["question_id"]]
+            payload = binding["request"]
+            if (answer["status"] != "resolved" or binding["disposition"] != "confirmation"
+                    or any(answer[key] != payload[key] for key in ("decision_key", "data_version", "spec_version"))):
+                continue
+            request = ConfirmationRequest.from_dict(payload)
+            values = {key: getattr(request, key) for key in request.to_dict()}
+            values["confirmation_id"] = record.confirmation_id
+            values["resolution_params"] = dict(request.resolution_params, _question_id=binding["question_id"])
+            result.append(replace(record, **values, response=answer["answer"]))
+        return tuple(result)
+    except (ValueError, KeyError, TypeError):
+        return ()

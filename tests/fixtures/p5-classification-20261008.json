@@ -1,0 +1,35 @@
+{
+  "source_commit": "882df1c4c217e71320fdc43336d537851a3d721a",
+  "freeze_sha256": "4bc1e3a761c8902195e311f5fbacd3ab95852308032a30f59a22a705430763ce",
+  "scope": "public visible classification JSON only; no reasoning or credentials; old-format diagnostic input, not new natural acceptance",
+  "cases": [
+    {
+      "case": "M02",
+      "call": 7,
+      "original_response_sha256": "006e0a28ba9712c5798ac12e3b124ebe04c5e60cefd7bfb1b06c1d15ddaac343",
+      "input": "请计算并解释 D1 至 D7 留存，并判断当前证据对 D30 能支持到什么程度。D30 可以保持未知；如果使用 curve fitting 外推，只能作为拟合情景，必须逐一命名模型族、报告拟合度 R²、明确说明未做留出验证/回测/外部验证，并展示不同模型的敏感性，不得写成已经验证的预测。\n分析文件: M02-retention.csv",
+      "visible_json": "{\n  \"intent_type\": \"directed_analysis\",\n  \"reason\": \"用户有明确分析目标：计算并解释 D1-D7 留存，评估 D30 证据支持程度，并对 curve fitting 外推提出具体规范性要求，属于定向分析请求。\",\n  \"ambiguities\": [],\n  \"continuation_of_plan_id\": \"\",\n  \"requested_outputs\": [\n    {\n      \"exact_span\": \"请计算并解释 D1 至 D7 留存\",\n      \"kind\": \"result\"\n    },\n    {\n      \"exact_span\": \"判断当前证据对 D30 能支持到什么程度\",\n      \"kind\": \"result\"\n    },\n    {\n      \"exact_span\": \"如果使用 curve fitting 外推，只能作为拟合情景，必须逐一命名模型族、报告拟合度 R²、明确说明未做留出验证/回测/外部验证，并展示不同模型的敏感性\",\n      \"kind\": \"result\"\n    },\n    {\n      \"exact_span\": \"不得写成已经验证的预测\",\n      \"kind\": \"presentation\",\n      \"presentation_style\": \"technical\"\n    }\n  ]\n}"
+    },
+    {
+      "case": "M03",
+      "call": 21,
+      "original_response_sha256": "8a814855e6a31cea0e0c0a4bb1907c4bfdba7d798d8865a4411579e052f8a649",
+      "input": "请分别比较当前六个来源在 2026-09-01 与 2026-09-02 的金额变化，并保留全部来源。正文逐来源给出两日金额、绝对变化、相对变化和记录数；如内容需要折叠，请明确列出未展开项并保证导出可访问完整事实。\n分析文件: M03-source-1.csv\n分析文件: M03-source-4.csv\n分析文件: M03-source-3.csv\n分析文件: M03-source-2.csv\n分析文件: M03-source-5.csv\n分析文件: M03-source-6.csv\n请同时展示六个来源各自的图表，保留原单位与来源身份。",
+      "visible_json": "{\n  \"intent_type\": \"directed_analysis\",\n  \"reason\": \"用户明确指定六个来源、两个日期、金额指标，并要求逐来源对比、给出变化指标和图表，分析方向清晰。\",\n  \"ambiguities\": [],\n  \"continuation_of_plan_id\": \"\",\n  \"requested_outputs\": [\n    {\n      \"exact_span\": \"请分别比较当前六个来源在 2026-09-01 与 2026-09-02 的金额变化，并保留全部来源。\",\n      \"kind\": \"result\",\n      \"selector\": {\n        \"dataset\": [\n          \"M03-source-1\",\n          \"M03-source-2\",\n          \"M03-source-3\",\n          \"M03-source-4\",\n          \"M03-source-5\",\n          \"M03-source-6\"\n        ],\n        \"metric\": \"amount\",\n        \"parameters\": {\n          \"period_a\": \"2026-09-01\",\n          \"period_b\": \"2026-09-02\"\n        }\n      }\n    },\n    {\n      \"exact_span\": \"正文逐来源给出两日金额、绝对变化、相对变化和记录数\",\n      \"kind\": \"result\",\n      \"selector\": {\n        \"dataset\": [\n          \"M03-source-1\",\n          \"M03-source-2\",\n          \"M03-source-3\",\n          \"M03-source-4\",\n          \"M03-source-5\",\n          \"M03-source-6\"\n        ],\n        \"metric\": \"amount\",\n        \"parameters\": {\n          \"period_a\": \"2026-09-01\",\n          \"period_b\": \"2026-09-02\"\n        }\n      }\n    },\n    {\n      \"exact_span\": \"如内容需要折叠，请明确列出未展开项并保证导出可访问完整事实。\",\n      \"kind\": \"presentation\",\n      \"presentation_style\": \"business\"\n    },\n    {\n      \"exact_span\": \"请同时展示六个来源各自的图表，保留原单位与来源身份。\",\n      \"kind\": \"presentation\",\n      \"presentation_style\": \"business\"\n    }\n  ]\n}"
+    },
+    {
+      "case": "M04",
+      "call": 31,
+      "original_response_sha256": "c3edb9d85b2a9d7c2449ab333e72e1dea770147b6fd36b5c82c27baefb3b2548",
+      "input": "请基于当前 v1 数据提出并检验至少两种竞争性假设，使用真实工具记录支持证据、反证、冲突和仍未解决之处；只做描述性判断，不写成因果结论。\n分析文件: M04-hyp-v1.csv",
+      "visible_json": "{\n  \"intent_type\": \"directed_analysis\",\n  \"reason\": \"用户要求基于当前数据提出并检验至少两种竞争性假设，记录支持证据、反证、冲突和未解决之处，属于有明确方向的分析请求。\",\n  \"ambiguities\": [],\n  \"continuation_of_plan_id\": \"\",\n  \"requested_outputs\": [\n    {\n      \"exact_span\": \"基于当前 v1 数据提出并检验至少两种竞争性假设\",\n      \"kind\": \"result\",\n      \"selector\": {\n        \"dataset\": \"M04-hyp-v1\",\n        \"statistic\": \"hypothesis_status\"\n      }\n    },\n    {\n      \"exact_span\": \"使用真实工具记录支持证据、反证、冲突和仍未解决之处\",\n      \"kind\": \"result\",\n      \"selector\": {\n        \"dataset\": \"M04-hyp-v1\",\n        \"statistic\": \"hypothesis_status\"\n      }\n    },\n    {\n      \"exact_span\": \"只做描述性判断，不写成因果结论\",\n      \"kind\": \"presentation\",\n      \"presentation_style\": \"analyst\"\n    }\n  ]\n}"
+    },
+    {
+      "case": "M01",
+      "call": 3,
+      "original_response_sha256": "6187366f5cb34eb2b40f1a1856d51a562958e99d961f36cce4ecb7b2f38a1d9f",
+      "input": "我想咨询电商留存的分析方案，请说明所需字段、分析步骤与限制，目前没有上传文件。",
+      "visible_json": "{\"intent_type\": \"analysis_consultation\", \"reason\": \"用户咨询电商留存的分析方案，要求说明所需字段、分析步骤与限制，属于方法论与思路咨询，不需要立即执行数据分析，且明确目前没有上传文件\", \"ambiguities\": [{\"field\": \"留存定义\", \"issue\": \"未说明留存口径（新客留存、复购留存、活跃留存或按业务动作定义）\"}, {\"field\": \"分析粒度与时间窗口\", \"issue\": \"未明确用户粒度、留存周期（次日/7日/30日）与观察期长度\"}, {\"field\": \"业务场景与数据来源\", \"issue\": \"未说明所处行业模式（自营/平台）与可用数据表，无法确定具体字段清单\"}], \"continuation_of_plan_id\": \"\", \"requested_outputs\": []}"
+    }
+  ]
+}

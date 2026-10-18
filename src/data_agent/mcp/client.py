@@ -213,20 +213,19 @@ class MCPClientManager:
         """异步调用 MCP 工具。"""
         result = await conn.session.call_tool(tool_name, arguments)
 
-        # 提取文本内容
-        if result.content:
-            texts = []
-            for item in result.content:
-                if hasattr(item, "text"):
-                    texts.append(item.text)
-                elif isinstance(item, str):
-                    texts.append(item)
-            return "\n".join(texts) if texts else ""
-
+        # Preserve the existing text projection, but let the explicit protocol
+        # status take precedence even when the server includes explanatory text.
+        texts = []
+        for item in result.content or []:
+            if hasattr(item, "text"):
+                texts.append(item.text)
+            elif isinstance(item, str):
+                texts.append(item)
+        text = "\n".join(texts)
         if result.isError:
-            return json.dumps({"error": "Tool returned an error"}, ensure_ascii=False)
-
-        return ""
+            return json.dumps({"error": text or "Tool returned an error",
+                               "error_type": "mcp_tool_error"}, ensure_ascii=False)
+        return text
 
     def health_check(self) -> dict[str, dict]:
         """检查所有服务器的健康状态。"""

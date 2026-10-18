@@ -9,7 +9,10 @@ from data_agent.agent.confirmation_policy import pending_confirmation_gate
 from data_agent.agent.intent_refinement import _requests_user_level_retention
 from data_agent.agent.question_need_detector import (
     detect_question_need,
+    _required_field_risks,
+    _host_full_table_count,
     explicit_task_reason,
+    has_source_bound_delivery,
     to_confirmation_gate,
 )
 
@@ -35,8 +38,14 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             confirmation_gate=gate,
         )
 
-    contracts = hydrate_refs(_list_attr(state, "dataset_contracts"))
-    raw_routes = hydrate_refs(_list_attr(state, "route_proposals"))
+    if _host_full_table_count(state):
+        return _decision("direct_analysis", dataset=_active_dataset(state), reason="Current original delivery is full-table cardinality.")
+    from data_agent.agent.artifact_refs import unassessed_trust_records
+    if unassessed_trust_records(state):
+        return _decision("blocked", reason="trust_record_unassessed: current original evidence cannot be verified.")
+
+    contracts = hydrate_refs(_list_attr(state, "dataset_contracts"), trust_records=True)
+    raw_routes = hydrate_refs(_list_attr(state, "route_proposals"), trust_records=True)
     active_dataset = _active_dataset(state)
     scoped_contracts = _filter_by_dataset(contracts, active_dataset)
     # Route selection shares the host's data scope: mentioning another
@@ -58,7 +67,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             routes = raw_routes
         else:
             routes = capability_routes
-    cleaning_logs = hydrate_refs(_list_attr(state, "cleaning_logs"))
+    cleaning_logs = hydrate_refs(_list_attr(state, "cleaning_logs"), trust_records=True)
 
     blocked = _blocked_contract(scoped_contracts)
     if blocked:
@@ -115,13 +124,8 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
 
     route = _infer_requested_route(user_input, routes)
     explicit_reason = explicit_task_reason(user_input)
-    if not route and _text(getattr(intent, "clarity", "")) == "vague" and len(routes) > 1 and not explicit_reason:
-        return _decision(
-            "clarify_intent",
-            reason="Multiple data-supported analysis routes are available.",
-            required_user_action="choose_analysis_route",
-            route_options=_route_options(routes),
-        )
+    if not explicit_reason and has_source_bound_delivery(user_input, intent):
+        explicit_reason = "source_bound_delivery"
     internal_route_reason = ""
     if not route and routes:
         # P08-03: 明确任务（如竞争性假设检验）时，内部路线选择是系统自己的
@@ -315,34 +319,6 @@ def _route_options(routes: list[dict[str, Any]]) -> list[dict[str, str]]:
             "dataset": _text(route.get("dataset")),
         })
     return options
-
-
-def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, Any]]) -> list[str]:
-    requirements = set(_text_list(route.get("evidence_requirements")))
-    risky_fields = []
-    for log in cleaning_logs:
-        route_dataset = _text(route.get("dataset"))
-        log_dataset = _text(log.get("dataset"))
-        if route_dataset and log_dataset and route_dataset != log_dataset:
-            continue
-        decisions = log.get("decisions")
-        if not isinstance(decisions, list):
-            decisions = [log] if _text(log.get("decision_type")) else []
-        for decision in decisions:
-            if not isinstance(decision, dict) or decision.get("decision_type") != "needs_confirmation":
-                continue
-            column = _text(decision.get("column") or decision.get("field"))
-            if column and (column in requirements or _route_requires_field_kind(route, column)):
-                risky_fields.append(column)
-    return _dedupe(risky_fields)
-
-
-def _route_requires_field_kind(route: dict[str, Any], column: str) -> bool:
-    requirements = set(_text_list(route.get("evidence_requirements")))
-    direction = _route_direction(route)
-    if column.lower() == "date" and ("date" in requirements or direction in {"trend", "period_compare"}):
-        return True
-    return False
 
 
 def _route_direction(route: dict[str, Any]) -> str:

@@ -50,9 +50,20 @@ def _session_transcripts_dir(session_id: str) -> Path:
 
 
 def _content_addressed_path(out_dir: Path, tool_call_id: str, content: str) -> Path:
-    safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
+    # Call IDs are opaque transport identities, never filesystem paths.
+    from data_agent.tools._utils import sanitize_filename
+    import ntpath
+
+    safe_id = sanitize_filename(tool_call_id)
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:10]
-    return out_dir / f"{safe_id}__{digest}.txt"
+    filename = f"{safe_id}__{digest}.txt"
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {p + d for p in ("COM", "LPT") for d in "123456789¹²³"}
+    if (getattr(ntpath, "isreserved", lambda name: False)(filename)
+            or filename.split(".", 1)[0].upper() in reserved
+            or any(ord(c) < 32 for c in filename) or len(filename) > 180):
+        safe_id = "call_" + hashlib.sha256(tool_call_id.encode("utf-8")).hexdigest()
+        filename = f"{safe_id}__{digest}.txt"
+    return out_dir / filename
 
 
 def persist_large_output(session_id: str, tool_call_id: str, content: str) -> str:
@@ -60,12 +71,9 @@ def persist_large_output(session_id: str, tool_call_id: str, content: str) -> st
     if len(content) <= PERSIST_THRESHOLD:
         return content
 
-    out_dir = _session_tool_outputs_dir(session_id)
-    # Content-addressed storage: the same tool id with different content gets
-    # its own file instead of silently reusing the previous body.
-    stored_path = _content_addressed_path(out_dir, tool_call_id, content)
-    if not stored_path.exists():
-        stored_path.write_text(content, encoding="utf-8")
+    stored_path = _persist_tool_output(session_id, tool_call_id, content)
+    if stored_path is None:
+        return content
 
     preview = content[:PREVIEW_CHARS]
     rel_path = stored_path.name
@@ -145,24 +153,24 @@ def _extract_compact_preview(content: str, max_chars: int = 400) -> str:
     return preview
 
 
-def _persist_micro_output(session_id: str, tool_call_id: str, content: str) -> Path | None:
-    """Persist any compacted tool output before lossy replacement.
+def _persist_tool_output(session_id: str, tool_call_id: str, content: str) -> Path | None:
+    """Store and verify the original before either lossy compaction path.
 
-    Content-addressed: the same tool id with different content stores a new
-    file rather than silently reusing the previous body. A failed or
-    unverifiable write returns None and the caller must keep the original
-    message content — no reliable copy, no compaction.
+    Existing copies are read, never overwritten or deleted. A failed or
+    unverifiable copy leaves the caller's complete message unchanged.
     """
-    out_dir = _session_tool_outputs_dir(session_id)
-    stored_path = _content_addressed_path(out_dir, tool_call_id, content)
     try:
-        if not stored_path.exists():
-            stored_path.write_text(content, encoding="utf-8")
+        out_dir = _session_tool_outputs_dir(session_id)
+        stored_path = _content_addressed_path(out_dir, tool_call_id, content)
+        try:
+            with stored_path.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+        except FileExistsError:
+            pass
         if stored_path.read_text(encoding="utf-8") != content:
-            stored_path.unlink(missing_ok=True)
             return None
         return stored_path
-    except OSError:
+    except (OSError, UnicodeError):
         return None
 
 
@@ -182,7 +190,7 @@ def micro_compact(session_id: str, messages: list[dict]) -> None:
             continue
 
         tool_call_id = msg.get("tool_call_id", f"legacy_{id(msg)}")
-        stored = _persist_micro_output(session_id, tool_call_id, content)
+        stored = _persist_tool_output(session_id, tool_call_id, content)
         if stored is None:
             # 持久化失败：不进行有损替换
             continue
@@ -306,11 +314,9 @@ def _preserved_identity_and_obligations(messages: list[dict]) -> str:
     # identifiers only. They remain context pointers, never evidence by
     # themselves, and survive an LLM-written history summary.
     for message in messages:
-        packet_id = message.get("publication_packet_id")
-        snapshot = message.get("publication_snapshot_digest")
-        artifact = message.get("publication_artifact_path")
-        if packet_id:
-            kept.append(f"publication_packet_id={packet_id} snapshot_digest={snapshot or 'unknown'} artifact={artifact or 'unknown'}")
+        reference = message.get("answer_ref")
+        if isinstance(reference,dict):
+            kept.append("accepted_answer=" + json.dumps(reference,ensure_ascii=False,sort_keys=True))
         if message.get("role") == "tool" and isinstance(message.get("content"), str):
             for ref in re.findall(r"tool_outputs/[A-Za-z0-9_.-]+", message["content"]):
                 kept.append(f"detail_ref={ref}")
@@ -326,8 +332,13 @@ def _preserved_identity_and_obligations(messages: list[dict]) -> str:
 
 
 def estimate_tokens(messages: list[dict]) -> int:
-    """估算 messages 的 token 数。"""
-    return len(json.dumps(messages, default=str, ensure_ascii=False)) // 4
+    """History-only estimate using the shared offline counter.
+
+    Dispatch admission separately includes the system prompt and tools.
+    """
+    from data_agent.llm.request_policy import count_request_tokens
+    cfg = get_config()
+    return count_request_tokens(cfg.model_id, messages, tokenizer_path=cfg.model_tokenizer)["tokens"]
 
 
 def _find_safe_boundary(messages: list[dict], keep_recent: int) -> int:
@@ -340,12 +351,16 @@ def _find_safe_boundary(messages: list[dict], keep_recent: int) -> int:
     target = len(messages) - keep_recent
     if target <= 0:
         return 0
-    for index in range(target, 0, -1):
-        if messages[index].get("role") == "user":
-            while index > 0 and messages[index - 1].get("role") == "system":
-                index -= 1
-            return index
-    return 0
+    boundaries = [index for index in range(1, len(messages))
+                  if messages[index].get("role") == "user"]
+    if not boundaries:
+        return 0
+    # The message-count target is soft. A short latest turn must not prevent
+    # archiving the complete preceding analysis and all its tool replies.
+    index = max((i for i in boundaries if i <= target), default=boundaries[-1])
+    while index > 0 and messages[index - 1].get("role") == "system":
+        index -= 1
+    return index
 
 
 def compact_history(
@@ -458,7 +473,7 @@ def compact_history(
     }})
 
     return [
-        {"role": "user", "content": (
+        {"role": "user", "canonical_transcript": {"filename":transcript_path.name,"sha256":"sha256:"+hashlib.sha256(transcript_path.read_bytes()).hexdigest()}, "content": (
             f"[Context compressed at turn boundary]\n{summary}\n\n"
             "[Instruction: This is a compressed summary of earlier conversation. "
             "Do NOT re-acknowledge or re-summarize this context. "

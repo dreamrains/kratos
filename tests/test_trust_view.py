@@ -4,7 +4,6 @@ import json
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.trust_view import build_trust_view
-from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
 
 
 def test_empty_trust_view_is_only_an_empty_conclusion_contract() -> None:
@@ -17,20 +16,21 @@ def test_empty_trust_view_is_only_an_empty_conclusion_contract() -> None:
     }
 
 
-def test_workbench_projects_only_current_fingerprinted_verified_evidence() -> None:
+def test_fingerprinted_annotation_without_accepted_answer_cannot_grant_verified_evidence() -> None:
     state = AnalysisSessionState(session_id="verified", data_state="data_loaded")
     state.evidence_records = [
         {"id": "high", "claim": "High conclusion", "confidence": "high", "result_summary": "100", "dataset": "orders"},
         {"id": "low", "claim": "Low conclusion", "confidence": "low", "result_summary": "ignore", "dataset": "orders"},
     ]
-    state.verification_reports = [{"passed_evidence_ids": ["high", "low"], "evidence_fingerprint": _evidence_fingerprint(state, state.evidence_records)}]
+    state.verification_reports = [{"passed_evidence_ids": ["high", "low"], "evidence_fingerprint": '2f01245929125bec'}]
     before = state.to_dict()
 
     view = build_trust_view(state)
 
     assert state.to_dict() == before
     assert view["status"] == "ready"
-    assert view["workbench"]["verified_conclusions"] == [{"id": "high", "claim": "High conclusion", "summary": "100", "confidence": "high", "dataset": "orders"}]
+    assert view["workbench"]["verified_conclusions"] == []
+    assert view["workbench"]["verified_total"] == 0
     rendered = json.dumps(view)
     assert "scope" not in rendered and "confirmation" not in rendered and "artifact_path" not in rendered
 

@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 
 from data_agent.config import get_config
+from data_agent.utils.atomic_files import rollback_atomic_writes, write_bytes_atomic, unlink_with_rollback
 from data_agent.knowledge.models import KnowledgeItem, KnowledgeSource, KnowledgeStatus
-from data_agent.knowledge.sqlite_store import KnowledgeDatabase, row_to_dict, rows_to_dicts
+from data_agent.knowledge.sqlite_store import KnowledgeDatabase, row_to_dict, rows_to_dicts, search_limit
 
 
 def _now() -> str:
@@ -39,53 +40,67 @@ class KnowledgeLibrary:
         tags: list[str] | None = None,
         source: KnowledgeSource = KnowledgeSource.USER,
     ) -> KnowledgeItem:
+        with rollback_atomic_writes():
+            with self.db.connect() as conn:
+                conn.execute("BEGIN")
+                item = self._create_with_connection(conn, title, domain, content, summary, tags, source)
+        return item
+
+    def _create_with_connection(
+        self,
+        conn,
+        title: str,
+        domain: str,
+        content: str,
+        summary: str = "",
+        tags: list[str] | None = None,
+        source: KnowledgeSource = KnowledgeSource.USER,
+    ) -> KnowledgeItem:
+        # The caller owns the SQLite transaction and atomic file rollback.
         item_id = f"kn_{uuid.uuid4().hex[:10]}"
         domain_value = _safe_domain(domain) if domain.strip() else "general"
         path = self._resolve_library_path(Path("library") / domain_value / f"{_slug(title)}-{item_id}.md")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
         now = _now()
         relative_path = path.relative_to(self.root.resolve())
 
-        with self.db.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO knowledge_items
-                (id, title, domain, path, summary, status, tags, source, version,
-                 created_at, updated_at, deprecated_at, supersedes, superseded_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    item_id,
-                    title,
-                    domain_value,
-                    str(relative_path),
-                    summary,
-                    KnowledgeStatus.ACTIVE.value,
-                    json.dumps(tags or [], ensure_ascii=False),
-                    source.value,
-                    1,
-                    now,
-                    now,
-                    "",
-                    "",
-                    "",
-                ),
-            )
-        item = self.get(item_id)
+        write_bytes_atomic(path, content.encode("utf-8"))
+        conn.execute(
+            """
+            INSERT INTO knowledge_items
+            (id, title, domain, path, summary, status, tags, source, version,
+             created_at, updated_at, deprecated_at, supersedes, superseded_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item_id,
+                title,
+                domain_value,
+                str(relative_path),
+                summary,
+                KnowledgeStatus.ACTIVE.value,
+                json.dumps(tags or [], ensure_ascii=False),
+                source.value,
+                1,
+                now,
+                now,
+                "",
+                "",
+                "",
+            ),
+        )
+        item = self._get_with_connection(conn, item_id)
         if item is None:
             raise RuntimeError(f"Created knowledge item {item_id} could not be loaded")
         return item
 
+    def _get_with_connection(self, conn, item_id: str) -> KnowledgeItem | None:
+        row = conn.execute("SELECT * FROM knowledge_items WHERE id = ?", (item_id,)).fetchone()
+        return self._item_from_row(row_to_dict(row)) if row is not None else None
+
     def get(self, item_id: str) -> KnowledgeItem | None:
         with self.db.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM knowledge_items WHERE id = ?",
-                (item_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._item_from_row(row_to_dict(row))
+            return self._get_with_connection(conn, item_id)
 
     def list(self, domain: str = "", status: str = "") -> list[KnowledgeItem]:
         clauses = []
@@ -112,62 +127,60 @@ class KnowledgeLibrary:
         summary: str | None = None,
         tags: list[str] | None = None,
     ) -> KnowledgeItem | None:
-        item = self.get(item_id)
-        if item is None:
-            return None
-        if content is not None:
-            self._resolve_library_path(item.path).write_text(content, encoding="utf-8")
-        next_title = title if title is not None else item.title
-        next_summary = summary if summary is not None else item.summary
-        next_tags = tags if tags is not None else item.tags
-        with self.db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE knowledge_items
-                SET title = ?, summary = ?, tags = ?, version = version + 1, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    next_title,
-                    next_summary,
-                    json.dumps(next_tags, ensure_ascii=False),
-                    _now(),
-                    item_id,
-                ),
-            )
-        return self.get(item_id)
+        with rollback_atomic_writes():
+            with self.db.connect() as conn:
+                conn.execute("BEGIN")
+                item = self._get_with_connection(conn, item_id)
+                if item is None:
+                    return None
+                if content is not None:
+                    write_bytes_atomic(self._resolve_library_path(item.path), content.encode("utf-8"))
+                next_title = title if title is not None else item.title
+                next_summary = summary if summary is not None else item.summary
+                next_tags = tags if tags is not None else item.tags
+                conn.execute(
+                    """
+                    UPDATE knowledge_items
+                    SET title = ?, summary = ?, tags = ?, version = version + 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (next_title, next_summary, json.dumps(next_tags, ensure_ascii=False), _now(), item_id),
+                )
+                updated = self._get_with_connection(conn, item_id)
+                if updated is None:
+                    raise RuntimeError(f"Updated knowledge item {item_id} could not be loaded")
+        return updated
 
-    def deprecate(self, item_id: str, superseded_by: str = "") -> KnowledgeItem | None:
+    def _set_visibility(self, item_id: str, status: KnowledgeStatus, superseded_by: str = "") -> KnowledgeItem | None:
         with self.db.connect() as conn:
+            conn.execute("BEGIN")
+            now = _now()
             conn.execute(
                 """
                 UPDATE knowledge_items
                 SET status = ?, deprecated_at = ?, updated_at = ?, superseded_by = ?
                 WHERE id = ?
                 """,
-                (KnowledgeStatus.DEPRECATED.value, _now(), _now(), superseded_by, item_id),
+                (status.value, now if status == KnowledgeStatus.DEPRECATED else "", now, superseded_by, item_id),
             )
-        return self.get(item_id)
+            item = self._get_with_connection(conn, item_id)
+        return item
+
+    def deprecate(self, item_id: str, superseded_by: str = "") -> KnowledgeItem | None:
+        return self._set_visibility(item_id, KnowledgeStatus.DEPRECATED, superseded_by)
 
     def restore(self, item_id: str) -> KnowledgeItem | None:
-        with self.db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE knowledge_items
-                SET status = ?, deprecated_at = '', superseded_by = '', updated_at = ?
-                WHERE id = ?
-                """,
-                (KnowledgeStatus.ACTIVE.value, _now(), item_id),
-            )
-        return self.get(item_id)
+        return self._set_visibility(item_id, KnowledgeStatus.ACTIVE)
 
     def delete(self, item_id: str) -> bool:
-        item = self.get(item_id)
-        if item is None:
-            return False
-        self._resolve_library_path(item.path).unlink(missing_ok=True)
-        with self.db.connect() as conn:
-            conn.execute("DELETE FROM knowledge_items WHERE id = ?", (item_id,))
+        with rollback_atomic_writes():
+            with self.db.connect() as conn:
+                conn.execute("BEGIN")
+                item = self._get_with_connection(conn, item_id)
+                if item is None:
+                    return False
+                unlink_with_rollback(self._resolve_library_path(item.path))
+                conn.execute("DELETE FROM knowledge_items WHERE id = ?", (item_id,))
         return True
 
     def search(
@@ -177,6 +190,9 @@ class KnowledgeLibrary:
         include_deprecated: bool = False,
         limit: int = 5,
     ) -> list[KnowledgeItem]:
+        limit = search_limit(limit)
+        if not limit:
+            return []
         terms = [term.lower() for term in query.split() if term.strip()]
         candidates = self.list(domain=domain)
         scored: list[tuple[int, KnowledgeItem]] = []
@@ -192,7 +208,7 @@ class KnowledgeLibrary:
 
     def _item_from_row(self, row: dict) -> KnowledgeItem:
         path = self._resolve_library_path(row["path"])
-        content = path.read_text(encoding="utf-8") if path.exists() else ""
+        content = path.read_bytes().decode("utf-8")
         return KnowledgeItem(
             id=row["id"],
             title=row["title"],

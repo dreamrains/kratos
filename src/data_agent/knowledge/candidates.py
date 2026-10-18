@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 from data_agent.config import get_config
 from data_agent.knowledge.evidence import EvidenceStore
 from data_agent.knowledge.memory import MemoryStore
-from data_agent.knowledge.models import EvidenceRecord, MemoryStatus, MemoryType
+from data_agent.knowledge.models import EvidenceRecord, MemoryType
 from data_agent.knowledge.sqlite_store import rows_to_dicts
 
 
@@ -51,75 +49,49 @@ class MemoryCandidateExtractor:
         self.memory = MemoryStore(self.root)
 
     def extract_for_session(self, session_id: str, max_candidates: int = 10) -> CandidateExtractionResult:
-        records = self._records_for_session(session_id)
-        result = CandidateExtractionResult(scanned=len(records))
-        for record in records:
-            for draft in self._drafts_from_record(record):
-                if result.created >= max_candidates:
-                    result.skipped += 1
-                    continue
-                existing = self.memory.get_by_dedup_key(draft.dedup_key)
-                if existing:
-                    self._refresh_existing_candidate(existing.id, record, draft)
-                    result.skipped += 1
-                    continue
-                item = self.memory.create_candidate(
-                    text=draft.text,
-                    summary=draft.summary,
-                    memory_type=draft.memory_type,
-                    confidence=draft.confidence,
-                    source_session_id=record.session_id,
-                    project_id=record.project_id,
-                    domain=draft.domain,
-                    tags=draft.tags,
-                    reason=draft.reason,
-                    source_evidence_ids=draft.source_evidence_ids,
-                    needs_review=draft.needs_review,
-                    review_note=draft.review_note,
-                    dedup_key=draft.dedup_key,
-                )
-                result.created += 1
-                result.candidates.append(item.id)
+        with self.memory.db.connect() as conn:
+            conn.execute("BEGIN")
+            records = self._records_for_session(session_id, conn)
+            result = CandidateExtractionResult(scanned=len(records))
+            for record in records:
+                for draft in self._drafts_from_record(record):
+                    if result.created >= max_candidates:
+                        result.skipped += 1
+                        continue
+                    existing = self.memory._get_by_dedup_key_with_connection(conn, draft.dedup_key)
+                    if existing:
+                        self.memory._refresh_candidate_with_connection(
+                            conn, existing.id, source_session_id=record.session_id,
+                            project_id=record.project_id, domain=draft.domain,
+                            tags=draft.tags, reason=draft.reason,
+                            source_evidence_ids=draft.source_evidence_ids,
+                            needs_review=draft.needs_review, review_note=draft.review_note,
+                        )
+                        result.skipped += 1
+                        continue
+                    item = self.memory._create_candidate_with_connection(
+                        conn, text=draft.text, summary=draft.summary,
+                        memory_type=draft.memory_type, confidence=draft.confidence,
+                        source_session_id=record.session_id, project_id=record.project_id,
+                        domain=draft.domain, tags=draft.tags, reason=draft.reason,
+                        source_evidence_ids=draft.source_evidence_ids,
+                        needs_review=draft.needs_review, review_note=draft.review_note,
+                        dedup_key=draft.dedup_key,
+                    )
+                    result.created += 1
+                    result.candidates.append(item.id)
         return result
 
-    def _records_for_session(self, session_id: str) -> list[EvidenceRecord]:
-        with self.evidence.db.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM evidence_records
-                WHERE session_id = ?
-                ORDER BY created_at ASC, id ASC
-                """,
-                (session_id,),
-            ).fetchall()
+    def _records_for_session(self, session_id: str, conn) -> list[EvidenceRecord]:
+        rows = conn.execute(
+            """
+            SELECT * FROM evidence_records
+            WHERE session_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (session_id,),
+        ).fetchall()
         return [self.evidence._record_from_row(row) for row in rows_to_dicts(rows)]
-
-    def _refresh_existing_candidate(self, item_id: str, record: EvidenceRecord, draft: CandidateDraft) -> None:
-        item = self.memory.get(item_id)
-        if item is None or item.status not in {MemoryStatus.CANDIDATE, MemoryStatus.REJECTED}:
-            return
-        with self.memory.db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE memory_items
-                SET source_session_id = ?, project_id = ?, domain = ?, tags = ?,
-                    reason = ?, source_evidence_ids = ?, needs_review = ?,
-                    review_note = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    record.session_id,
-                    record.project_id,
-                    draft.domain,
-                    json.dumps(draft.tags, ensure_ascii=False),
-                    draft.reason,
-                    json.dumps(draft.source_evidence_ids, ensure_ascii=False),
-                    1 if draft.needs_review else 0,
-                    draft.review_note,
-                    datetime.now().isoformat(timespec="seconds"),
-                    item_id,
-                ),
-            )
 
     def _drafts_from_record(self, record: EvidenceRecord) -> list[CandidateDraft]:
         if not self._is_user_record(record):

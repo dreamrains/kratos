@@ -313,6 +313,7 @@ class TestRewindUI:
                 {"role": "assistant", "content": "answer 3"},
             ],
             session_id,
+            extra_meta={"publication_schema":"answer_bindings.v2"},
         )
 
         app = create_app()

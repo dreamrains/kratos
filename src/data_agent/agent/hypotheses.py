@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import re
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,7 @@ from data_agent.config import get_config
 # Relation vocabulary for model-proposed, host-validated evidence relations.
 _RELATION_TYPES = ("supports", "refutes")
 _OBSERVED_DIRECTIONS = ("increased", "decreased", "flat")
+_CAUSAL_METHODS = {"causal", "ab_test", "experiment", "did", "difference_in_differences"}
 _TAG_CLAIM_TYPES = {"primary": "descriptive", "alternative": "causal", "baseline": "statistical"}
 _DECIDED_STATUSES = {"supported", "refuted", "contested"}
 
@@ -71,6 +74,7 @@ def persist_hypothesis_set(session_id: str, hypothesis_set: dict[str, Any]) -> d
         "count": len(hypotheses),
         "status_summary": _status_summary(hypotheses),
         "artifact_path": str(path),
+        "sha256": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
     }
 
 
@@ -209,39 +213,27 @@ def _finite_decimal(value: Any) -> Decimal | None:
     return number if number.is_finite() else None
 
 
-def receipt_verified_hypothesis_measurements(
-    state: Any, evidence_records: list[dict[str, Any]],
-) -> dict[str, dict[str, dict[str, Any]]]:
-    """Verify descriptive relation values against current immutable tool results.
-
-    This reads the existing receipt detail through its digest/version checker;
-    model-filled EvidenceRecord values only become comparable candidates.
-    Missing context, stale data, ambiguous receipts and unsupported methods
-    leave the relation unassessed rather than inventing a new result source.
-    """
+def _current_bound_hypothesis_results(state: Any, evidence_records: list[dict[str, Any]]):
+    """Yield current result details only through exact EvidenceRecord bindings."""
     from data_agent.agent.context import get_current_context
     from data_agent.tools.result_reference import load_result_reference
 
     context = get_current_context()
     if context is None or getattr(context, "analysis_state", None) is not state:
-        return {}
+        return
     receipts = {
         str(receipt.get("id")): receipt for receipt in getattr(state, "tool_receipts", []) or []
         if isinstance(receipt, dict) and receipt.get("id")
     }
-    verified: dict[str, dict[str, dict[str, Any]]] = {}
-    seen_evidence_ids: set[str] = set()
+    id_counts = Counter(str(record.get("id") or "") for record in evidence_records if isinstance(record, dict))
     for record in evidence_records:
         if not isinstance(record, dict):
             continue
         evidence_id = str(record.get("id") or "")
         ids = record.get("tool_receipt_ids")
         bindings = record.get("result_bindings")
-        if evidence_id in seen_evidence_ids:
-            verified.pop(evidence_id, None)
-            continue
-        seen_evidence_ids.add(evidence_id)
-        if (not evidence_id or not isinstance(ids, list) or not ids
+        if (not evidence_id or id_counts[evidence_id] != 1
+                or not isinstance(ids, list) or not ids
                 or any(not isinstance(item, str) for item in ids) or len(ids) != len(set(ids))
                 or not isinstance(bindings, list) or len(bindings) != len(ids)):
             continue
@@ -251,11 +243,13 @@ def receipt_verified_hypothesis_measurements(
         }
         if len(binding_by_id) != len(ids) or set(binding_by_id) != set(ids):
             continue
-        checked: dict[str, dict[str, Any]] = {}
-        ambiguous: set[str] = set()
         for receipt_id in ids:
             receipt = receipts.get(receipt_id)
             if not receipt or receipt.get("tool_name") not in {"compare_periods", "analyze_time_series"}:
+                continue
+            # A newly recorded candidate cannot grant a previous plan's
+            # successful result authority over this plan's hypothesis.
+            if not record.get("plan_id") or receipt.get("plan_id") != record["plan_id"]:
                 continue
             identity = receipt.get("structured_result_sha256")
             binding = binding_by_id[receipt_id]
@@ -274,53 +268,112 @@ def receipt_verified_hypothesis_measurements(
             if (not isinstance(result, dict) or loaded.get("result_sha256") != identity
                     or loaded.get("data_identities") != receipt.get("data_identities")):
                 continue
-            measurements = record.get("measurements")
-            if not isinstance(measurements, list):
+            yield evidence_id, record, receipt, result
+
+
+def receipt_verified_hypothesis_measurements(
+    state: Any, evidence_records: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Verify model-filled measurement candidates against current tool results."""
+    verified: dict[str, dict[str, dict[str, Any]]] = {}
+    ambiguous_by_record: dict[str, set[str]] = {}
+    for evidence_id, record, receipt, result in _current_bound_hypothesis_results(state, evidence_records):
+        checked = verified.setdefault(evidence_id, {})
+        ambiguous = ambiguous_by_record.setdefault(evidence_id, set())
+        args = receipt["arguments"]
+        receipt_id = receipt["id"]
+        measurements = record.get("measurements")
+        if not isinstance(measurements, list):
+            continue
+        for measurement in measurements:
+            if not isinstance(measurement, dict):
                 continue
-            for measurement in measurements:
-                if not isinstance(measurement, dict):
+            metric = measurement.get("metric")
+            if not isinstance(metric, str) or not metric or metric in ambiguous:
+                continue
+            value = None
+            direction = None
+            if receipt["tool_name"] == "compare_periods":
+                metrics = result.get("metrics")
+                item = metrics.get(metric) if isinstance(metrics, dict) else None
+                if isinstance(item, dict):
+                    a, b, diff = (_finite_decimal(item.get(key)) for key in ("period_a", "period_b", "diff"))
+                    if (a is not None and b is not None and diff is not None
+                            and abs(b - a - diff) <= Decimal("0.00015")):
+                        value = diff
+            else:
+                inferred = result.get("inferred_columns")
+                inferred_col = (inferred.get("value_col") if isinstance(inferred, dict) else None)
+                explicit_col = args.get("target_col") or args.get("value_col")
+                if explicit_col and inferred_col and explicit_col != inferred_col:
                     continue
-                metric = measurement.get("metric")
-                if not isinstance(metric, str) or not metric or metric in ambiguous:
-                    continue
-                value = None
-                direction = None
-                if receipt["tool_name"] == "compare_periods":
-                    metrics = result.get("metrics")
-                    item = metrics.get(metric) if isinstance(metrics, dict) else None
-                    if isinstance(item, dict):
-                        a, b, diff = (_finite_decimal(item.get(key)) for key in ("period_a", "period_b", "diff"))
-                        if (a is not None and b is not None and diff is not None
-                                and abs(b - a - diff) <= Decimal("0.00015")):
-                            value = diff
-                else:
-                    inferred = result.get("inferred_columns")
-                    selected_col = args.get("target_col") or args.get("value_col") or (
-                        inferred if isinstance(inferred, dict) else {}
-                    ).get("value_col")
-                    trend = result.get("trend")
-                    if metric == selected_col and isinstance(trend, dict):
-                        value = _finite_decimal(trend.get("slope"))
-                        direction = {"up": "increased", "down": "decreased", "flat": "flat"}.get(trend.get("direction"))
-                if value is None:
-                    continue
-                inferred_direction = "increased" if value > 0 else "decreased" if value < 0 else "flat"
-                if direction is not None and direction != inferred_direction:
-                    continue
-                direction = inferred_direction
-                reported = _finite_decimal(measurement.get("delta") if "delta" in measurement else measurement.get("value"))
-                if reported is None or abs(reported - value) > Decimal("0.00015"):
-                    continue
-                if measurement.get("direction") not in (None, "", direction):
-                    continue
-                if metric in checked:
-                    ambiguous.add(metric)
-                    checked.pop(metric, None)
-                    continue
-                checked[metric] = {"value": str(value), "direction": direction, "receipt_id": receipt_id}
-        if checked:
-            verified[evidence_id] = checked
-    return verified
+                selected_col = inferred_col or explicit_col
+                trend = result.get("trend")
+                if metric == selected_col and isinstance(trend, dict):
+                    value = _finite_decimal(trend.get("slope"))
+                    direction = {"up": "increased", "down": "decreased", "flat": "flat"}.get(trend.get("direction"))
+            if value is None:
+                continue
+            inferred_direction = "increased" if value > 0 else "decreased" if value < 0 else "flat"
+            if direction is not None and direction != inferred_direction:
+                continue
+            direction = inferred_direction
+            reported = _finite_decimal(measurement.get("delta") if "delta" in measurement else measurement.get("value"))
+            if reported is None or abs(reported - value) > Decimal("0.00015"):
+                continue
+            if measurement.get("direction") not in (None, "", direction):
+                continue
+            if metric in checked:
+                ambiguous.add(metric)
+                checked.pop(metric, None)
+                continue
+            checked[metric] = {"value": str(value), "direction": direction, "receipt_id": receipt_id}
+    return {key: value for key, value in verified.items() if value}
+
+
+def receipt_verified_descriptive_directions(
+    state: Any, evidence_records: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Read a trend's target metric directly from a bound current receipt.
+
+    A descriptive `changed` hypothesis has a closed metric predicate. Its
+    direction is determined by the tool result, regardless of the model's
+    proposed measurement name or relation label. This grants no causal or
+    statistical relation.
+    """
+    verified: dict[str, dict[str, dict[str, Any]]] = {}
+    ambiguous_by_record: dict[str, set[str]] = {}
+    for evidence_id, _record, receipt, result in _current_bound_hypothesis_results(state, evidence_records):
+        if receipt.get("tool_name") != "analyze_time_series":
+            continue
+        args = receipt["arguments"]
+        inferred = result.get("inferred_columns")
+        inferred_metric = (inferred.get("value_col") if isinstance(inferred, dict) else None)
+        explicit_metric = args.get("target_col") or args.get("value_col")
+        # The tool may infer its numeric column when the caller passes only a
+        # dataset name. Its bound result, rather than model prose, records the
+        # column actually used. Conflicting explicit/inferred columns fail shut.
+        if (explicit_metric and inferred_metric and explicit_metric != inferred_metric):
+            continue
+        metric = inferred_metric or explicit_metric
+        trend = result.get("trend")
+        if not isinstance(metric, str) or not metric or not isinstance(trend, dict):
+            continue
+        slope = _finite_decimal(trend.get("slope"))
+        direction = {"up": "increased", "down": "decreased", "flat": "flat"}.get(trend.get("direction"))
+        if (slope is None or direction is None
+                or direction != ("increased" if slope > 0 else "decreased" if slope < 0 else "flat")):
+            continue
+        checked = verified.setdefault(evidence_id, {})
+        ambiguous = ambiguous_by_record.setdefault(evidence_id, set())
+        if metric in ambiguous:
+            continue
+        if metric in checked:
+            ambiguous.add(metric)
+            checked.pop(metric, None)
+            continue
+        checked[metric] = {"value": str(slope), "direction": direction, "receipt_id": receipt["id"]}
+    return {key: value for key, value in verified.items() if value}
 
 
 def update_hypotheses_from_evidence(
@@ -328,19 +381,20 @@ def update_hypotheses_from_evidence(
     evidence_records: list[dict[str, Any]],
     *,
     verified_measurements: dict[str, dict[str, dict[str, Any]]] | None = None,
+    verified_directions: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Recompute hypothesis relations from the current evidence snapshot.
 
     Text overlap only marks a candidate association (``related_evidence_ids``).
-    A hypothesis changes state only through structured, host-validated
-    relations: metric present, measured direction matching the proposal, and
-    the claim type decidable from this evidence's method. Supporting and
-    conflicting ids are recomputed on every call; a previously decided
-    hypothesis whose relations all disappear becomes ``stale`` instead of
-    silently reverting.
+    Structured proposals require receipt verification. A descriptive changed
+    predicate with one target metric may also be decided directly from a
+    current, bound trend receipt. Neither path upgrades causal or statistical
+    claims. Relations are recomputed on every call; a prior decided relation
+    that disappears becomes ``stale`` instead of silently persisting.
     """
     updated = dict(hypothesis_set)
     verified_measurements = verified_measurements or {}
+    verified_directions = verified_directions or {}
     set_plan = _text(hypothesis_set.get("plan_id"))
     set_dataset = _text(hypothesis_set.get("dataset"))
     scoped = [
@@ -386,6 +440,23 @@ def update_hypotheses_from_evidence(
                         "observed": _text(proposal.get("observed")),
                         "reason": reason,
                     })
+            rule = item.get("decision_rule") if isinstance(item.get("decision_rule"), dict) else {}
+            targets = rule.get("metrics")
+            if (item.get("claim_type") == "descriptive"
+                    and rule.get("predicate") == "changed"
+                    and isinstance(targets, list) and len(targets) == 1
+                    and isinstance(targets[0], str)
+                    and not any(relation.get("evidence_id") == record.get("id") for relation in relations)):
+                observed = verified_directions.get(_text(record.get("id")), {}).get(targets[0])
+                if isinstance(observed, dict) and observed.get("direction") in _OBSERVED_DIRECTIONS:
+                    direction = observed["direction"]
+                    relations.append({
+                        "evidence_id": _text(record.get("id")),
+                        "relation": "refutes" if direction == "flat" else "supports",
+                        "metric": targets[0], "observed": direction,
+                        "receipt_id": observed["receipt_id"],
+                        "basis": f"receipt-verified {targets[0]} trend direction = {direction}",
+                    })
         supporting_ids = [relation["evidence_id"] for relation in relations if relation["relation"] == "supports"]
         conflicting_ids = [relation["evidence_id"] for relation in relations if relation["relation"] == "refutes"]
 
@@ -408,12 +479,13 @@ def update_hypotheses_from_evidence(
         else:
             item["status"] = "proposed"
         if (
-            previous_status in _DECIDED_STATUSES
+            previous_status in _DECIDED_STATUSES | {"stale"}
             and not supporting_ids
             and not conflicting_ids
             and not related_ids
         ):
-            # 依赖证据全部失效：保留历史语义，标记失效而不是退回候选。
+            # A repeated refresh must not erase a prior version-loss verdict.
+            # Fresh evidence in this plan can still recompute the relation.
             item["status"] = "stale"
         hypotheses.append(item)
 
@@ -466,8 +538,6 @@ def hypotheses_prompt_brief(state: Any, hydrated: list[dict[str, Any]] | None = 
                 ][:3]
                 required = ", ".join(required_fields)
                 detail = f"；未决，需区分性证据：{required or '按假设要求补齐字段/方法'}"
-                # Give the one-shot repair round the validator's exact metric
-                # mismatch; a generic "no relation" message hid this in R3 M04.
                 for candidate in _list_items(hypothesis.get("relation_candidates"))[:2]:
                     if candidate.get("reason") != "metric_missing_in_evidence":
                         continue
@@ -525,7 +595,7 @@ def _route_templates(
                     ("metric", secondary_metric or rate_metric or "", bool(secondary_metric or rate_metric)),
                     ("date", date, True),
                 ]),
-                ["alternative"],
+                ["alternative", "metric_comparison"],
             ),
             (
                 f"{metric} changed because {dimension or 'a segment'} mix shifted between periods.",
@@ -534,7 +604,7 @@ def _route_templates(
                     ("dimension", dimension or "", bool(dimension)),
                     ("date", date, True),
                 ]),
-                ["alternative"],
+                ["alternative", "segment_comparison"],
             ),
             (
                 f"{metric} movement is consistent with normal baseline variation between periods.",
@@ -556,7 +626,7 @@ def _route_templates(
                     ("metric", secondary_metric or rate_metric or "", bool(secondary_metric or rate_metric)),
                     ("date", date, True),
                 ]),
-                ["alternative"],
+                ["alternative", "metric_comparison"],
             ),
             (
                 f"{metric} trend is concentrated in {dimension or 'one segment'} rather than broad-based.",
@@ -565,7 +635,7 @@ def _route_templates(
                     ("dimension", dimension or "", bool(dimension)),
                     ("date", date, True),
                 ]),
-                ["alternative"],
+                ["alternative", "segment_comparison"],
             ),
             (
                 f"{metric} changes are consistent with baseline noise over time.",
@@ -634,7 +704,7 @@ def _unsupported_hypothesis(
 
 
 def _decision_rule(
-    claim: str,
+    route: str,
     claim_type: str,
     tags: list[str],
     requirements: list[dict[str, Any]],
@@ -656,10 +726,8 @@ def _decision_rule(
         and _text(requirement.get("field"))
     ]
     predicate = ""
-    if claim_type == "descriptive" and tags and tags[0] == "primary":
-        claim_lower = claim.lower()
-        if "changed" in claim_lower or "trend" in claim_lower:
-            predicate = "changed"
+    if claim_type == "descriptive" and tags and tags[0] == "primary" and route in {"period_compare","trend"}:
+        predicate = "changed"
     return {"metrics": metrics, "predicate": predicate}
 
 
@@ -683,9 +751,18 @@ def _hypothesis(
         "claim": claim,
         "status": status,
         "claim_type": claim_type,
-        "decision_rule": _decision_rule(claim, claim_type, tags, requirements),
+        "decision_rule": _decision_rule(route, claim_type, tags, requirements),
         "verification_level": _verification_level(requirements, field_roles),
         "evidence_requirements": requirements,
+        "distinguishing_test": {
+            "kind": ("metric_comparison" if "metric_comparison" in tags else
+                     "segment_comparison" if "segment_comparison" in tags else
+                     "baseline_comparison" if claim_type == "statistical" and "baseline" in tags else ""),
+            "metric": _first_role(field_roles, "metrics") or _first_role(field_roles, "rate_metrics"),
+            "date": _first_role(field_roles, "date"),
+            "comparison_metric": _secondary_role(field_roles, "metrics", _first_role(field_roles, "metrics")) or _first_role(field_roles, "rate_metrics"),
+            "dimension": _first_role(field_roles, "dimensions"),
+        },
         "related_evidence_ids": [],
         "evidence_relations": [],
         "supporting_evidence_ids": [],
@@ -693,6 +770,34 @@ def _hypothesis(
         "limitations": limitations,
         "tags": tags,
     }
+
+
+def hypothesis_distinguishing_step(hypothesis: dict[str, Any]) -> str:
+    """Present a pending action from the registered host producer's roles.
+
+    This only describes evidence still needed; it runs no comparison and
+    grants no relation. Historical records without the structured purpose
+    keep their existing gap rather than being parsed from their prose.
+    """
+    spec = hypothesis.get("distinguishing_test")
+    if not isinstance(spec, dict) or not spec.get("kind"):
+        return ""
+    metric, date = spec.get("metric"), spec.get("date")
+    if not metric or not date:
+        return "所需字段缺口：当前原件尚未核定目标指标或日期角色；无法列出具体区分检验。"
+    if spec["kind"] == "metric_comparison":
+        other = spec.get("comparison_metric")
+        if not other or other == metric:
+            return "所需字段缺口：当前原件尚未核定可对照的其他指标角色；不从列名猜测。"
+        return f"待做指标对照（尚未执行）：按 {date} 对齐，在相同窗口对照 {metric} 与 {other} 的变化；描述性同变不能证明因果，仍需可比对照或随机分配等有效设计证据。"
+    if spec["kind"] == "segment_comparison":
+        dimension = spec.get("dimension")
+        if not dimension:
+            return "所需字段缺口：当前原件尚未核定分组字段角色；不从列名猜测。"
+        return f"待做分组对照（尚未执行）：按 {dimension} 分组并按 {date} 对齐，在相同窗口比较各组占比与组内 {metric} 变化；描述比较不能证明因果。"
+    if spec["kind"] == "baseline_comparison":
+        return f"待做基线检验（尚未执行）：收集 {metric} 在 {date} 上的可比历史重复窗口，对照当前变化与基线波动；当前描述测量不能排除噪声解释，不表示已完成显著性检验。"
+    return ""
 
 
 def _field_roles(contract: dict[str, Any]) -> dict[str, list[str]]:

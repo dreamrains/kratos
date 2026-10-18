@@ -486,6 +486,20 @@ class TestClassifyTask:
 
 # ── 6. _format_turn_intent_prompt ────────────────────────────
 
+def test_explicit_hypothesis_prompt_orders_existing_plan_before_relations():
+    from data_agent.agent.intent import TurnIntent
+
+    intent = TurnIntent(
+        intent_type="directed_analysis", clarity="clear", data_state="data_loaded",
+        analysis_stage="discover", recommended_action="analyze",
+        execution_readiness="ready", reason="test", ambiguities=[],
+    )
+    prompt = _format_turn_intent_prompt(intent, "请提出并检验至少两种竞争性假设")
+    assert "先调用现有 record_analysis_plan" in prompt
+    assert "当前计划的关系" in prompt
+    ordinary = _format_turn_intent_prompt(intent, "show revenue trend")
+    assert "先调用现有 record_analysis_plan" not in ordinary
+
 
 class TestFormatTurnIntentPrompt:
     """Test turn intent prompt formatting."""

@@ -289,11 +289,10 @@ def test_complete_matching_task_from_evidence(tmp_path):
         analysis_spec_id="spec_1",
     )
 
-    assert completed == [task["id"]]
+    assert completed == []
     updated = mgr.get(task["id"])
-    assert updated["status"] == "completed"
-    assert updated["evidence_ids"] == ["ev_1"]
-    assert updated["completed_by"] == "evidence"
+    assert updated["status"] != "completed" and not updated["evidence_ids"]
+    assert mgr.update(task["id"],status="completed")["status"]=="completed"  # General todo capability remains.
 
 
 def test_evidence_completes_analysis_spec_plan_when_terms_do_not_match(tmp_path):
@@ -348,11 +347,12 @@ def test_evidence_completes_analysis_spec_plan_when_terms_do_not_match(tmp_path)
         analysis_spec_id="spec_1",
     )
 
-    assert completed == [cohort["id"], forecast["id"]]
-    assert mgr.get(cohort["id"])["status"] == "completed"
-    assert mgr.get(forecast["id"])["status"] == "completed"
-    assert mgr.get(confirmation["id"])["status"] == "superseded"
-    assert [t["id"] for t in mgr.list_active_for_scope(session_id="s1")] == [cohort["id"], forecast["id"]]
+    assert completed == []
+    assert mgr.get(cohort["id"])["status"] != "completed"
+    assert mgr.get(forecast["id"])["status"] != "completed"
+    assert mgr.get(confirmation["id"])["status"] != "superseded"
+    assert {t["id"] for t in mgr.list_active_for_scope(session_id="s1")} == {cohort["id"],forecast["id"],confirmation["id"]}
+
 
 
 def test_format_list_uses_active_plan_scope(tmp_path):
@@ -366,3 +366,102 @@ def test_format_list_uses_active_plan_scope(tmp_path):
 
     assert "New active" in output
     assert "Old pending" not in output
+
+
+# S3: registry entrypoints must honor the manager's existing session/project scope.
+import pytest
+from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.session.workspace import Workspace
+
+@pytest.fixture
+def task_tool_scope(tmp_path, monkeypatch):
+    from data_agent.tools import task_tools
+    from data_agent.tools.registry import registry
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    monkeypatch.setattr(task_tools, "task_manager", mgr)
+    ctx = AgentContext(session_id="current", project_name="P", workspace=Workspace())
+    own = mgr.create("OWN", session_id="current", project_name="P")
+    foreign = mgr.create("PRIVATE_OTHER_SESSION", session_id="other", project_name="P")
+    peer = mgr.create("PRIVATE_OTHER_PROJECT", session_id="current", project_name="Q")
+    with use_agent_context(ctx):
+        yield mgr, registry, own, foreign, peer
+
+@pytest.mark.parametrize("scope", ["session", "project"])
+@pytest.mark.parametrize("tool", ["task_get", "task_update", "task_update_batch"])
+def test_task_tool_scope_rejects_foreign_identity_without_disclosure_or_write(task_tool_scope, scope, tool):
+    mgr, registry, own, foreign, peer = task_tool_scope
+    target = foreign if scope == "session" else peer
+    before = {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")}
+    args = {"task_id": target["id"]}
+    name = tool
+    if tool == "task_update": args["status"] = "completed"
+    elif tool == "task_update_batch":
+        name = "task_update"
+        args = {"updates": json.dumps([{"task_id":own["id"],"status":"completed"},{"task_id":target["id"],"status":"deleted"}])}
+    result = registry.execute(name, args)
+    assert "error" in json.loads(result.summary), result.summary
+    assert "PRIVATE" not in result.summary
+    assert {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")} == before
+
+@pytest.mark.parametrize("key", ["addBlocks", "addBlockedBy"])
+@pytest.mark.parametrize("batch", [False, True])
+def test_task_tool_scope_rejects_foreign_dependencies_before_any_write(task_tool_scope, key, batch):
+    mgr, registry, own, foreign, _ = task_tool_scope
+    before = {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")}
+    update = {"task_id":own["id"], "status":"in_progress", key:[foreign["id"]]}
+    args = {"updates":json.dumps([update])} if batch else dict(update, **{key:json.dumps(update[key])})
+    result = registry.execute("task_update", args)
+    assert "error" in json.loads(result.summary), result.summary
+    assert {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")} == before
+
+@pytest.mark.parametrize("fault", ["session", "project", "top_project"])
+def test_task_tool_scope_create_cannot_inject_foreign_owner_or_change_active_plan(task_tool_scope, fault):
+    mgr, registry, own, foreign, _ = task_tool_scope
+    plan = mgr.create_plan(session_id="current", project_name="P", goal="original")
+    before = {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")}
+    bad = {"subject":"injected"}
+    bad["session_id" if fault == "session" else "project_name"] = "other" if fault == "session" else "Q"
+    args = {"tasks":json.dumps([{"subject":"valid first"},bad])} if fault != "top_project" else {"subject":"bad", "project_name":"Q"}
+    result = registry.execute("task_create", args)
+    assert "error" in json.loads(result.summary), result.summary
+    assert {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")} == before
+    assert mgr.get_active_plan_id("current","P") == plan["id"]
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_task_tool_scope_same_scope_lifecycle_and_dependencies_remain_usable(task_tool_scope, batch):
+    mgr, registry, own, foreign, peer = task_tool_scope
+    args = {"tasks":json.dumps([{"subject":"new"}])} if batch else {"subject":"new"}
+    created = json.loads(registry.execute("task_create",args).summary)
+    task = created["tasks"][0] if batch else created
+    assert task["session_id"] == "current" and task["project_name"] == "P"
+    got = json.loads(registry.execute("task_get",{"task_id":task["id"]}).summary)
+    assert got["subject"] == "new"
+    update = {"task_id":task["id"],"status":"in_progress", "addBlocks":[own["id"]]}
+    args = {"updates":json.dumps([update])} if batch else dict(update,addBlocks=json.dumps(update["addBlocks"]))
+    changed = json.loads(registry.execute("task_update",args).summary)
+    assert "error" not in changed
+    assert mgr.get(task["id"])["status"] == "in_progress"
+    assert mgr.get(own["id"])["blockedBy"] == [task["id"]]
+    complete = registry.execute("task_update", {"task_id":task["id"], "status":"completed"})
+    assert "error" not in json.loads(complete.summary)
+    assert mgr.get(task["id"])["status"] == "completed" and mgr.get(own["id"])["blockedBy"] == []
+    listed = registry.execute("task_list",{}).summary
+    assert "PRIVATE" not in listed and "new" in listed
+    assert mgr.get(foreign["id"])["status"] == mgr.get(peer["id"])["status"] == "pending"
+
+
+@pytest.mark.parametrize("fault", ["global", "missing", "owner_change", "bad_id", "bad_dependency"])
+def test_task_tool_scope_adjacent_invalid_or_unowned_targets_are_atomic(task_tool_scope, fault):
+    mgr, registry, own, foreign, peer = task_tool_scope
+    global_task = mgr.create("PRIVATE_GLOBAL")
+    before = {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")}
+    change = {"task_id":own["id"], "status":"completed"}
+    if fault == "global": change["task_id"] = global_task["id"]
+    elif fault == "missing": change["task_id"] = 999999
+    elif fault == "owner_change": change["project_name"] = "Q"
+    elif fault == "bad_id": change["task_id"] = True
+    else: change["addBlocks"] = "not an ID array"
+    result = registry.execute("task_update",{"updates":json.dumps([change])})
+    assert "error" in json.loads(result.summary),result.summary
+    assert "PRIVATE" not in result.summary
+    assert {p.name:p.read_bytes() for p in mgr.dir.glob("*.json")} == before

@@ -36,8 +36,19 @@ node --check src\data_agent\web\static\js\app.js
 git diff --check
 ```
 
-## 已停用的验收体系
+## 当前验收入口与历史退役范围
 
-旧矩阵、真实浏览器和真实 Provider 验收已从可执行测试树移除，在重新设计前不得运行。历史结果不属于当前源码的回归证据，也不能用离线通过替代浏览器或 Provider 结论。
+本树唯一进度计划是 [可信发布重建总计划](../docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md)。旧浏览器框架的退役记录保留在 [历史退役说明](../docs/testing/retired-browser-provider-matrix.md)，不表示当前全部演练/Provider脚本被删除或禁止准备。
 
-保留的设计边界和未来重建要求见 [退役的浏览器与 Provider 矩阵](../docs/testing/retired-browser-provider-matrix.md)。
+| 入口 | 当前职责与边界 |
+| --- | --- |
+| run_regression.py | Provider禁止的quick/full-offline/slow-offline；完整离线不能代替app/视觉/自然验收 |
+| run_p7_browser_rehearsal.py | 唯一隔离Provider禁用正常app入口；新目录、空闲端口、先health，按AGENTS选控制路线 |
+| run_p08_real_matrix.py、run_p08_http_matrix.py | 独立真实Provider launcher/HTTP driver及同一账本；只能用于重新精确冻结并明确授权的批次，不能驱动禁用演练 |
+| p08_scenario_audit.py、p08_real_matrix_contract.json | 原离线审计与场景模板；模板不是授权freeze，原散文/统计摘要不能替代v2回执claim或自然oracle |
+| offline_tool_surface_smoke.py、dependency_preflight.py | 原隔离工具边界与依赖核对；相应测试保留 |
+| run_golden_answer_quality.py、run_multifile_quality_scenarios.py | 原质量与多源输入准备能力；真实模型生成另授权 |
+
+完整Provider禁用app批次必须预先冻结精确输入/顺序/选项/oracle，记录service exec/PID/port、上传票据SHA、SSE每轮唯一终态、durable状态/导出和runtime transport=0。HTTP-only picker/可见图表/浏览器刷新/console均unassessed；视觉使用官方IAB能力另签收。不新建浏览器框架或调用账本。
+
+publication_synthesis.py/publication_audit.py旧源码已经精确退役；同名测试文件已迁入新行为，仍有实际回归职责。不能按“旧名字”整删测试，也不能删除原失败目录或字节备份。2026-10-02准备清理仅移除两处无调用helper，共16行，其他AST/原函数名保持，证据见唯一计划和 `tmp/p4-preparation-20261002-r2/test-helper-retirement.json`。

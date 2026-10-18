@@ -54,11 +54,51 @@ def assign_reply_ids(messages: list[dict]) -> None:
         elif message.get("role") == "assistant":
             current = current or message.get("reply_id") or "reply_" + uuid.uuid4().hex
             message["reply_id"] = current
+            if message.get("answer_ref"):
+                current = None
+
+
+def _expanded_public_history(messages: list[dict], session_id: str, visited=None) -> list[dict]:
+    """Restore display history, never use the generated context summary as a reply."""
+    from data_agent.session.history import read_canonical_transcript
+    visited = set() if visited is None else visited
+    for index, message in enumerate(messages):
+        reference = message.get("canonical_transcript")
+        if not reference:
+            continue
+        try:
+            identity = (reference["filename"], reference["sha256"])
+            if identity in visited or len(visited) >= 32:
+                raise ValueError("Canonical transcript cycle or budget exceeded")
+            visited.add(identity)
+            _, archived = read_canonical_transcript(session_id, reference)
+            inherited = message.get("inherited_from")
+            if inherited:
+                archived = [dict(item) for item in archived]
+                for item in archived:
+                    item.setdefault("inherited_from", inherited)
+                    if item.get("answer_ref"):
+                        item["inherited_answer_ref"] = dict(item.pop("answer_ref"), session_id=inherited)
+                        for key in ("answer_id", "answer_sha256"):
+                            item.pop(key, None)
+            start = index + 2 if index + 1 < len(messages) and _is_compaction_ack(messages, index + 1) else index + 1
+            recent = messages[start:]
+            # The archived input includes the retained recent turn. Match the
+            # exact suffix before joining, so each original reply appears once.
+            overlap = max((n for n in range(1, min(len(archived), len(recent)) + 1)
+                           if archived[-n:] == recent[:n]), default=0)
+            return messages[:index] + _expanded_public_history(archived, session_id, visited) + _expanded_public_history(recent[overlap:], session_id, visited)
+        except (ValueError, OSError, KeyError, TypeError, UnicodeError):
+            start = index + 2 if index + 1 < len(messages) and _is_compaction_ack(messages, index + 1) else index + 1
+            return messages[:index] + [{"role": "assistant", "content": "历史归档不可核，原答案暂不可展示。"}] + messages[start:]
+    return messages
 
 
 def public_messages(messages: list[dict], session_id: str = "") -> list[dict]:
+    messages = _expanded_public_history(messages, session_id) if session_id else messages
     projected = []
     current_reply = None
+    accepted_replies = set()
     for index, message in enumerate(messages):
         item = dict(message)
         if item.get("publication_rejected") is True:
@@ -70,7 +110,11 @@ def public_messages(messages: list[dict], session_id: str = "") -> list[dict]:
         elif item.get("role") == "assistant":
             # Read-only compatibility for old sessions; no migration writes.
             anchor = json.dumps([session_id, index, messages[:index + 1]], sort_keys=True, ensure_ascii=False, default=str)
-            current_reply = current_reply or item.get("reply_id") or "legacy_" + hashlib.sha256(anchor.encode()).hexdigest()
+            stored_reply = item.get("reply_id")
+            if item.get("answer_ref") and stored_reply:
+                current_reply = stored_reply
+            else:
+                current_reply = current_reply or (stored_reply if stored_reply not in accepted_replies else None) or "legacy_" + hashlib.sha256(anchor.encode()).hexdigest()
             item["reply_id"] = current_reply
         content = item.get("content")
         if item.get("role") == "user" and isinstance(content, str):
@@ -82,6 +126,9 @@ def public_messages(messages: list[dict], session_id: str = "") -> list[dict]:
                     item["content"] = value[start + len(marker):end].strip() or "已确认"
                     item["is_confirmation_response"] = True
         projected.append(item)
+        if item.get("role") == "assistant" and item.get("answer_ref"):
+            accepted_replies.add(item["reply_id"])
+            current_reply = None
     return projected
 
 
@@ -94,7 +141,7 @@ def assistant_replies(messages: list[dict], session_id: str = "") -> list[dict]:
         if role == "user":
             current = None
         elif role == "assistant":
-            if current is None:
+            if current is None or current["reply_id"] != message["reply_id"]:
                 current = {"content": "", "chart_paths": [], "reply_id": message["reply_id"]}
                 replies.append(current)
             if isinstance(content, str) and content.strip():
@@ -103,13 +150,12 @@ def assistant_replies(messages: list[dict], session_id: str = "") -> list[dict]:
             # one accepted terminal message.  Keep the server-owned terminal
             # publication binding with the grouped reply; exports must never
             # guess it from the latest packet in the session.
-            for key in (
-                "publication_packet_id", "publication_snapshot_digest",
-                "answer_sha256", "publication_artifact_path",
-            ):
-                value = message.get(key)
-                if isinstance(value, str) and value:
-                    current[key] = value
+            if message.get("answer_ref"):
+                current["answer_id"] = message["answer_id"]
+                current["answer_ref"] = dict(message["answer_ref"])
+                current["answer_sha256"] = message["answer_sha256"]
+                # One accepted terminal body owns the export, never pre-tool prose.
+                current["content"] = message["content"]
         elif role == "tool" and current is not None and isinstance(content, str):
             current["chart_paths"].extend(re.findall(r"Chart saved:\s*(sessions/\S+\.html)", content))
     return replies

@@ -47,4 +47,13 @@ def test_web_manager_injects_auxiliary_for_each_new_or_reconstructed_loop(tmp_pa
 
     assert len(clients) == 3
     assert [loop.auxiliary_llm_client for loop in (first, second, restored)] == clients
-    assert AgentManager().get_or_create("normal").auxiliary_llm_client.max_tokens == 300
+    normal = AgentManager().get_or_create("normal")
+    assert normal.auxiliary_llm_client.max_tokens == normal.client.max_tokens
+
+
+def test_auxiliary_requested_outputs_use_acceptance_output_ceiling():
+    from data_agent.agent.loop import AgentLoop
+
+    loop = AgentLoop(client=llm.LLMClient(max_tokens=65_536))
+    assert loop.auxiliary_llm_client.max_tokens == 65_536
+    assert loop.auxiliary_llm_client.timeout == loop.client.timeout

@@ -35,7 +35,7 @@ class ToolCall:
 
 
 class Response:
-    __slots__ = ("text", "tool_calls", "finish_reason", "reasoning_content", "completion_tokens")
+    __slots__ = ("text", "tool_calls", "finish_reason", "reasoning_content", "completion_tokens", "prompt_tokens", "cached_tokens", "estimated_cost")
 
     def __init__(
         self,
@@ -44,12 +44,17 @@ class Response:
         finish_reason: str = "stop",
         reasoning_content: str = "",
         completion_tokens: Optional[int] = None,
+        prompt_tokens: Optional[int] = None,
+        cached_tokens: Optional[int] = None,
     ):
         self.text = text
         self.tool_calls = tool_calls or []
         self.finish_reason = finish_reason
         self.reasoning_content = reasoning_content
         self.completion_tokens = completion_tokens
+        self.prompt_tokens = prompt_tokens
+        self.cached_tokens = cached_tokens
+        self.estimated_cost = None
 
     @property
     def has_tool_calls(self) -> bool:
@@ -87,6 +92,20 @@ def _sanitize(text: str) -> str:
     return text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
 
+def _usage_fields(usage):
+    def field(obj, key):
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+    def count(value):
+        return value if type(value) is int and value >= 0 else None
+    prompt = count(field(usage, "prompt_tokens"))
+    if prompt is None: prompt = count(field(usage, "input_tokens"))
+    completion = count(field(usage, "completion_tokens"))
+    if completion is None: completion = count(field(usage, "output_tokens"))
+    cached = count(field(field(usage, "prompt_tokens_details"), "cached_tokens"))
+    if prompt is not None and cached is not None and cached > prompt: cached = None
+    return {"prompt_tokens": prompt, "completion_tokens": completion, "cached_tokens": cached}
+
+
 def _parse_response(resp: Any) -> Response:
     """将 LiteLLM 响应转换为统一的 Response 对象。"""
     choice = resp.choices[0]
@@ -107,14 +126,14 @@ def _parse_response(resp: Any) -> Response:
             tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
 
     usage = getattr(resp, "usage", None)
-    completion_tokens = getattr(usage, "completion_tokens", None) if usage is not None else None
+    counters = _usage_fields(usage)
 
     return Response(
         text=text,
         tool_calls=tool_calls,
         finish_reason=choice.finish_reason or "stop",
         reasoning_content=reasoning,
-        completion_tokens=completion_tokens,
+        **counters,
     )
 
 
@@ -136,6 +155,8 @@ class LLMClient:
         self.api_base = api_base or cfg.api_base
         self.api_key = api_key or cfg.api_key
         self.max_tokens = max_tokens if max_tokens is not None else cfg.max_tokens
+        self._budget_config = cfg
+        self.last_request_budget = None
         self.timeout = timeout or self._DEFAULT_TIMEOUT
         self.temperature = temperature
         self.transport = transport
@@ -165,8 +186,37 @@ class LLMClient:
                          timeout=timeout or self.timeout, temperature=self.temperature,
                          transport=self.transport, request_policy=request_policy or ONE_SHOT)
 
+    def _admit_request(self, kwargs):
+        from .request_policy import resolve_request_budget
+        policy = resolve_request_budget(self.model_id, self._budget_config, kwargs.get("max_tokens"))
+        self.last_request_budget = policy.admit(kwargs["messages"], kwargs.get("tools"), response_format=kwargs.get("response_format"))
+        return self.last_request_budget
+
+    def _observe_response(self, response):
+        cfg = self._budget_config
+        prompt, output, cached = response.prompt_tokens, response.completion_tokens, response.cached_tokens
+        incoming_rate = getattr(cfg, "input_cost_per_million", None)
+        output_rate = getattr(cfg, "output_cost_per_million", None)
+        cached_rate = getattr(cfg, "cached_input_cost_per_million", None)
+        currency = getattr(cfg, "cost_currency", None)
+        # A quote requires actual counters and explicit endpoint prices. Missing
+        # usage or cached pricing is unknown, never a fabricated zero charge.
+        if (prompt is not None and output is not None and cached is not None
+                and incoming_rate is not None and output_rate is not None and currency
+                and (cached == 0 or cached_rate is not None)):
+            amount = ((prompt-cached)*incoming_rate + cached*(cached_rate or 0) + output*output_rate) / 1_000_000
+            import math
+            if math.isfinite(amount):
+                response.estimated_cost = {"amount": amount, "currency": currency, "basis": "provider_usage_and_configured_endpoint_rates"}
+        logger.info("LLM usage", extra={"extra_data": {"model": self.model_id,
+                    "prompt_tokens": prompt, "completion_tokens": output, "cached_tokens": cached,
+                    "estimated_cost": response.estimated_cost}})
+        return response
+
     def _request(self, kwargs):
         # Disable nested SDK retries: every physical attempt traverses this seam.
+        self._admit_request(kwargs)
+        logger.info("LLM request budget", extra={"extra_data": {"model": self.model_id, **self.last_request_budget}})
         if self._cancelled.is_set():
             raise RuntimeError("LLM request cancelled before admission")
         result_queue: queue.Queue = queue.Queue(maxsize=1)
@@ -273,7 +323,8 @@ class LLMClient:
         limits = iter(self.request_policy.output_token_limits)
         for attempt in range(self.request_policy.max_attempts):
             try:
-                response = _parse_response(self._request(kwargs))
+                self._admit_request(kwargs)
+                response = self._observe_response(_parse_response(self._request(kwargs)))
             except self._RETRYABLE:
                 if attempt + 1 == self.request_policy.max_attempts:
                     raise
@@ -290,10 +341,11 @@ class LLMClient:
             kwargs["response_format"] = response_format
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        return _parse_response(self._request(kwargs))
+        self._admit_request(kwargs)
+        return self._observe_response(_parse_response(self._request(kwargs)))
 
     def stream_chat_structured(self, messages, tools=None, system=None):
-        kwargs = {**self._base_kwargs(messages, tools, system), "stream": True}
+        kwargs = {**self._base_kwargs(messages, tools, system), "stream": True, "stream_options": {"include_usage": True}}
         limits = iter(self.request_policy.output_token_limits)
         for attempt in range(self.request_policy.max_attempts):
             published = False
@@ -325,9 +377,11 @@ class LLMClient:
 
     def _stream_attempt(self, kwargs):
         full_text, reasoning = "", ""
-        finish_reason, completion_tokens = None, None
+        finish_reason = None
+        counters = _usage_fields(None)
         tc_accum = {}
         self._received_delta = False
+        self._admit_request(kwargs)
         stream = self._request(kwargs)
         with self._stream_lock:
             self._active_stream = stream
@@ -339,7 +393,7 @@ class LLMClient:
                     return
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
-                    completion_tokens = getattr(usage, "completion_tokens", completion_tokens)
+                    counters.update({k:v for k,v in _usage_fields(usage).items() if v is not None})
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -383,8 +437,8 @@ class LLMClient:
             calls.append(ToolCall(entry["id"], entry["name"], arguments))
         if finish_reason is None:
             raise RuntimeError("Provider stream ended without finish_reason")
-        yield StreamComplete(Response(text=full_text, tool_calls=calls, finish_reason=finish_reason,
-                                      reasoning_content=reasoning, completion_tokens=completion_tokens))
+        yield StreamComplete(self._observe_response(Response(text=full_text, tool_calls=calls, finish_reason=finish_reason,
+                                      reasoning_content=reasoning, **counters)))
 
     def stream_chat(self, messages, tools=None, system=None):
         stream = self.stream_chat_structured(messages, tools, system)

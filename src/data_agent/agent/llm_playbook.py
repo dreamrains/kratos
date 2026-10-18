@@ -11,6 +11,16 @@ import re
 import threading
 from typing import Optional
 
+from data_agent.utils.logging import get_logger
+
+logger = get_logger("llm_playbook")
+
+
+def _selection_result(reason_code):
+    # Only bounded host classifications; never include response or exception text.
+    logger.info("LLM playbook result", extra={"extra_data": {
+        "event": "llm_playbook_result", "reason_code": reason_code}})
+
 _PLAYBOOK_CATALOG = """
 ## 可用 Playbook 列表
 
@@ -197,28 +207,36 @@ def select_playbook_llm(
             response = client.chat(messages, **kwargs)
         else:
             response = _call_with_timeout(client.chat, (messages,), kwargs, 8)
-    except (_TimeoutException, Exception):
+    except (_TimeoutException, TimeoutError):
+        _selection_result("timeout")
+        return None
+    except Exception:
+        _selection_result("exception")
         return None
 
     if not response or not response.text:
+        _selection_result("empty")
         return None
 
     parsed = _extract_json(response.text)
     if parsed is None:
+        _selection_result("invalid_json")
+        return None
+    if not isinstance(parsed, dict):
+        _selection_result("wrong_shape")
         return None
 
     primary = parsed.get("primary", "")
-    if not primary:
-        return None
-
     from data_agent.agent.method_playbooks import PLAYBOOKS
-    if primary not in PLAYBOOKS:
+    if not isinstance(primary, str) or primary not in PLAYBOOKS:
+        _selection_result("unknown_id")
         return None
 
     supporting = parsed.get("supporting", [])
     if not isinstance(supporting, list):
         supporting = []
-    supporting = [s for s in supporting if s in PLAYBOOKS and s != primary][:2]
+    supporting = [s for s in supporting if isinstance(s, str) and s in PLAYBOOKS and s != primary][:2]
+    _selection_result("ok")
 
     return {
         "primary": primary,

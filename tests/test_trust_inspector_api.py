@@ -40,7 +40,7 @@ def test_workbench_endpoint_returns_bounded_empty_contract(tmp_path):
         _restore_state(cfg, *previous)
 
 
-def test_workbench_endpoint_projects_only_current_verified_conclusions(tmp_path):
+def test_workbench_endpoint_does_not_promote_annotation_reports(tmp_path):
     cfg, *previous = _use_tmp_state(tmp_path)
     session_id = "workbench_session"
     state_path = _write_state(tmp_path, session_id, {
@@ -54,16 +54,16 @@ def test_workbench_endpoint_projects_only_current_verified_conclusions(tmp_path)
     before = state_path.read_text(encoding="utf-8")
     try:
         from data_agent.agent.analysis_state import load_analysis_state
-        from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
         from data_agent.web.app import create_app
 
         state = load_analysis_state(session_id)
-        state.verification_reports = [{"passed_evidence_ids": ["ev_sales"], "evidence_fingerprint": _evidence_fingerprint(state, state.evidence_records)}]
+        state.verification_reports = [{"passed_evidence_ids": ["ev_sales"], "evidence_fingerprint": 'd5bff43303205a55'}]
         state_path.write_text(json.dumps(state.to_dict(), ensure_ascii=False), encoding="utf-8")
         payload = create_app().test_client().get(f"/api/sessions/{session_id}/trust").get_json()
 
         assert payload["status"] == "ready"
-        assert payload["workbench"]["verified_conclusions"] == [{"id": "ev_sales", "claim": "Revenue declined.", "summary": "-10%", "confidence": "high", "dataset": "sales"}]
+        assert payload["workbench"]["verified_conclusions"] == []
+        assert payload["workbench"]["verified_total"] == 0
         assert "artifact_path" not in json.dumps(payload)
         assert state_path.read_text(encoding="utf-8") != before
     finally:
@@ -80,5 +80,31 @@ def test_workbench_endpoint_does_not_project_scope_or_relationship_diagnostics(t
         assert payload["workbench"]["verified_total"] == 0
         assert payload["workbench"]["pending_findings"] == []
         assert set(payload["workbench"]) == {"verified_conclusions", "verified_total", "pending_findings"}
+    finally:
+        _restore_state(cfg, *previous)
+
+
+def test_analysis_state_endpoint_emits_strict_json_without_changing_raw_measurements(tmp_path):
+    cfg, *previous = _use_tmp_state(tmp_path)
+    sid = "state_nonfinite"
+    try:
+        path = _write_state(tmp_path, sid, {"session_id":sid, "evidence_records":[
+            {"id":"ev_actual", "dataset":"orders", "measurements":[
+                {"metric":"amount", "value":120},
+                {"metric":"undefined_statistic", "value":float("nan")},
+                {"metric":"unbounded_statistic", "value":float("inf")},
+                {"metric":"negative_unbounded", "value":-float("inf")}
+            ]}]})
+        before = path.read_bytes()
+        from data_agent.web.app import create_app
+        response = create_app().test_client().get(f"/api/sessions/{sid}/analysis")
+        def invalid_constant(value): raise AssertionError("nonstandard JSON constant: "+value)
+        payload = json.loads(response.get_data(as_text=True), parse_constant=invalid_constant)
+        assert response.status_code == 200
+        assert [m["value"] for m in payload["state"]["evidence_records"][0]["measurements"]] == [120,None,None,None]
+        assert payload["summary"]["evidence_records"] == 1
+        assert path.read_bytes() == before
+        projection = create_app().test_client().get(f"/api/sessions/{sid}/trust").get_json()
+        assert projection["workbench"]["verified_conclusions"] == []
     finally:
         _restore_state(cfg, *previous)

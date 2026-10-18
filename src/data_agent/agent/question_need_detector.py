@@ -7,6 +7,7 @@ from datetime import date
 import re
 
 from data_agent.agent.multi_file_scope import build_material_ambiguity_groups
+from data_agent.agent.artifact_refs import hydrate_refs, unassessed_trust_records
 
 
 BLOCKED_SURFACES_ALL = ["direct_recommendation", "analysis_execution", "report_generation"]
@@ -61,6 +62,13 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
     if state is None or _intent_type(intent) in _CONSULTING_INTENTS:
         return empty_question_need()
 
+    if _host_full_table_count(state):
+        return empty_question_need()
+    unresolved = unassessed_trust_records(state)
+    if unresolved:
+        return dict(empty_question_need(), status="unassessed", reason="trust_record_unassessed: "
+            + "; ".join(dict.fromkeys(r["trust_resolution"]["reason"] for r in unresolved)))
+
     ambiguity_groups = build_material_ambiguity_groups(state, user_goal=user_input)
     if ambiguity_groups:
         return _file_scope_question(ambiguity_groups[0])
@@ -68,7 +76,9 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
     text = (user_input or "").lower()
     routes = _scoped_routes(state)
 
-    if _is_vague_route_request(intent) and len(routes) > 1 and not explicit_task_reason(text):
+    if (_is_vague_route_request(intent) and len(routes) > 1
+            and not explicit_task_reason(text)
+            and not has_source_bound_delivery(user_input, intent)):
         return _hard_gate(
             "route_selection",
             "Multiple data-supported analysis routes are available and the user goal is vague.",
@@ -80,7 +90,7 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
 
     route = _infer_route(text, routes)
     if route:
-        risk_fields = _required_field_risks(route, _list_attr(state, "cleaning_logs"))
+        risk_fields = _required_field_risks(route, hydrate_refs(_list_attr(state, "cleaning_logs"), trust_records=True))
         if risk_fields:
             return _hard_gate(
                 "data_quality_confirmation",
@@ -92,6 +102,9 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
             )
 
     if route and _route_direction(route) == "period_compare" and not _has_time_window(text):
+        from data_agent.agent.confirmation.runtime import host_curve_sensitivity_without_window
+        if host_curve_sensitivity_without_window():
+            return empty_question_need()
         return _hard_gate(
             "time_window",
             "Period comparison requires explicit comparison windows.",
@@ -292,6 +305,21 @@ def _intent_type(intent: Any) -> str:
     return _text(getattr(intent, "intent_type", ""))
 
 
+def has_source_bound_delivery(user_input: str, intent: Any) -> bool:
+    """A concrete deliverable from this user turn outranks internal route choice.
+
+    This is only a routing signal. The extracted kind does not authorize a
+    numerical claim, conditional action, or answer-coverage status.
+    """
+    for output in getattr(intent, "requested_outputs", []) or []:
+        if (isinstance(output, dict)
+                and output.get("kind") in {"result", "conditional_action"}
+                and isinstance(output.get("exact_span"), str)
+                and output["exact_span"] in (user_input or "")):
+            return True
+    return False
+
+
 # P08-03: 明确任务动词合取规则。只有"任务动词＋假设/解释对象"或显式
 # 枚举子任务才视为明确任务；单纯出现"假设"等词不算。
 _HYPOTHESIS_OBJECT_MARKERS = ("竞争性假设", "竞争假设", "替代解释", "至少两种解释", "多个解释")
@@ -339,7 +367,7 @@ def _is_vague_route_request(intent: Any) -> bool:
 def _scoped_routes(state: Any) -> list[dict[str, Any]]:
     active_dataset = _active_dataset(state)
     routes = []
-    for route in _list_attr(state, "route_proposals"):
+    for route in hydrate_refs(_list_attr(state, "route_proposals"), trust_records=True):
         dataset = _text(route.get("dataset"))
         if active_dataset and dataset and dataset != active_dataset:
             continue
@@ -392,6 +420,12 @@ def _route_options(routes: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, Any]]) -> list[str]:
     required = set(_required_fields(route))
+    selected = _host_required_metrics()
+    roles = route.get("field_roles", {})
+    if selected is not None and isinstance(roles, dict):
+        required.difference_update(_text_list(roles.get("metrics")))
+        required.difference_update(_text_list(roles.get("rate_metrics")))
+        required.update(selected)
     if not required:
         return []
     route_dataset = _text(route.get("dataset"))
@@ -421,13 +455,61 @@ def _required_fields(route: dict[str, Any]) -> list[str]:
     if direction in {"trend", "period_compare", "dimension_decomposition", "funnel"}:
         fields.extend(_text_list(roles.get("metrics")))
         fields.extend(_text_list(roles.get("rate_metrics")))
+    if direction == "dimension_decomposition":
+        fields.extend(_text_list(roles.get("dimensions")))
+    if direction == "cohort":
+        fields.extend(_text_list(roles.get("ids")))
     return _dedupe(fields)
+
+
+def _host_full_table_count(state):
+    from data_agent.agent.context import get_current_context
+    from data_agent.agent.confirmation.runtime import _host_confirmation_binding
+    ctx = get_current_context()
+    if ctx is None or ctx.analysis_state is not state:
+        return False
+    binding = _host_confirmation_binding(ctx, ctx.workspace_scope)
+    if binding is None:
+        return False
+    selected = {r["id"] for r in binding["requirements"]}
+    requirements = [r for r in state.answer_requirements if r.get("id") in selected]
+    from data_agent.agent.confirmation.runtime import _full_table_count_requirements
+    return _full_table_count_requirements(requirements)
+
+
+def _host_required_metrics():
+    from data_agent.agent.context import get_current_context
+    from data_agent.agent.confirmation.runtime import _host_confirmation_binding
+    ctx = get_current_context()
+    if ctx is None:
+        return None
+    binding = _host_confirmation_binding(ctx, ctx.workspace_scope)
+    if binding is None:
+        return None
+    scopes = [r["business_scope"] for r in binding["requirements"]]
+    if not scopes or any(not isinstance(scope.get("metrics"), list) or not scope["metrics"] for scope in scopes):
+        return None
+    required = {metric for scope in scopes for metric in scope["metrics"]}
+    # Declared formula operands and field parameters remain dependencies even
+    # when the displayed metric is a derived name. This reads structured scope.
+    pending = [scope.get("parameters", {}) for scope in scopes]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            required.update(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, str):
+            required.add(value)
+    return required
+
 
 
 def _metric_candidates(state: Any) -> list[str]:
     metrics: list[str] = []
     active_dataset = _active_dataset(state)
-    for contract in _list_attr(state, "dataset_contracts"):
+    for contract in hydrate_refs(_list_attr(state, "dataset_contracts"), trust_records=True):
         dataset = _text(contract.get("dataset"))
         if active_dataset and dataset and dataset != active_dataset:
             continue

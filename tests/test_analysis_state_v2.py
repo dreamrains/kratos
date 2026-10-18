@@ -209,14 +209,14 @@ class TestSetAnalysisPlan:
         plan = state.set_analysis_plan({"goal": "analyze", "method_plan": []})
         assert state.stage == "plan"
         assert state.analysis_plan == plan
-        assert state.analysis_spec == plan  # aliased
+        assert state.analysis_spec is None  # display advice never gains execution authority
 
     def test_set_analysis_spec_same_behavior(self):
         state = AnalysisSessionState(session_id="s1", stage="scope")
         spec = state.set_analysis_spec({"goal": "analyze"})
         assert state.stage == "plan"
         assert state.analysis_spec == spec
-        assert state.analysis_plan == spec
+        assert state.analysis_plan is None
 
 
 class TestAddEvidenceRecord:

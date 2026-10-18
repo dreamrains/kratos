@@ -8,6 +8,16 @@ from typing import Optional
 from data_agent.config import get_config
 
 
+def _write_rule_file(path: Path, content: str) -> None:
+    """Commit one UTF-8 rule snapshot; preserve old bytes on caught failures."""
+    from data_agent.utils.atomic_files import rollback_atomic_writes, write_bytes_atomic
+
+    encoded = content.encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rollback_atomic_writes():
+        write_bytes_atomic(path, encoded)
+
+
 class ProjectRules:
     """管理 project_rules.md 项目规则文件，支持全局 + 对象 + 会话三层。"""
 
@@ -20,11 +30,11 @@ class ProjectRules:
     def load(self) -> str:
         """加载规则文件内容。"""
         if self.path.exists():
-            self._content = self.path.read_text(encoding="utf-8")
+            content = self.path.read_bytes().decode("utf-8")
         else:
-            self._content = self._default_rules()
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(self._content, encoding="utf-8")
+            content = self._default_rules()
+            _write_rule_file(self.path, content)
+        self._content = content
         self._loaded = True
         return self._content
 
@@ -36,9 +46,9 @@ class ProjectRules:
 
     def update(self, new_content: str) -> str:
         """更新规则文件。"""
+        _write_rule_file(self.path, new_content)
         self._content = new_content
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(new_content, encoding="utf-8")
+        self._loaded = True
         return f"项目规则已更新: {self.path}"
 
     # ── 三层合并 ──────────────────────────────────────────
@@ -76,7 +86,7 @@ class ProjectRules:
     def _load_session_rules(self, session_id: str) -> str:
         path = self._session_knowledge_path(session_id)
         if path.exists():
-            text = path.read_text(encoding="utf-8").strip()
+            text = path.read_bytes().decode("utf-8").strip()
             if text:
                 return text
         return ""
@@ -84,8 +94,7 @@ class ProjectRules:
     def update_session_rules(self, session_id: str, new_content: str) -> str:
         """更新会话级规则文件。"""
         path = self._session_knowledge_path(session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_content, encoding="utf-8")
+        _write_rule_file(path, new_content)
         return f"会话 '{session_id}' 的规则已更新"
 
     # ── 对象层读写 ─────────────────────────────────────────
@@ -97,7 +106,7 @@ class ProjectRules:
     def _load_object_rules(self, object_name: str) -> str:
         path = self._object_knowledge_path(object_name)
         if path.exists():
-            text = path.read_text(encoding="utf-8").strip()
+            text = path.read_bytes().decode("utf-8").strip()
             if text:
                 return text
         return ""
@@ -105,8 +114,7 @@ class ProjectRules:
     def update_object_rules(self, object_name: str, new_content: str) -> str:
         """更新对象级规则文件。"""
         path = self._object_knowledge_path(object_name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_content, encoding="utf-8")
+        _write_rule_file(path, new_content)
         return f"对象 '{object_name}' 的规则已更新"
 
     # ── 知识提升与迁移 ─────────────────────────────────────
@@ -120,7 +128,7 @@ class ProjectRules:
         obj_path = self._object_knowledge_path(object_name)
         obj_content = ""
         if obj_path.exists():
-            obj_content = obj_path.read_text(encoding="utf-8").strip()
+            obj_content = obj_path.read_bytes().decode("utf-8").strip()
 
         # 追加会话规则到对象规则
         merged = obj_content
@@ -129,8 +137,7 @@ class ProjectRules:
         else:
             merged = sess_content
 
-        obj_path.parent.mkdir(parents=True, exist_ok=True)
-        obj_path.write_text(merged, encoding="utf-8")
+        _write_rule_file(obj_path, merged)
         return {"promoted": True}
 
     def migrate_between_objects(
@@ -141,14 +148,14 @@ class ProjectRules:
         if not from_path.exists():
             return {"migrated": False, "reason": "旧对象无规则"}
 
-        from_content = from_path.read_text(encoding="utf-8").strip()
+        from_content = from_path.read_bytes().decode("utf-8").strip()
         if not from_content:
             return {"migrated": False, "reason": "旧对象规则为空"}
 
         to_path = self._object_knowledge_path(to_object)
         to_content = ""
         if to_path.exists():
-            to_content = to_path.read_text(encoding="utf-8").strip()
+            to_content = to_path.read_bytes().decode("utf-8").strip()
 
         # 合并
         merged = to_content
@@ -157,8 +164,7 @@ class ProjectRules:
         else:
             merged = from_content
 
-        to_path.parent.mkdir(parents=True, exist_ok=True)
-        to_path.write_text(merged, encoding="utf-8")
+        _write_rule_file(to_path, merged)
         return {"migrated": True}
 
     def _default_rules(self) -> str:

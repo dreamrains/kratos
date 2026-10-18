@@ -228,9 +228,9 @@ class TestDataLoading:
         assert "Error" not in r1
         assert "Error" not in r2
 
-        listing = list_data()
-        assert "sales" in listing
-        assert "game" in listing
+        listing = __import__("json").loads(list_data())
+        assert "sales" in listing["datasets"]
+        assert "game" in listing["datasets"]
 
     def test_load_detects_injection_patterns(self, tmp_path, clean_workspace):
         """检测数据中的注入模式。"""
@@ -471,7 +471,13 @@ class TestConversationFlow:
         reply = loop.run_turn(f"Analyze revenue decline by channel using {csv_path}. Include limitations.")
 
         assert "Suggested next analyses" not in reply
-        assert "Final analysis" in reply
+        from data_agent.session.history import load_session
+        from data_agent.agent.publication.runtime import read_answer
+        terminal=load_session(loop.session_id)["messages"][-1]
+        accepted=read_answer(loop.session_id,terminal["answer_ref"])
+        assert any(c["label"]=="记录数" and c["value"]==50 for c in accepted["source_snapshot"]["claims"])
+        assert accepted["requirement_outcomes"][0]["status"]!="answered"
+        assert "Final analysis" not in accepted["body"]
         with use_agent_context(loop.context):
             assert loop.context.workspace.list_datasets()
         self._assert_final_guard_history_is_not_user_visible(loop)
@@ -523,7 +529,13 @@ class TestConversationFlow:
         streamed_text = "".join(ev["text"] for ev in events if ev.get("type") == "text_delta")
 
         assert "Suggested next analyses" not in streamed_text
-        assert "Final analysis" in streamed_text
+        from data_agent.session.history import load_session
+        from data_agent.agent.publication.runtime import read_answer
+        terminal=load_session(loop.session_id)["messages"][-1]
+        accepted=read_answer(loop.session_id,terminal["answer_ref"])
+        assert any(c["label"]=="记录数" and c["value"]==50 for c in accepted["source_snapshot"]["claims"])
+        assert accepted["requirement_outcomes"][0]["status"]!="answered"
+        assert "Final analysis" not in accepted["body"]
         self._assert_final_guard_history_is_not_user_visible(loop)
 
     def test_streaming_without_guard_buffers_final_text_until_completion(self, clean_workspace):
@@ -535,10 +547,13 @@ class TestConversationFlow:
                 self.completed = False
 
             def stream_chat_structured(self, messages, tools=None, system=""):
-                yield StreamTextDelta("Hello")
-                yield StreamTextDelta(", world")
+                from data_agent.agent.publication.runtime import snapshot_for_turn
+                from data_agent.agent.publication.contracts import encode
+                snap=snapshot_for_turn(loop)
+                raw=encode({"schema":"answer_bindings.v2","snapshot_digest":snap.digest,"sections":[{"requirement_ids":[r["id"] for r in snap.as_dict()["requirements"]],"parts":[{"kind":"text","purpose":"knowledge","text":"Hello, world","claim_refs":[]}]}]})
+                yield StreamTextDelta(raw)
                 self.completed = True
-                yield StreamComplete(Response(text="Hello, world"))
+                yield StreamComplete(Response(text=raw))
 
             def chat(self, messages, tools=None, system=""):
                 raise AssertionError("streaming test should not fall back to chat")
@@ -549,14 +564,17 @@ class TestConversationFlow:
 
         events = loop.stream_turn("hello")
 
-        first = next(events)
-        assert first["type"] == "llm_call_start"
-        second = next(events)
-        assert second == {"type": "text_delta", "text": "Hello, world", "turn_id": None}
-        assert fake.completed is True
+        try:
+            first = next(events)
+            assert first["type"] == "llm_call_start"
+            second = next(events)
+            assert second == {"type": "text_delta", "text": "Hello, world", "turn_id": None}
+            assert fake.completed is True
 
-        remaining = list(events)
-        assert not [ev for ev in remaining if ev.get("type") == "text_delta"]
+            remaining = list(events)
+            assert not [ev for ev in remaining if ev.get("type") == "text_delta"]
+        finally:
+            events.close()
 
 
 class TestSuspensionFlow:
@@ -937,7 +955,7 @@ class TestSessionPersistence:
         )
 
         try:
-            save_session(msgs, session_id)
+            save_session(msgs, session_id,extra_meta={"publication_schema":"answer_bindings.v2"})
 
             mgr = AgentManager()
             loop = mgr.get_or_create(session_id=session_id)
@@ -1035,6 +1053,26 @@ class TestDataTransforms:
         )
         assert "Error" not in result or "sort" in result.lower() or "排序" in result
 
+    def test_datetime_pivot_columns_cross_json_receipt_boundary(self, clean_workspace):
+        """Datetime pivot labels become stable string schema identifiers."""
+        from data_agent.session.workspace import workspace
+        from data_agent.tools.data_transform import transform_data
+
+        workspace.add("long_dates", pd.DataFrame({
+            "source": ["a", "a"],
+            "date": pd.to_datetime(["2026-09-01", "2026-09-02"]),
+            "amount": [10, 11],
+        }))
+        payload = json.loads(transform_data(
+            name="long_dates", operation="pivot",
+            pivot_index="source", pivot_columns="date", pivot_values="amount",
+            save_as="wide_dates",
+        ))
+        assert payload["columns"] == [
+            "source", "2026-09-01 00:00:00", "2026-09-02 00:00:00",
+        ]
+        assert list(workspace.get("wide_dates").columns) == payload["columns"]
+
     def test_nonexistent_dataset(self, loaded_workspace):
         """操作不存在的数据集。"""
         from data_agent.tools.data_transform import transform_data
@@ -1086,7 +1124,7 @@ class TestDataAnalysisTools:
         df["single_group"] = "A"
         workspace.add("single_grp", df)
         result = ab_test("single_grp", group_col="single_group", metric_col="订单金额")
-        assert "Error" in result or "至少需要" in result
+        assert json.loads(result)["error_type"] == "invalid_ab_groups"
 
 
 # ============================================================
@@ -1239,8 +1277,8 @@ class TestRealDataEndToEnd:
         from data_agent.tools.data_io import load_data, list_data
 
         load_data(str(GAME_BANNER), name="banner")
-        listing = list_data()
-        assert "banner" in listing
+        listing = __import__("json").loads(list_data())
+        assert "banner" in listing["datasets"]
 
     def test_ecard_order_pipeline(self, clean_workspace):
         """省钱卡订单完整流程。"""

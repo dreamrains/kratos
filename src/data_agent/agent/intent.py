@@ -12,7 +12,7 @@ Two-layer architecture:
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 
 from data_agent.file_formats import SUPPORTED_DATA_EXTENSIONS
@@ -54,6 +54,10 @@ class TurnIntent:
     execution_readiness: ExecutionReadiness = "missing_data"
     reason: str = ""
     ambiguities: list[dict] = field(default_factory=list)
+    continuation_of_plan_id: str = ""
+    requested_outputs: list[dict] = field(default_factory=list)
+    upload_bindings: list[dict] = field(default_factory=list)
+    measurement_mappings: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -198,6 +202,8 @@ def plan_turn_intent(
     session_context: str = "",
     *,
     llm_client=None,
+    current_plan_id: str = "",
+    enrich_requested_outputs: bool = False,
 ) -> TurnIntent:
     """Two-layer intent classification: fast rules → LLM fallback."""
     text = (user_input or "").lower().strip()
@@ -207,15 +213,20 @@ def plan_turn_intent(
     # ── Layer 1: Fast rule path ──
     fast_result = _try_fast_path(text, data_state, readiness)
 
-    # If fast path is confident, return immediately (no LLM cost)
-    if fast_result is not None and fast_result.clarity == "clear":
+    # The application makes one semantic decision for the whole turn. Rules
+    # remain the bounded fallback; the prompt builder must consume this result.
+    semantic_needed = enrich_requested_outputs and llm_client is not None
+    if fast_result is not None and fast_result.clarity == "clear" and not semantic_needed:
         return fast_result
-
-    # ── Layer 2: LLM semantic classification ──
-    # Triggered when fast path returns nothing or returns vague result
-    llm_result = _try_llm_classify(text, session_context, client=llm_client)
+    llm_result = _try_llm_classify(user_input, session_context, client=llm_client)
     if llm_result is not None:
-        intent_type, ambiguities = llm_result
+        intent_type, ambiguities = llm_result[:2]
+        if (fast_result is not None and fast_result.clarity=="clear"
+                and fast_result.intent_type in {"data_operation","directed_analysis","comprehensive_report"}
+                and intent_type=="simple_response"):
+            # An inconsistent semantic label cannot swallow a clear operation.
+            intent_type=fast_result.intent_type
+        proposed_plan_id = str(llm_result[2] or "") if len(llm_result) > 2 else ""
         return TurnIntent(
             intent_type=intent_type,
             clarity="vague" if ambiguities else "clear",
@@ -225,6 +236,10 @@ def plan_turn_intent(
             execution_readiness=readiness,
             reason="LLM语义分类",
             ambiguities=ambiguities,
+            requested_outputs=llm_result[3] if len(llm_result) > 3 else [],
+            upload_bindings=llm_result[4] if len(llm_result)>4 else [],
+            measurement_mappings=llm_result[5] if len(llm_result)>5 else [],
+            continuation_of_plan_id=(current_plan_id if current_plan_id and proposed_plan_id == current_plan_id else ""),
         )
 
     # ── Layer 3: Fallback ──
@@ -330,6 +345,12 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
     if analysis_state == "ambiguous":
         return None
     if operation_state == "affirmative" and analysis_state != "affirmative":
+        # An operation word inside a multi-clause request does not establish
+        # that the whole task is a data operation. Route the complete request
+        # through the existing semantic classifier, which can preserve its
+        # analysis goal and any business decision in one intent.
+        if len([part for part in re.split(r"[。；;！？!?\n]+", text) if part.strip()]) > 1:
+            return None
         if len(text) < 4:
             return _make(
                 "data_operation", "vague", data_state, "execute", "execute_operation",
@@ -444,12 +465,17 @@ def _action_for(intent_type: str, data_state: str, readiness: str | None = None)
     return "guide_analysis"
 
 
-def _try_llm_classify(text: str, session_context: str, *, client=None) -> tuple[str, list] | None:
+def _try_llm_classify(text: str, session_context: str, *, client=None) -> tuple[str, list, str] | None:
     try:
         from data_agent.agent.llm_intent import classify_intent_llm
         result = classify_intent_llm(text, session_context, client=client)
         if result is None:
             return None
-        return result["intent_type"], result.get("ambiguities", [])
+        return (
+            result["intent_type"], result.get("ambiguities", []),
+            str(result.get("continuation_of_plan_id") or ""),
+            result.get("requested_outputs", []),
+            result.get("upload_bindings", []), result.get("measurement_mappings", []),
+        )
     except Exception:
         return None

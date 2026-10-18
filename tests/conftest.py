@@ -11,6 +11,10 @@ os.environ.update({
     "API_KEY": "data-agent-offline-no-provider",
     "GOLDEN_LIVE_SMOKE": "0",
     "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "0",
+    # Explicit synthetic endpoint capacity; never used to authorize transport.
+    "MODEL_CONTEXT_TOKENS": "1000000",
+    "MODEL_MAX_OUTPUT_TOKENS": "128000",
+    "MODEL_TOKENIZER": "tiktoken:o200k_base",
 })
 
 

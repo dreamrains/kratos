@@ -8,6 +8,7 @@ from data_agent.config import get_config
 from data_agent.knowledge.evidence import EvidenceStore
 from data_agent.knowledge.library import KnowledgeLibrary
 from data_agent.knowledge.memory import MemoryStore
+from data_agent.knowledge.sqlite_store import search_limit
 from data_agent.knowledge.models import (
     ConflictRecord,
     ConflictSeverity,
@@ -81,10 +82,6 @@ def _query_terms(query: str) -> list[str]:
 
 def _escape(value: object) -> str:
     return html.escape(str(value), quote=True)
-
-
-def _positive_limit(limit: int) -> int:
-    return max(0, int(limit))
 
 
 def _knowledge_prompt_line(item: KnowledgeItem) -> str:
@@ -234,9 +231,9 @@ class KnowledgeRetrievalService:
     ) -> RetrievedContext:
         normalized_query = _normalize_query(query)
         search_query = " ".join(_query_terms(query)) or normalized_query
-        knowledge_limit = _positive_limit(knowledge_limit)
-        memory_limit = _positive_limit(memory_limit)
-        evidence_limit = _positive_limit(evidence_limit)
+        knowledge_limit = search_limit(knowledge_limit)
+        memory_limit = search_limit(memory_limit)
+        evidence_limit = search_limit(evidence_limit)
         knowledge_items = (
             self.library.search(search_query, domain=domain, limit=knowledge_limit)
             if knowledge_limit

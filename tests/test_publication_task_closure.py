@@ -97,7 +97,7 @@ def test_host_closes_open_tasks_at_publication_with_reason(ledger):
         task = ledger.get(tid)
         assert task["status"] == "closed_by_publication"
         assert task.get("closure_reason") == "superseded_by_publication"
-    assert ledger.get_active_plan_id("s3", "") == ""
+    assert ledger.get_active_plan_id("s3", "") == plan["id"]  # terminal scope remains read-only
 
 
 def test_closure_never_touches_other_sessions(ledger):

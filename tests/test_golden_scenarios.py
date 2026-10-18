@@ -8,6 +8,7 @@ free-form text.
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass, field
 from unittest.mock import patch
 from pathlib import Path
@@ -28,6 +29,7 @@ from data_agent.tools.registry import registry
 # Import only lightweight tools needed by the harness. This registers the tools
 # without requiring the full analytics dependency stack.
 from data_agent.tools import analysis_flow as _analysis_flow  # noqa: F401
+from data_agent.tools import eda as _eda  # noqa: F401
 from data_agent.tools import task_tools as _task_tools  # noqa: F401
 
 
@@ -57,18 +59,38 @@ class ScenarioResult:
     state: AnalysisSessionState
     tasks: list[dict[str, Any]]
     traces: list[ToolTrace]
+    answer: dict[str, Any] = field(default_factory=dict)
 
 
 class FakeLLMClient:
     def __init__(self, responses: list[Response]):
         self._responses = list(responses)
         self.calls: list[dict[str, Any]] = []
+        self.loop = None
 
     def chat(self, messages, tools=None, system=None) -> Response:
         self.calls.append({"messages": messages, "tools": tools, "system": system})
+        if system and system.startswith("审核数据相关开放片段"):
+            request = json.loads(messages[0]["content"])
+            return Response(text=json.dumps({"schema":"publication_audit.v2","snapshot_digest":request["snapshot_digest"],"draft_digest":request["draft_digest"],"decisions":[{"part_id":p["part_id"],"disposition":"accept","reason":"scripted mechanism; no natural audit claim","evidence_refs":p["requirement_ids"]} for p in request["parts"]]}))
         if not self._responses:
             raise AssertionError("FakeLLMClient exhausted responses")
-        return self._responses.pop(0)
+        if self.loop.context.turn_intent.intent_type=="directed_analysis" and not getattr(self,"declared",False):
+            self.declared=True
+            state=self.loop.context.analysis_state
+            goal=next(r for r in state.answer_requirements if r["semantic_kind"]=="result")
+            specs=[("measurement",{"datasets":["main"],"quantity":q}) for q in ["sum","difference","relative_change","rows","calendar_days"]] if self.loop.context.project_name=="golden_revenue_decline" else [("table",{"datasets":["main"]})]
+            plan={"contract_version":"stage3c0b.v2","requirement_revision":state.requirement_revision,"goal":goal["original_text"],"method_plan":[{"step_id":"golden","goal":"Original golden measurements","dataset_inputs":["main"],"combination_mode":"independent","expected_output":"Current products","evidence_requirements":["actual receipt"],"required_deliveries":[{"requirement_id":goal["id"],"kind":k,"scope":scope,"label":k+str(i)} for i,(k,scope) in enumerate(specs)]}],"visualization_strategy":[]}
+            return tool_response(tc("record_analysis_plan",{"plan_json":plan}))
+        response = self._responses.pop(0)
+        if response.has_tool_calls:
+            return response
+        from data_agent.agent.publication.runtime import snapshot_for_turn
+        snapshot = snapshot_for_turn(self.loop)
+        host = snapshot.as_dict()
+        parts = [{"kind":"claim","ref":c["id"]} for c in host["claims"] if any(c["id"] in r["claim_ids"] for r in host["requirements"])]
+        parts.append({"kind":"text","purpose":"knowledge" if host["mode"]=="consultation" else "interpretation","text":response.text,"claim_refs":[c["id"] for c in host["claims"]]})
+        return Response(text=json.dumps({"schema":"answer_bindings.v2","snapshot_digest":snapshot.digest,"sections":[{"requirement_ids":[r["id"] for r in host["requirements"] if not r["withdrawn"]],"parts":parts}]}))
 
 
 class ToolTraceRecorder:
@@ -121,27 +143,45 @@ def run_scenario(case: ScenarioCase, tmp_path: Path) -> ScenarioResult:
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
 
-    config._config = AgentConfig(PROJECT_DIR=tmp_path / case.name / "project", SESSIONS_DIR=tmp_path / case.name / "sessions")
-    task_manager._dir = tmp_path / case.name / "tasks"
+    # Keep Windows artifact paths below MAX_PATH while retaining per-case isolation.
+    case_key = hashlib.sha256(case.name.encode("utf-8")).hexdigest()[:8]
+    case_root = tmp_path.parent / "g" / case_key
+    config._config = AgentConfig(PROJECT_DIR=case_root / "project", SESSIONS_DIR=case_root / "sessions")
+    task_manager._dir = case_root / "tasks"
     task_manager._next_id_val = 0
 
     try:
-        loop = AgentLoop(client=FakeLLMClient(case.responses), session_id=f"{case.name}_session", project_name=case.name)
+        loop = AgentLoop(client=FakeLLMClient(case.responses), session_id=f"g_{case_key}", project_name=case.name)
         # The golden harness validates AgentLoop/tool/state behavior, not prompt
         # template rendering. Keeping the system prompt empty also avoids loading
         # optional heavy tool modules in the minimal test environment.
         loop._get_system_prompt = lambda: ""
+        loop.client.loop = loop
         with use_agent_context(loop.context):
             for name, df in case.datasets.items():
                 workspace.add(name, df)
 
         recorder = ToolTraceRecorder()
-        with recorder:
+        # Script only the semantic source selector, retaining the actual route,
+        # app loop, native tools and independently computed golden measurements.
+        intent = plan_turn_intent(case.user_input, "\n".join(case.datasets))
+        if case.expected_intent == "directed_analysis":
+            from data_agent.tools.data_io import _record_trust_workflow
+            with use_agent_context(loop.context):
+                for name,df in case.datasets.items():
+                    _record_trust_workflow(session_id=loop.session_id,state=loop.context.analysis_state,dataset=name,df=df,applied=[],needs_confirm=[],quality={},interpretation_data={},detail_path="")
+            intent.requested_outputs = [{"kind":"result","exact_span":case.user_input,'business_scope':{'datasets': ['main']}}, {"kind":"presentation","exact_span":case.user_input,"business_scope":{"datasets":["main"]}}]
+        with recorder, patch("data_agent.agent.intent.plan_turn_intent", return_value=intent):
             final_text = loop.run_turn(case.user_input)
 
         state = load_analysis_state(loop.session_id, case.name)
         tasks = task_manager.list_for_scope(session_id=loop.session_id, project_name=case.name)
-        return ScenarioResult(case=case, final_text=final_text, state=state, tasks=tasks, traces=recorder.traces)
+        from data_agent.session.history import load_session
+        from data_agent.agent.publication.runtime import read_answer
+        terminal = load_session(loop.session_id)["messages"][-1]
+        answer = read_answer(loop.session_id, terminal["answer_ref"])
+        assert answer["body"] == final_text and all(o["status"]=="answered" for o in answer["requirement_outcomes"])
+        return ScenarioResult(case=case, final_text=final_text, state=state, tasks=tasks, traces=recorder.traces, answer=answer)
     finally:
         config._config = old_cfg
         task_manager._dir = old_task_dir
@@ -180,7 +220,8 @@ def assert_legacy_spec_is_display_only(result: ScenarioResult):
     assert result.state.analysis_spec is not None
     assert result.state.analysis_spec.get("contract_version") is None
     workflow_tasks = [t for t in result.tasks if t.get("workflow_id") or t.get("node_type")]
-    assert workflow_tasks == []
+    assert workflow_tasks and all(t["status"] in {"completed","closed_by_publication"} for t in workflow_tasks)
+    assert all(t["analysis_plan_id"] == result.state.analysis_plan["id"] for t in workflow_tasks)
 
 
 def assert_tool_trace(result: ScenarioResult, *, includes: set[str]):
@@ -213,13 +254,13 @@ def savings_card_case() -> ScenarioCase:
         "missing_limitations": ["without a comparable control group, the conclusion is not causal"],
         "minimum_viable_analysis": "compare card users before/after purchase and benchmark against non-card users",
     }
-    confirmation_task = {
-        "subject": "confirm evaluation method",
-        "description": "Confirm whether to use before-after comparison plus a non-card control group.",
+    planning_task = {
+        "subject": "prepare evaluation data requirements",
+        "description": "List before-after, comparable non-card group and cost fields, and their limitations.",
         "workflow_id": "wf_savings_card",
-        "stage": "plan",
-        "node_type": "confirmation",
-        "expected_output": "confirmed method scope",
+        "stage": "scope",
+        "node_type": "analysis",
+        "expected_output": "data requirements and method limitations",
     }
     return ScenarioCase(
         name="golden_savings_card",
@@ -229,7 +270,7 @@ def savings_card_case() -> ScenarioCase:
         responses=[
             tool_response(
                 tc("record_data_requirement", {"requirement_json": json.dumps(requirement)}),
-                tc("task_create", confirmation_task),
+                tc("task_create", planning_task),
             ),
             text_response(
                 "Use card purchase, orders, subsidy cost, and a comparable non-card group. "
@@ -241,10 +282,11 @@ def savings_card_case() -> ScenarioCase:
 
 def revenue_decline_case() -> ScenarioCase:
     df = pd.DataFrame({
-        "month": ["2026-01", "2026-02", "2026-03", "2026-04"],
-        "channel": ["organic", "organic", "paid", "paid"],
-        "revenue": [1200, 1180, 900, 620],
-        "users": [100, 98, 85, 70],
+        "month": ["2026-01", "2026-01", "2026-02", "2026-02",
+                  "2026-03", "2026-03", "2026-04", "2026-04"],
+        "channel": ["organic", "paid"] * 4,
+        "revenue": [1200, 900, 1180, 850, 1170, 700, 1160, 620],
+        "users": [100, 85, 98, 82, 97, 76, 96, 70],
     })
     spec = {
         "goal": "explain revenue decline",
@@ -264,8 +306,8 @@ def revenue_decline_case() -> ScenarioCase:
         "claim": "paid channel is the main contributor to the decline",
         "dataset": "main",
         "method": "period comparison and channel decomposition",
-        "tool_calls": ["record_analysis_spec"],
-        "result_summary": "paid revenue fell from 900 to 620 while organic was nearly stable; price/user mix still needs validation",
+        "tool_calls": ["compare_periods"],
+        "result_summary": "paid revenue fell from 1750 to 1320 across matched two-month windows while organic moved from 2380 to 2330; price/user mix still needs validation",
         "limitations": ["descriptive attribution only", "small synthetic sample"],
         "confidence": "medium",
     }
@@ -278,6 +320,11 @@ def revenue_decline_case() -> ScenarioCase:
         responses=[
             tool_response(
                 tc("record_analysis_spec", {"spec_json": json.dumps(spec)}),
+                tc("compare_periods", {
+                    "name": "main", "date_col": "month", "metrics": "revenue,users",
+                    "period_a": "2026-01-01~2026-02-28",
+                    "period_b": "2026-03-01~2026-04-30", "dimensions": "channel",
+                }),
                 tc("record_evidence_record", {"record_json": json.dumps(evidence)}),
             ),
             text_response(
@@ -310,7 +357,7 @@ def funnel_case() -> ScenarioCase:
         "claim": "the largest drop is signup to trial",
         "dataset": "main",
         "method": "planned funnel_analysis on aggregate step counts",
-        "tool_calls": ["record_analysis_spec"],
+        "tool_calls": ["funnel_analysis"],
         "result_summary": "signup to trial keeps 300/620 users, lower than visit to signup; pay conversion also needs cohort validation",
         "limitations": ["aggregate data lacks user-level sequencing"],
         "confidence": "medium",
@@ -324,6 +371,10 @@ def funnel_case() -> ScenarioCase:
         responses=[
             tool_response(
                 tc("record_analysis_spec", {"spec_json": json.dumps(spec)}),
+                tc("funnel_analysis", {
+                    "name": "main", "mode": "aggregate", "step_col": "step",
+                    "count_col": "count", "steps": "visit,signup,trial,pay",
+                }),
                 tc("record_evidence_record", {"record_json": json.dumps(evidence)}),
             ),
             text_response(
@@ -339,7 +390,9 @@ def test_golden_savings_card_effect_evaluation(tmp_path):
     result = run_scenario(case, tmp_path)
 
     assert_state(result, has_requirement=True)
-    assert_task_workflow(result, min_tasks=1, node_types={"confirmation"})
+    assert_task_workflow(result, min_tasks=1, node_types={"analysis"})
+    assert not result.state.pending_confirmations
+    assert not any(t.get("node_type")=="confirmation" for t in result.tasks)
     assert_tool_trace(result, includes={"record_data_requirement", "task_create"})
     requirement_text = json.dumps(result.state.data_requirements, ensure_ascii=False).lower()
     for term in ("control", "cost", "retention", "causal"):
@@ -397,7 +450,15 @@ def test_golden_revenue_decline_attribution(tmp_path):
     task_text = json.dumps(result.state.analysis_spec, ensure_ascii=False).lower()
     for term in ("compare", "decompose", "exclude"):
         assert term in task_text
-    assert_final_boundary(result, ["limitation", "confidence"])
+    claims = result.answer["source_snapshot"]["claims"]
+    assert {c["label"]:c["value"] for c in claims if c["label"].startswith("revenue / paid")} == {
+        "revenue / paid：前期":1750, "revenue / paid：后期":1320,
+        "revenue / paid：差值":-430, "revenue / paid：相对变化":-24.57,
+    }
+    assert {c["value"] for c in claims if c["unit"]=="天" and c["basis_refs"][0]["result_path"][0] in {"period_a","period_b"}} == {59,61}
+    assert [c["value"] for c in claims if c["basis_refs"][0]["result_path"]==["combined","day_count"]] == [120]
+    assert "descriptive attribution" in result.final_text and "paid" in result.final_text
+    assert result.answer["audit_status"]=="reviewed"
 
 
 def test_golden_funnel_conversion_analysis(tmp_path):

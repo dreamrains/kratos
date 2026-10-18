@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import threading
 import uuid
@@ -96,6 +97,7 @@ _SUBSTANTIVE_TOOLS = {
 # substantive analysis. Keeping these concepts separate prevents presentation
 # follow-ups from losing their source/unit/version guardrails.
 _PUBLICATION_EVIDENCE_TOOLS = _SUBSTANTIVE_TOOLS | {
+    "list_data",
     "preview_data",
     "describe_dataset",
     "quick_profile",
@@ -162,13 +164,24 @@ _PUBLICATION_RECOVERY_MESSAGE = (
     "</publication_narrative_recovery>"
 )
 
+_MISSING_CONFIRMED_RESULT_RECOVERY_MESSAGE = (
+    "<confirmed_result_execution_recovery>\n"
+    "The user confirmed a business scope, but the requested result has no current computation receipt. "
+    "The scope choice alone does not complete the original analysis. Continue the normal task with available tools "
+    "for the original result; do not invent values or treat the confirmation as a measurement. "
+    "If the required input is absent, identify the exact missing input and leave the result uncomputed.\n"
+    "Rejection: {error}\n"
+    "</confirmed_result_execution_recovery>"
+)
+
 _FALLBACK_RESOLUTION_GUIDANCE = (
     "<fallback_resolution_guidance>\n"
-    "已执行的 Python 计算结果尚未沉淀。两条合法的继续路径：\n"
-    "1. 调用 record_evidence_record 把结果记录为证据（含口径、样本与限制）；\n"
-    "2. 直接给出最终答复——发布已观测范围内的描述性结论，并对无法支持的部分明确边界"
+    "已执行的 Python 计算结果尚未沉淀。可用现有 synthesize_time_series、compare_periods "
+    "或 transform_data 生成独立同版本计算回执；这些回执不自动验证 Python 输出。"
+    "也可调用 record_evidence_record 记录结果、口径、样本与限制；"
+    "或直接给出最终答复——发布已观测范围内的描述性结论，并对无法支持的部分明确边界"
     "（例如“无法预测 D30：仅观测到 D7，缺少 D8—D30 观测与验证窗口”）。\n"
-    "带证据边界的拒答是有效完成状态；不要继续探索性工具调用，也不要为未观测数值编造估计。\n"
+    "带证据边界的拒答是有效完成状态；不要继续无关探索性工具调用，也不要为未观测数值编造估计。\n"
     "</fallback_resolution_guidance>"
 )
 
@@ -179,6 +192,7 @@ _FALLBACK_RESOLUTION_GUIDANCE = (
 class FinalResponse:
     """Agent completed its answer."""
     content: str
+    execution_notice: str = ""
 
 
 @dataclass
@@ -272,7 +286,9 @@ class UserConfirmationRequired(Exception):
         related_spec_id: str = "",
         decision_context: dict | None = None,
         measurement_mapping: str = "",
+        reuse_decision_id: str = "",
     ):
+        self.reuse_decision_id = reuse_decision_id
         self.question = question
         self.options = options
         self.context = context
@@ -322,11 +338,6 @@ def _intent_to_budget_profile(intent_type: str) -> str:
     return "analysis"
 
 
-def _token_budget_for_profile(profile: str, token_threshold: int) -> int:
-    ratios = {"interactive": 0.3, "analysis": 0.7, "deep": 1.0}
-    return int(token_threshold * ratios.get(profile, 0.7))
-
-
 # 模块级 SkillLoader 实例（参考 s_full.py line 546: SKILLS = SkillLoader(SKILLS_DIR)）
 _skill_loader: Optional[SkillLoader] = None
 
@@ -335,8 +346,22 @@ _mcp_manager = None
 _mcp_bridge = None
 
 
-def get_skill_loader() -> Optional[SkillLoader]:
-    """供 skill_tools 等模块访问 SkillLoader。"""
+def get_skill_loader() -> SkillLoader:
+    """Resolve loading/injection against the current session."""
+    loader = get_global_skill_loader()
+    context = get_current_context()
+    return loader.for_session(context.session_id) if context is not None else loader
+
+
+def get_global_skill_loader() -> SkillLoader:
+    """One catalogue for global administration and all session views."""
+    global _skill_loader
+    from data_agent.config_resolver import resolve_skills_dirs
+    directories = resolve_skills_dirs()
+    if _skill_loader is None or _skill_loader._dirs != directories:
+        _skill_loader = SkillLoader(directories)
+        if get_config().skill_auto_discover:
+            _skill_loader.discover()
     return _skill_loader
 
 
@@ -447,7 +472,33 @@ def _create_loop_context_dispatch_descriptor(loop_context_operation):
 
 def _create_scope_guard_descriptor(loop_context_operation, tool_registry, json_dumps):
     def scope_guard(loop, tool_name, arguments):
+        from data_agent.agent.publication.runtime import CONSULTATION_INTENTS, current_request_uses_data
+        from data_agent.tools.registry import CONSULTATION_TOOLS
+        kind = getattr(getattr(loop.context, "turn_intent", None), "intent_type", "")
+        if kind in CONSULTATION_INTENTS and not current_request_uses_data(loop) and tool_name not in CONSULTATION_TOOLS:
+            return json_dumps({"error": "当前只交付咨询，未授权执行数据分析；请直接回答当前知识或方案需求。",
+                               "error_type": "consultation_execution_not_requested"}, ensure_ascii=False)
+        if kind=="result_followup" and tool_name not in CONSULTATION_TOOLS | {"record_answer_targets", "record_analysis_plan"}:
+            from data_agent.agent.publication.requirements import target_datasets
+            from data_agent.agent.publication.runtime import collect_products
+            from data_agent.agent.publication.deliveries import project_deliveries
+            state=loop.context.analysis_state
+            facts,artifacts,_,_,effects=collect_products(state,loop.session_id)
+            _,projection=project_deliveries(state.answer_requirements,facts,artifacts,effects=effects)
+            pending=[r for r in state.answer_requirements if r.get("lifecycle_status")=="active"
+                and (r["semantic_kind"]=="result" or r.get("presentation_role")=="delivery")
+                and any(d["id"] in projection and projection[d["id"]]["gap"] is not None for d in r.get("necessary_deliveries",[]))]
+            allowed={n for r in pending for n in target_datasets(r)}
+            if not pending or tool_name!="run_python" and arguments.get("name",arguments.get("data")) not in allowed:
+                return json_dumps({"error":"续问只完成原业务目标的缺失交付；请先声明原需求的必要交付。",
+                    "error_type":"followup_execution_not_requested"},ensure_ascii=False)
         try:
+            scope = loop.context.workspace_scope
+            if tool_name in {"load_data", "reload_data", "load_sql"} and scope is not None and scope.phase not in {"legacy","error"}:
+                # Explicit ingestion starts a new data basis. Keep original
+                # requirement identities; only a new declared plan can execute.
+                loop.prepare_for_bound_upload()
+            from data_agent.agent.execution_scope import EXPLORATION_TOOLS, dataset_arguments_for_tool
             result = loop_context_operation(
                 loop,
                 "guard",
@@ -464,6 +515,22 @@ def _create_scope_guard_descriptor(loop_context_operation, tool_registry, json_d
                 ensure_ascii=False,
             )
         if result.allowed:
+            # Use the existing authoritative guard checkpoint. A second refresh
+            # can erase its failure or observe a different task than the guard.
+            scope = loop.context.workspace_scope
+            from data_agent.agent.publication.native import OPERATION_TOOLS,DATASET_OPERATIONS,operation_spec,operation_requested
+            if (scope is not None and tool_name not in EXPLORATION_TOOLS and scope.phase in {"legacy","planning"}
+                    and (tool_name=="run_python" or dataset_arguments_for_tool(tool_registry,tool_name,arguments))):
+                return json_dumps({"error":"Formal computation requires a current pre-dispatch analysis plan; bounded structure/preview/quality exploration may precede it.",
+                    "error_type":"formal_plan_required","details":{"stage":"dispatch","tool":tool_name,"recoverable":True,"next_action":"record_analysis_plan"}},ensure_ascii=False)
+            if operation_requested(tool_name,arguments):
+                state=loop.context.analysis_state;plan=state.analysis_plan or {}
+                step=next((s for s in plan.get("method_plan",[]) if scope is not None and scope.active and s["step_id"]==scope.step_id),{})
+                try:spec=operation_spec(tool_name,arguments)
+                except ValueError as exc:return json_dumps({"error":str(exc),"error_type":"operation_arguments"},ensure_ascii=False)
+                declared=[d for d in step.get("required_deliveries",[]) if d["kind"]=="operation" and d["scope"].get("operation",{}).get("action")==tool_name]
+                if not step or (declared and not any(d["scope"]["operation"]==spec for d in declared)) or (tool_name not in DATASET_OPERATIONS and not declared):
+                    return json_dumps({"error":"操作须在派发前声明匹配的对象和完整参数。","error_type":"operation_plan_required"},ensure_ascii=False)
             return ""
         return json_dumps(
             {"error": result.message, "error_type": result.error_type},
@@ -546,7 +613,6 @@ class AgentLoop:
         object_name: Optional[str] = None,
         project_name: Optional[str] = None,
         auxiliary_llm_client=None,
-        typed_trial: bool = False,
     ):
         global _skill_loader, _mcp_manager, _mcp_bridge
 
@@ -554,11 +620,17 @@ class AgentLoop:
         self.client = client or LLMClient()
         self.auxiliary_llm_client = auxiliary_llm_client
         if self.auxiliary_llm_client is None and isinstance(self.client, LLMClient):
-            # Intent/playbook calls share the injected transport and own an
-            # eight-second transport deadline; no detached timeout thread.
-            self.auxiliary_llm_client = self.client.for_purpose(max_tokens=300, timeout=8)
+            # Requested-output classification can return several exact spans.
+            # Keep its output ceiling aligned with the configured client;
+            # a 300-token override can drop those spans even when the answer
+            # client has a larger cap (the real batch retained no spans).
+            # Inherit the configured transport deadline too: 8 seconds can
+            # discard a valid 64K reasoning response before its JSON arrives.
+            # for_purpose still applies the one-shot physical call policy.
+            self.auxiliary_llm_client = self.client.for_purpose(
+                max_tokens=self.client.max_tokens, timeout=self.client.timeout,
+            )
         self.session_id = session_id or uuid.uuid4().hex[:12]
-        self._typed_trial_enabled = typed_trial is True
         active_project = project_name if project_name is not None else object_name
         self.context = AgentContext(
             session_id=self.session_id,
@@ -567,6 +639,10 @@ class AgentLoop:
         )
         from data_agent.agent.analysis_state import load_analysis_state
         self.context.analysis_state = load_analysis_state(self.session_id, active_project)
+        from data_agent.session.history import load_session
+        stored=load_session(self.session_id) or {}
+        self._legacy_readonly=bool(stored.get("messages") and stored.get("publication_schema")!="answer_bindings.v2")
+        self._forked_from = str(stored.get("forked_from") or "")
         self.messages: list[dict] = []
         self.token_threshold = cfg.token_threshold
         self._last_data_file = ""
@@ -587,13 +663,7 @@ class AgentLoop:
                 set_active_session(self.session_id)
 
         # 初始化 SkillLoader（支持全局 + 项目级目录）
-        if _skill_loader is None:
-            from data_agent.config_resolver import resolve_skills_dirs
-            skills_dirs = resolve_skills_dirs()
-            _skill_loader = SkillLoader(skills_dirs)
-            if cfg.skill_auto_discover:
-                _skill_loader.discover()
-        self._skill_loader = _skill_loader
+        self._skill_loader = get_global_skill_loader().for_session(self.session_id)
 
         # MCP 初始化延迟到首次 _loop() 调用时执行（_ensure_mcp_initialized）
         self._mcp_initialized = False
@@ -620,13 +690,26 @@ class AgentLoop:
             session_id=self.session_id,
             project_name=self.context.project_name or "",
         )
+        state = self.context.analysis_state
+        retired["analysis_projection"] = {
+            "analysis_plan": getattr(state,"analysis_plan",None),
+            "analysis_spec": getattr(state,"analysis_spec",None),
+            "history_length": len(getattr(state,"regression_history",[])),
+        }
         try:
             scope = self.__context_operation("reset_for_new_data")
             if scope.phase != "legacy":
                 raise RuntimeError("bound upload did not obtain a legacy workspace scope")
+            if state is not None:
+                prior = retired["analysis_projection"]
+                if prior["analysis_plan"] or prior["analysis_spec"]:
+                    state.regression_history.append({"type":"data_basis_transition",
+                        "reason":"bound_upload","analysis_plan":prior["analysis_plan"],
+                        "analysis_spec":prior["analysis_spec"]})
+                    state.analysis_plan = state.analysis_spec = None
+                    state.save()
         except Exception:
-            task_manager.restore_retired_plan(retired)
-            self.__context_operation("refresh")
+            self.rollback_bound_upload(retired)
             raise
         self.invalidate_prompt_cache()
         return retired
@@ -637,6 +720,13 @@ class AgentLoop:
         from data_agent.session.task_manager import task_manager
 
         restored = task_manager.restore_retired_plan(retirement)
+        prior = retirement.get("analysis_projection")
+        state = self.context.analysis_state
+        if prior is not None and state is not None:
+            state.analysis_plan = prior["analysis_plan"]
+            state.analysis_spec = prior["analysis_spec"]
+            del state.regression_history[prior["history_length"]:]
+            state.save()
         if restored.get("restored") or restored.get("reason") in {
             "nothing_retired",
             "already_restored",
@@ -717,7 +807,17 @@ class AgentLoop:
             df = None
             identity = info.get("data_identity") or {}
 
-            # Strategy A: try original file path
+            # Host rehydration is distinct from a task tool writing raw data.
+            # Preserve the execution scope while restoring only an exact owned
+            # snapshot; never re-query SQL or widen tool-visible datasets.
+            if identity:
+                if workspace._restore_persisted_snapshot(name):
+                    restored += 1
+                else:
+                    logger.warning("Stored dataset snapshot invalid or already loaded; restore refused", extra={"extra_data": {"dataset": name}})
+                continue
+
+            # Legacy metadata without a version identity keeps its original recovery path.
             source_path = info.get("source_path", "")
             if source_path and not identity:
                 from pathlib import Path as _Path
@@ -758,21 +858,19 @@ class AgentLoop:
                             pass
 
             if df is not None:
-                if identity:
-                    from data_agent.session.workspace import Workspace
-                    if Workspace._frame_fingerprint(df) != identity.get("fingerprint"):
-                        logger.warning("Stored dataset identity mismatch; restore refused", extra={"extra_data": {"dataset": name}})
-                        continue
                 added = workspace.add(name, df)
                 if added.startswith("Error:"):
                     logger.warning("Dataset restore denied by current scope", extra={"extra_data": {"dataset": name}})
                     continue
-                if identity:
-                    workspace.set_metadata(name, "data_identity", identity)
                 if info.get("context"):
                     workspace.set_metadata(name, "context", info["context"])
                 workspace.set_metadata(name, "_source_path", source_path)
                 workspace.set_metadata(name, "_source_fmt", info.get("source_fmt", ""))
+                for group,keys in (("upload_binding",("_upload_id","_original_filename","_source_sha256")),
+                                   ("version_archive",("archived_from","archived_version_id"))):
+                    for key in keys:
+                        if (info.get(group) or {}).get(key):
+                            workspace.set_metadata(name,key,info[group][key])
                 restored += 1
 
         if restored:
@@ -852,9 +950,7 @@ class AgentLoop:
 
     def _build_system_prompt(self) -> str:
         from data_agent.agent.prompts import (
-            _classify_task,
             build_system_prompt,
-            detect_audience,
             resolve_proficiency,
         )
         from data_agent.session.workspace import workspace
@@ -878,20 +974,31 @@ class AgentLoop:
         )
         if self.context.user_proficiency == "auto":
             self.context.detected_proficiency = proficiency
-        # Audience is per-turn from explicit self-identification; it never
-        # changes facts, evidence thresholds, or permissions.
-        audience = detect_audience(user_input)
+        # Audience and synthesis consume the same original preference owner.
+        from data_agent.agent.synthesis_policy import derive_synthesis_policy
+        request_id=next((m.get("request_id") for m in reversed(self.messages) if m.get("role")=="user" and m.get("request_id")),None)
+        style=derive_synthesis_policy(intent=self.context.turn_intent,state=self.context.analysis_state,
+            proficiency=self.context.user_proficiency,current_request_id=request_id).wording_style
+        audience=style if style in {"business","analyst","manager"} else "general"
         self.context.audience = audience
 
         # 判断任务级别
         datasets = workspace.list_datasets()
         context_parts = []
+        if self._forked_from:
+            context_parts.append("这是仅继承聊天记录的会话分支。父会话内容只作历史语境；本分支未继承其数据、证据、确认或接受答案权威。结果需要本分支重新加载和计算。")
         if datasets:
             for name, info in datasets.items():
                 context_parts.append(
                     f"- {name}: {info['rows']} rows x {info['columns']} cols, "
                     f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
                 )
+        from data_agent.agent.publication.runtime import CONSULTATION_INTENTS, current_request_uses_data
+        pure_consultation = (getattr(self.context.turn_intent,"intent_type",None) in CONSULTATION_INTENTS
+                             and not current_request_uses_data(self))
+        if pure_consultation:
+            datasets = {}
+            context_parts = []
         session_ctx = "\n".join(context_parts) if context_parts else ""
 
         # Structured data features: programmatic field classification for prompt
@@ -935,17 +1042,20 @@ class AgentLoop:
                 ])
             else:
                 analysis_ctx = analysis_state_summary(self.context.analysis_state)
-            if analysis_ctx:
+            if analysis_ctx and not pure_consultation:
                 session_ctx = (session_ctx + "\n\n" if session_ctx else "") + "<analysis_state>\n" + analysis_ctx + "\n</analysis_state>"
         except Exception:
             pass
 
-        level = _classify_task(user_input, session_ctx) if user_input else "standard"
+        from data_agent.agent.intent import _PROMPT_LEVEL_MAP
+        level = _PROMPT_LEVEL_MAP.get(getattr(self.context.turn_intent, "intent_type", ""), "analysis")
 
         # P08-05：无数据时的最短可行动恢复——说明缺少数据＋一个明确入口，
         # 不列未来路线菜单、不追问无关业务背景。
         no_data_recovery = ""
-        if not datasets:
+        from data_agent.agent.publication.runtime import CONSULTATION_INTENTS,current_request_uses_data
+        needs_data = getattr(self.context.turn_intent,"intent_type",None) not in CONSULTATION_INTENTS or current_request_uses_data(self)
+        if not datasets and needs_data:
             no_data_recovery = (
                 "<no_data_recovery>\n"
                 "当前没有可分析的数据。回复保持最短：说明缺少数据，并给出一个明确的上传或选择数据集入口；"
@@ -991,6 +1101,7 @@ class AgentLoop:
         # Chat 模式：只注入 rules（业务约束），跳过 domain/experience
         if level == "chat":
             return build_system_prompt(
+                turn_intent=self.context.turn_intent,
                 tool_list=tool_list,
                 project_rules=(no_data_recovery + "\n\n" + rules_prompt).strip(),
                 domain_knowledge="",
@@ -1005,6 +1116,7 @@ class AgentLoop:
             )
 
         return build_system_prompt(
+            turn_intent=self.context.turn_intent,
             tool_list=tool_list,
             project_rules=(no_data_recovery + "\n\n" + rules_prompt).strip(),
             domain_knowledge=retrieved_context,
@@ -1022,6 +1134,10 @@ class AgentLoop:
         """获取系统提示词（带缓存）。"""
         with self.__context_operation("use"):
             scope = self.__context_operation("refresh")
+            source_input = next((m.get("content","") for m in reversed(self.messages)
+                                 if m.get("role")=="user" and m.get("request_id")),"")
+            self._verify_before_publication(source_input)
+            self._maybe_inject_synthesis_policy(source_input)
             bundle_fingerprint = ""
             state = getattr(self.context, "analysis_state", None)
             from data_agent.agent.data_understanding import validate_data_understanding_bundle
@@ -1036,14 +1152,12 @@ class AgentLoop:
                 self._prompt_cache = self._build_system_prompt()
                 self._prompt_cache_dirty = False
                 self._prompt_cache_key = cache_key
+            from data_agent.agent.publication.runtime import publication_prompt
             prompt = self._prompt_cache
             synthesis_instruction = getattr(self, "_turn_synthesis_policy_instruction", "")
             if getattr(self, "_turn_final_guard_injected", False) and getattr(
                 self, "_turn_analysis_quality_gaps", None
             ):
-                # The one-time synthesis hint may carry pre-plan IDs. Once
-                # the guard requests repair, only the current-plan brief
-                # below may supply IDs on subsequent tool rounds.
                 synthesis_instruction = synthesis_instruction.partition(
                     "<competing_hypotheses>"
                 )[0].rstrip()
@@ -1057,14 +1171,18 @@ class AgentLoop:
                     prompt = prompt + "\n\n" + brief
             hint = self._execution_prompt_hint()
             if hint:
-                return prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
-            return prompt
+                prompt += f"\n\n<execution_control>\n{hint}\n</execution_control>"
+            return prompt + "\n\n" + publication_prompt(self, base_prompt=prompt)
 
     def _prepare_analysis_turn(self, user_input: str):
         from data_agent.agent.analysis_flow_controller import AnalysisFlowController
         from data_agent.agent.intent import plan_turn_intent
         from data_agent.session.workspace import workspace
 
+        controller = AnalysisFlowController(self.session_id, self.context.project_name)
+        self._flow_controller = controller
+        state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
+        self.context.analysis_state = state
         datasets = workspace.list_datasets()
         context_parts = []
         for name, info in datasets.items():
@@ -1073,35 +1191,66 @@ class AgentLoop:
                 f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
             )
         session_ctx = "\n".join(context_parts)
+        current_plan = getattr(state, "analysis_plan", None) or getattr(state, "analysis_spec", None)
+        current_plan_id = str(current_plan.get("id") or "") if isinstance(current_plan, dict) else ""
+        intent_ctx = session_ctx + "\ncanonical_requirements: " + json.dumps(state.answer_requirements, ensure_ascii=False) + "\naccepted_answer_refs: " + json.dumps(state.accepted_answers,ensure_ascii=False)
+        from data_agent.agent.publication.runtime import read_answer
+        outcomes={};last_answer=None
+        for reference in state.accepted_answers:
+            try:
+                accepted=read_answer(self.session_id,reference)
+                outcomes.update({r["requirement_id"]:r["status"] for r in accepted["requirement_outcomes"]})
+                last_answer={"answer_id":accepted["answer_id"],"requirement_outcomes":accepted["requirement_outcomes"]}
+            except (ValueError,OSError,KeyError,TypeError):continue
+        self._turn_delivery_outcomes=outcomes
+        intent_ctx += "\ncurrent_delivery_state: " + json.dumps({"last_accepted_answer":last_answer,
+            "unfinished_requirement_ids":[r["id"] for r in state.answer_requirements
+                if r.get("lifecycle_status")=="active" and outcomes.get(r["id"])!="answered"]},ensure_ascii=False)
+        intent_ctx += "\ncurrent_uploads: " + json.dumps(getattr(self,"_current_uploads",{}),ensure_ascii=False)
+        if current_plan_id:
+            intent_ctx += (
+                f"\ncurrent_analysis_plan_id: {current_plan_id}"
+                f"\ncurrent_analysis_goal: {str(current_plan.get('goal') or '')[:300]}"
+            )
         if self.auxiliary_llm_client is None:
-            intent = plan_turn_intent(user_input, session_ctx)
+            intent = plan_turn_intent(user_input, intent_ctx, current_plan_id=current_plan_id)
         else:
             intent = plan_turn_intent(
                 user_input,
-                session_ctx,
+                intent_ctx,
                 llm_client=self.auxiliary_llm_client,
+                current_plan_id=current_plan_id,
+                enrich_requested_outputs=True,
             )
-        controller = AnalysisFlowController(self.session_id, self.context.project_name)
-        self._flow_controller = controller
-        state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
-        self.context.analysis_state = state
-        try:
-            import hashlib
-            from data_agent.agent.publication_synthesis import update_requirement_lifecycle
+        binder=getattr(self,"_bind_current_uploads",None)
+        if binder is not None:
+            self._turn_object_question = binder(user_input,intent.upload_bindings,intent)
+            if self._turn_object_question is not None:
+                self.context.turn_intent = self._last_turn_intent = intent
+                return set()
+            self._bind_current_uploads=None
+            self._current_uploads={}
+            datasets=workspace.list_datasets()
+            session_ctx="\n".join(f"- {name}: {info['rows']} rows x {info['columns']} cols, columns: {', '.join(str(c) for c in info['column_names'][:10])}" for name,info in datasets.items())
+        return self._complete_analysis_turn(user_input,intent,session_ctx)
 
-            source_ref = "msg_" + hashlib.sha256(user_input.encode("utf-8")).hexdigest()[:12]
-            requirement_ids = update_requirement_lifecycle(
-                state,
-                user_input,
-                source_message_ref=source_ref,
-            )
-            self.context.turn_requirement_ids = requirement_ids
-            self.context.requirement_revision = int(getattr(state, "requirement_revision", 0) or 0)
-        except Exception as exc:
-            logger.warning(
-                "Answer requirement lifecycle update skipped",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
+    def _complete_analysis_turn(self,user_input,intent,session_ctx=None,*,register_outputs=True):
+        """Finish the one semantic decision after any host object mapping."""
+        from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+        from data_agent.session.workspace import workspace
+        state = self.context.analysis_state
+        controller = AnalysisFlowController(self.session_id,self.context.project_name)
+        self._flow_controller = controller
+        if session_ctx is None:
+            datasets = workspace.list_datasets()
+            session_ctx = "\n".join(f"- {name}: {info['rows']} rows x {info['columns']} cols, columns: {', '.join(str(c) for c in info['column_names'][:10])}" for name,info in datasets.items())
+        source_ref = next((m.get("request_id") for m in reversed(self.messages)
+                           if m.get("role")=="user" and m.get("request_id")),None)
+        intent.measurement_mappings = [dict(row,source_message_ref=source_ref)
+                                       for row in intent.measurement_mappings]
+        from data_agent.agent.publication.runtime import register_request
+        if register_outputs:
+            register_request(self,user_input,intent)
         try:
             from data_agent.agent.trust_workflow_runtime import refine_turn_intent_with_state
 
@@ -1147,16 +1296,30 @@ class AgentLoop:
         cfg = get_config()
         self.context.turn_state = TurnExecutionState(ToolExecutionBudget(
             profile=profile,
-            token_budget=_token_budget_for_profile(profile, cfg.token_threshold),
         ))
 
-        # Extract user quality requirements on first analysis turn
-        if not self.context.user_quality_requirements and user_input and len(user_input) > 100:
-            self._extract_user_requirements(user_input)
 
         return controller.activate_tool_groups(registry, intent, state, user_input)
 
+    def _auto_measurement_question(self):
+        """Schedule all proposed material mappings through the existing decision store."""
+        for mapping in getattr(self.context.turn_intent,"measurement_mappings",[]):
+            result=self._suspend_for_confirmation_request(UserConfirmationRequired(
+                question="请确认当前数据版本的实质计算口径。", options=[],
+                measurement_mapping=json.dumps(mapping,ensure_ascii=False)),
+                turn_id=self._publication_turn_id)
+            if isinstance(result,SuspendedForConfirmation):
+                return result
+        return None
+
     def _maybe_auto_suspend_for_required_question(self) -> SuspendedForConfirmation | None:
+        object_question = getattr(self,"_turn_object_question",None)
+        if object_question is not None:
+            self._turn_object_question = None
+            return self._request_confirmation_candidate(object_question)
+        mapped = self._auto_measurement_question()
+        if mapped is not None:
+            return mapped
         state = getattr(self.context, "analysis_state", None)
         pending = self._pending_confirmation_for_auto_suspend(state)
         if pending is False:
@@ -1190,6 +1353,7 @@ class AgentLoop:
             "state_updates": state_updates_text,
             "related_task_id": int(pending_data.get("related_task_id") or 0),
             "related_spec_id": str(pending_data.get("related_spec_id") or ""),
+            "pending_state_id": str(pending_data.get("id") or ""),
         }
         susp = self._suspend_for_required_question_payload(
             payload,
@@ -1282,27 +1446,6 @@ class AgentLoop:
 
         return is_actionable_pending_confirmation(item)
 
-    def _extract_user_requirements(self, user_input: str) -> None:
-        """Use LLM to extract quality/format requirements from user input (once per session)."""
-        try:
-            prompt = (
-                "从以下用户消息中提取对分析输出格式、质量、详细程度的具体要求。\n"
-                "只返回明确的要求（如'详细说明计算方式'、'需要包含置信度'等），忽略背景描述和问题描述。\n"
-                "如果没有明确要求，返回空字符串。\n\n"
-                f"用户消息：\n{user_input[:2000]}"
-            )
-            client = self.auxiliary_llm_client or self.client
-            resp = client.chat(
-                messages=[{"role": "user", "content": prompt}],
-                system="你是要求提取专家。只输出提取的要求，不要解释。如无要求输出空。",
-            )
-            requirements = resp.text.strip()
-            if requirements and len(requirements) > 5:
-                self.context.user_quality_requirements = requirements
-                logger.info("User quality requirements extracted",
-                            extra={"extra_data": {"requirements": requirements[:200]}})
-        except Exception as e:
-            logger.warning("Failed to extract user requirements", extra={"extra_data": {"error": str(e)}})
 
     def _maybe_inject_quality_reminder(self) -> None:
         """Inject user quality requirements as a reminder when execution budget is converging."""
@@ -1385,7 +1528,10 @@ class AgentLoop:
 
         # Long summary: persist full version, return truncated + reference
         try:
-            summary_path = persist_detail(self.session_id, tc.id + "_summary", {"full_output": summary})
+            from data_agent.agent.compact import _persist_tool_output
+            summary_path = _persist_tool_output(self.session_id, tc.id, summary)
+            if summary_path is None:
+                return summary
             truncated = summary[:TOOL_SUMMARY_THRESHOLD]
             # Try to break at a natural boundary
             last_newline = truncated.rfind("\n")
@@ -1488,15 +1634,28 @@ class AgentLoop:
         self._turn_analysis_quality_gaps = []
         self._turn_verification_injected = False
         self._turn_wrap_up_injected = False
+        self._turn_action_preview_binding_digest = ""
+        self._turn_action_preview_receipt_ids = ()
         self._turn_finalization_mode = False
+        self._turn_budget_exhaustion = None
         self._turn_finalization_recovery_used = False
         self._turn_publication_recovery_used = False
+        self._turn_semantic_review_calls = 0
         self._turn_origin_revision_issued = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
-        self._turn_publication_packet = None
-        self._turn_typed_trial_receipts = []
-        self._turn_typed_trial_injected = False
+        self._turn_presentation_source_packet_id = ""
+        self._resumed_result_requirement_ids = []
+        self._resumed_analysis_goal_id = ""
+        self._resumed_business_confirmation_id = ""
+        self._publication_turn_id="turn_"+uuid.uuid4().hex
+        self._publication_runtime=None
+        self._publication_service=None
+        self._publication_audit_used=False
+        self._accepted_answer=None
+        self._post_commit_export_notice=""
+        self._post_commit_export_failed=False
+        self._post_commit_export_events=[]
         self.context.turn_receipt_ids = []
         self.context.turn_requirement_ids = []
 
@@ -1508,43 +1667,29 @@ class AgentLoop:
         """Whether this turn produced a receipt suitable for factual publication."""
         return bool(getattr(self, "_turn_successful_publication_tools", set()))
 
-    def _latest_publication_packet_for_presentation(self, user_input: str) -> dict | None:
-        """Reuse the last accepted snapshot for a no-evidence follow-up turn.
 
-        P1-6 item 3 (real R15 M05 "120 块" leak): reuse is gated by closed-class
-        identity only (ready + answer_sha256 + every bound dataset fingerprint
-        unchanged), never by matching presentation phrasing - a wording outside
-        the retired regex list used to skip reuse and thereby skip the whole
-        narrative validation for the turn's final answer.
-        """
-        state = getattr(self.context, "analysis_state", None)
-        packets = list(getattr(state, "publication_packets", []) or []) if state is not None else []
-        for packet in reversed(packets):
-            if not isinstance(packet, dict) or packet.get("status") != "ready":
-                continue
-            if not packet.get("answer_sha256") or not packet.get("sources"):
-                continue
-            identity_count = 0
-            stale = False
-            for source in packet.get("sources") or []:
-                if not isinstance(source, dict):
-                    continue
-                for dataset, identity in (source.get("data_identities") or {}).items():
-                    if not isinstance(identity, dict):
-                        stale = True
-                        break
-                    current = self.context.workspace.get_data_identity(str(dataset))
-                    expected = str(identity.get("fingerprint") or identity.get("version_id") or "")
-                    actual = str((current or {}).get("fingerprint") or (current or {}).get("version_id") or "")
-                    identity_count += 1
-                    if not expected or expected != actual:
-                        stale = True
-                        break
-                if stale:
-                    break
-            if identity_count and not stale:
-                return copy.deepcopy(packet)
-        return None
+    def _close_tools_on_budget_exhaustion(self, exc):
+        if not exc.closes_tools:
+            return False
+        if getattr(self, "_turn_budget_exhaustion", None) is None:
+            self._turn_budget_exhaustion = {"code": exc.code, "reason": str(exc)}
+            self._turn_finalization_mode = True
+            self.messages.append({"role": "system", "content": (
+                "工具执行预算已耗尽，后续工具全部关闭。沿当前收尾额度，仅交付已有已核事实和逐项具体缺口；"
+                "不得补算、请求更多工具或宣称未完成目标已完成。"
+            )})
+        return True
+
+    def _budget_finalization_response(self, response):
+        # A model ignoring tools=None cannot reopen execution or gain a retry.
+        if getattr(self, "_turn_budget_exhaustion", None) and response.has_tool_calls:
+            from data_agent.llm.client import Response
+            from data_agent.agent.publication.runtime import snapshot_for_turn
+            from data_agent.agent.publication.contracts import encode
+            snapshot = snapshot_for_turn(self)
+            return Response(text=encode({"schema": "answer_bindings.v2",
+                                         "snapshot_digest": snapshot.digest, "sections": []}))
+        return response
 
     def _tools_for_current_round(self):
         """Offer tools until a sufficiently evidenced turn enters finalization.
@@ -1556,108 +1701,31 @@ class AgentLoop:
         """
         if getattr(self, "_turn_finalization_mode", False):
             return None
-        return registry.active_definitions() or None
+        definitions = registry.active_definitions()
+        from data_agent.agent.publication.runtime import CONSULTATION_INTENTS, current_request_uses_data
+        from data_agent.tools.registry import CONSULTATION_TOOLS
+        if getattr(self.context.turn_intent, "intent_type", "") in CONSULTATION_INTENTS and not current_request_uses_data(self):
+            definitions = [d for d in definitions if d["name"] in CONSULTATION_TOOLS]
+        return definitions or None
 
-    @staticmethod
-    def _contains_unexecuted_tool_markup(text: str) -> bool:
-        """Recognize tool syntax emitted as ordinary final-answer text.
+    def _tool_source_version(self, tool_name: str, args: dict) -> str:
+        """Duplicate identity includes source versions and predeclared products.
 
-        Some reasoning models emit DSML/OpenAI-style tool tags even when no
-        tool schema is offered. Those bytes are not executable tool calls and
-        must not be mistaken for a publishable analytical answer.
+        A structure exploration cannot substitute for a later formal receipt.
+        Merely changing a plan name or prose still grants no new duplicate budget.
         """
-        normalized = str(text or "").lower()
-        markers = (
-            "<｜｜dsml｜｜",
-            "<|dsml|>",
-            "<tool_calls>",
-            "<tool_call>",
-            "\"tool_calls\"",
-        )
-        return any(marker in normalized for marker in markers)
+        if not isinstance(args,dict): return ""
+        binding=self._capture_tool_execution_binding(tool_name,args,capture_operation=False)
+        sources={n:i.get("version_id") for n,i in binding["input_data_identities"].items()}
+        if not sources: return ""
+        return json.dumps({"sources":sources,"deliveries":sorted(binding["required_delivery_ids"])},sort_keys=True,separators=(",",":"))
 
-    def _recover_finalization_tool_markup(self) -> bool:
-        """Request one no-tools correction after an unexecuted tool attempt."""
-        if getattr(self, "_turn_finalization_recovery_used", False):
-            return False
-        self._turn_finalization_recovery_used = True
-        self.messages.append({
-            "role": "assistant",
-            "content": "[未执行的最终化工具标记已省略；请基于现有证据直接作答。]",
-        })
-        self.messages.append({"role": "system", "content": _FINALIZATION_RECOVERY_MESSAGE})
-        return True
+    def _maybe_inject_wrap_up(self,round_num,user_input=""):
+        threshold=get_config().wrap_up_round
+        if not self._turn_wrap_up_injected and threshold and round_num>=threshold:
+            self._turn_wrap_up_injected=True
+            self.messages.append({"role":"system","content":_WRAP_UP_GUARD_MESSAGE})
 
-    def _persist_rejected_publication(self, assistant_msg: dict, error: str) -> None:
-        """Persist every rejected publication candidate for audit (P2-1).
-
-        Real r2 M02 trajectory: from the second rejection on, the candidate's
-        full text existed only inside the failure notification quote - the
-        audit trail could not reach it. The dump is host bookkeeping; a write
-        failure must never block the already-failing publication path.
-        """
-        try:
-            from datetime import datetime
-
-            out_dir = get_config().sessions_resolved / self.session_id / "publication_rejected"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            body = (
-                f"# 被拒发布候选 {stamp}\n\n"
-                f"## 校验错误\n\n{error or 'publication contract violation'}\n\n"
-                f"## 候选全文\n\n{assistant_msg.get('content') or ''}\n"
-            )
-            (out_dir / f"candidate_{stamp}.md").write_text(body, encoding="utf-8")
-        except Exception as exc:
-            logger.warning(
-                "Rejected publication candidate dump failed",
-                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
-            )
-
-    def _recover_publication_narrative(self, assistant_msg: dict, error: str) -> bool:
-        """Keep one rejected answer internal and request one bounded rewrite."""
-        if getattr(self, "_turn_publication_recovery_used", False):
-            # P2-1：恢复额度用尽的拒绝同样落盘，候选全文不得只存在于
-            # 失败通知的引文里。
-            self._persist_rejected_publication(assistant_msg, error)
-            return False
-        self._turn_publication_recovery_used = True
-        if "unsupported_data_origin_inference" in str(error or ""):
-            # Revision-only finding: after this one rewrite request the
-            # origin lexicon stops blocking; the host annotates instead.
-            self._turn_origin_revision_issued = True
-        self._persist_rejected_publication(assistant_msg, error)
-        rejected = dict(assistant_msg)
-        rejected["publication_rejected"] = True
-        self.messages.append(rejected)
-        self.messages.append({
-            "role": "system",
-            "content": _PUBLICATION_RECOVERY_MESSAGE.format(error=str(error or "publication contract violation")),
-        })
-        return True
-
-    def _maybe_inject_wrap_up(self, round_num: int, user_input: str = "") -> None:
-        """Nudge convergence without confusing round count with completion."""
-        if getattr(self, "_turn_wrap_up_injected", False):
-            return
-        threshold = get_config().wrap_up_round
-        if not threshold or round_num < threshold:
-            return
-        self._turn_wrap_up_injected = True
-        packet = (
-            self._prepare_publication_packet(user_input, phase="preview", persist=False)
-            if self._has_substantive_turn_evidence()
-            else None
-        )
-        if packet and packet.get("status") == "ready" and packet.get("evidence"):
-            # Round count is advisory, not evidence of analysis completion.
-            self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
-            if packet and packet.get("status") == "ready":
-                from data_agent.agent.publication_synthesis import publication_packet_prompt
-
-                self.messages.append({"role": "system", "content": publication_packet_prompt(packet)})
-        else:
-            self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
@@ -1668,6 +1736,47 @@ class AgentLoop:
             or lowered.startswith("error")
         )
 
+    def _capture_tool_execution_binding(self, tool_name: str = "", arguments: dict | None = None, *, capture_operation: bool = True) -> dict:
+        """Capture the host plan and scope before a tool can advance the DAG."""
+        from copy import deepcopy
+        scope = self.context.workspace_scope
+        state = self.context.analysis_state
+        plan = (getattr(state, "analysis_plan", None) or {})
+        step = next((s for s in plan.get("method_plan", [])
+                     if scope is not None and scope.active and s.get("step_id") == scope.step_id), {})
+        from data_agent.agent.execution_scope import dataset_arguments_for_tool
+        names = (() if tool_name in {"load_data","reload_data","load_sql","read_file","list_files","list_skills","list_mcp_servers"} else self.context.workspace.list_datasets() if tool_name == "list_data" else scope.allowed_datasets if scope is not None and scope.active
+                 else self.context.workspace.list_datasets() if tool_name in {"run_python","interpret_dataset"}
+                 else dataset_arguments_for_tool(registry, tool_name, arguments or {}))
+        catalog = self.context.workspace._publication_catalog_result() if tool_name == "list_data" else None
+        from data_agent.tools.file_ops import _capture_file_binding
+        file_binding=_capture_file_binding(self.context,tool_name,arguments or {}) if tool_name in {"read_file","list_files"} else None
+        from data_agent.tools.skill_tools import _capture_skills_binding
+        skills_binding=_capture_skills_binding(self.context) if tool_name=="list_skills" else None
+        from data_agent.tools.mcp_tools import _capture_mcp_catalog_binding
+        mcp_binding=_capture_mcp_catalog_binding(self.context) if tool_name=="list_mcp_servers" else None
+        inputs = {name: identity for name in names
+                  if (identity := self.context.workspace.get_data_identity(name))}
+        from data_agent.agent.publication.native import capture_operation_binding
+        operation=capture_operation_binding(self.context,tool_name,arguments or {}) if capture_operation else None
+        return deepcopy({
+            **({"producer_binding":{"session_id":self.session_id,"tool_name":tool_name,"arguments":deepcopy(arguments or {})}} if tool_name=="create_chart" else {}),
+            **({"operation_binding":operation} if operation is not None else {}),
+            **({"catalog_binding":catalog["binding"]} if catalog is not None else {}),
+            **({"file_binding":file_binding} if file_binding is not None else {}),
+            **({"skills_binding":skills_binding} if skills_binding is not None else {}),
+            **({"mcp_binding":mcp_binding} if mcp_binding is not None else {}),
+            "input_data_identities": catalog["data_identities"] if catalog is not None else inputs,
+            "plan_id": plan.get("id", ""),
+            "plan_sha256": plan.get("plan_sha256", ""),
+            "step_id": step.get("step_id", ""),
+            "task_id": scope.task_id if step else 0,
+            "task_plan_id": scope.plan_id if step else "",
+            "scope_fingerprint": catalog["binding"]["scope_fingerprint"] if catalog is not None else scope.fingerprint if scope is not None else "",
+            "requirement_ids": step.get("requirement_ids", []),
+            "required_delivery_ids": [d["id"] for d in step.get("required_deliveries", [])],
+        })
+
     def _record_turn_tool_result(
         self,
         tool_name: str,
@@ -1675,6 +1784,8 @@ class AgentLoop:
         tool_args: dict | None = None,
         tool_call_id: str = "",
         structured_data: dict | None = None,
+        *,
+        execution_binding: dict | None = None,
     ) -> str:
         if not hasattr(self, "_turn_tools_used"):
             self._reset_turn_tracking()
@@ -1685,31 +1796,102 @@ class AgentLoop:
             self._turn_successful_publication_tools.add(tool_name)
         if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
             self._turn_loaded_data = True
+        state = getattr(self.context, "analysis_state", None)
+        if state is not None and execution_binding is not None and tool_name in {"load_data", "reload_data", "load_sql"}:
+            # A load attempt makes success evidence mandatory for this pending
+            # replacement even when a failure leaves the old identity intact.
+            # This annotates the existing goal; it is not another receipt ledger.
+            from copy import deepcopy
+            from data_agent.agent.publication.requirements import target_datasets
+            before_requirements = deepcopy(state.answer_requirements)
+            for req in state.answer_requirements:
+                pending = req.get("source_binding", {})
+                name = (tool_args or {}).get("name", "main")
+                if req.get("lifecycle_status") == "active" and req["id"] in self.context.turn_requirement_ids and name in target_datasets(req):
+                    # Typed host ingestion failures belong to the existing goal,
+                    # not a fact receipt or a separate failure ledger.
+                    failure = structured_data if tool_name == "load_sql" and isinstance(structured_data, dict) else {}
+                    if failure.get("error_type") in {"sql_read_only_unsupported", "sql_read_only_unverified", "sql_read_only_violation"}:
+                        pending = req.setdefault("source_binding", {})
+                        pending.setdefault("load_failures", {})[name] = {"error_type": failure["error_type"], "reason": failure["error"]}
+                    elif not self._tool_content_is_error(tool_msg_content):
+                        pending.get("load_failures", {}).pop(name, None)
+                if req.get("lifecycle_status") == "active" and req["id"] in self.context.turn_requirement_ids and pending.get("status") == "pending" and name in target_datasets(req):
+                    pending["required_load_datasets"] = sorted(set(pending.get("required_load_datasets", [])) | {name})
+                    pending.get("verified_load_receipts", {}).pop(name, None)
+            if state.answer_requirements != before_requirements:
+                try: state.save()
+                except Exception:
+                    state.answer_requirements = before_requirements
+                    raise
+        # A typed, predeclared configuration/export failure belongs to its necessary
+        # delivery. It grants no successful receipt, effect or data claim.
+        from data_agent.agent.publication.native import MCP_CONFIG_OPERATIONS, CONVERSATION_OPERATIONS, operation_spec
+        if state is not None and execution_binding is not None and tool_name in MCP_CONFIG_OPERATIONS | CONVERSATION_OPERATIONS:
+            before_requirements = copy.deepcopy(state.answer_requirements)
+            spec = operation_spec(tool_name, tool_args or {})
+            bound = execution_binding.get("operation_binding", {})
+            exact = (bound.get("session_id") == self.session_id and bound.get("operation") == spec
+                     and bound.get("permission_scope") == ("configured_global_mcp" if tool_name in MCP_CONFIG_OPERATIONS else "current_session_conversation_export"))
+            failure = structured_data if isinstance(structured_data, dict) else {}
+            if exact:
+                for req in state.answer_requirements:
+                    if req.get("lifecycle_status") != "active" or req["id"] not in execution_binding.get("requirement_ids", []):
+                        continue
+                    for delivery in req.get("necessary_deliveries", []):
+                        if (delivery["id"] not in execution_binding.get("required_delivery_ids", [])
+                                or delivery["kind"] != "operation" or delivery["scope"].get("operation") != spec):
+                            continue
+                        failures = req.setdefault("source_binding", {}).setdefault("operation_failures", {})
+                        if failure.get("error_type") in ({"mcp_server_not_found", "mcp_config_write_failed"} if tool_name in MCP_CONFIG_OPERATIONS else {"conversation_export_failed"}):
+                            failures[delivery["id"]] = {"operation": spec, "code": failure["error_type"], "reason": failure["error"]}
+                        elif not self._tool_content_is_error(tool_msg_content):
+                            failures.pop(delivery["id"], None)
+            if state.answer_requirements != before_requirements:
+                try:
+                    state.save()
+                except Exception:
+                    state.answer_requirements = before_requirements
+                    raise
+        if state is not None and tool_name=="create_chart" and execution_binding is not None:
+            from data_agent.agent.publication.deliveries import record_chart_delivery_failure
+            record_chart_delivery_failure(self.context,execution_binding,tool_args or {},structured_data,
+                                          is_error=self._tool_content_is_error(tool_msg_content))
         if self._tool_content_is_error(tool_msg_content):
             return ""
 
-        state = getattr(self.context, "analysis_state", None)
         add_receipt = getattr(state, "add_tool_receipt", None)
         if not callable(add_receipt):
             return ""
         try:
-            from data_agent.agent.publication_synthesis import publication_contract
-
+            from copy import deepcopy
+            binding = deepcopy(execution_binding) if execution_binding is not None else {}
+            # Post-dispatch observation can retain diagnostic data provenance,
+            # but cannot acquire a formal plan or delivery identity retroactively.
+            if execution_binding is None:
+                binding.update(plan_id="", plan_sha256="", step_id="",
+                               requirement_ids=[], required_delivery_ids=[])
+            input_identities = binding.pop("input_data_identities", {})
             args = dict(tool_args or {})
+            from data_agent.agent.publication.native import OPERATION_TOOLS,DATASET_OPERATIONS
+            nondata_operation=tool_name in OPERATION_TOOLS-DATASET_OPERATIONS
             dataset_refs = [
                 str(args[key])
                 for key in ("name", "data", "source", "other_name", "save_as")
-                if isinstance(args.get(key), str) and args[key].strip()
+                if not nondata_operation and isinstance(args.get(key), str) and args[key].strip()
             ]
+            if tool_name == "list_data":
+                dataset_refs.extend(input_identities)
+            if tool_name=="transform_data":
+                from data_agent.tools.data_transform import _transform_sources
+                dataset_refs.extend(_transform_sources(args))
+            if tool_name in {"load_data","reload_data","load_sql"}:
+                dataset_refs.append(args.get("name","main"))
             if isinstance(args.get("datasets"), str):
                 dataset_refs.extend(name.strip() for name in args["datasets"].split(",") if name.strip())
-            if tool_name == "run_python" and isinstance(args.get("code"), str):
-                import ast
-                for node in ast.walk(ast.parse(args["code"])):
-                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                            and node.func.id == "get_dataset" and node.args
-                            and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
-                        dataset_refs.append(node.args[0].value)
+            actual_reads = (structured_data or {}).get("dataset_reads") if tool_name in {"run_python","interpret_dataset"} else None
+            if isinstance(actual_reads, list):
+                dataset_refs.extend(name for name in actual_reads if isinstance(name, str) and name)
             if isinstance(structured_data, dict):
                 for key in ("dataset", "derived_dataset"):
                     if isinstance(structured_data.get(key), str):
@@ -1738,42 +1920,72 @@ class AgentLoop:
                         "Structured result detail persistence failed",
                         extra={"extra_data": {"tool": tool_name, "error": str(exc)}},
                     )
-            publication_groups = self._publication_groups_for_tool(
-                structured_data,
-                receipt_id=str(tool_call_id or ""),
-                detail_ref=detail_ref,
-            )
+            identities = {
+                name: self.context.workspace.get_data_identity(name) for name in dataset_refs
+                if self.context.workspace.get_data_identity(name)
+            }
+            for name in dataset_refs:
+                expected = input_identities.get(name)
+                if expected:
+                    if self.context.workspace._receipt_identity_matches(name, expected):
+                        identities[name] = expected
+                    else:
+                        identities.pop(name, None)
+            if isinstance(actual_reads, list):
+                captured = input_identities if tool_name=="interpret_dataset" else structured_data.get("dataset_read_identities") or {}
+                identities = {name: captured[name] for name in actual_reads
+                              if isinstance(name, str) and isinstance(captured.get(name), dict)
+                              and self.context.workspace._receipt_identity_matches(name, captured[name])}
             receipt = add_receipt({
                 "tool_name": tool_name,
+                **binding,
                 "tool_call_id": str(tool_call_id or ""),
                 "arguments": args,
                 "dataset_refs": dataset_refs,
-                "data_identities": {
-                    name: self.context.workspace.get_data_identity(name) for name in dataset_refs
-                    if self.context.workspace.get_data_identity(name)
-                },
+                "data_identities": identities,
                 "structured_result_sha256": structured_result_sha256,
                 "result_sha256": "sha256:" + hashlib.sha256(
                     (tool_msg_content or "").encode("utf-8")
                 ).hexdigest(),
                 "result_preview": (tool_msg_content or "")[:2000],
-                "publication_facts": self._publication_facts_for_tool(structured_data),
-                "publication_fact_groups": publication_groups.get("groups", []),
-                "publication_scan": publication_groups.get("scan", {}),
                 "detail_ref": detail_ref,
-                "publication_contract": publication_contract(tool_name, structured_data, args=args),
             })
             receipt_id = str(receipt.get("id") or "")
-            for group in receipt.get("publication_fact_groups") or []:
-                if isinstance(group, dict):
-                    group["receipt_id"] = receipt_id
-                    group["scope_ref"] = receipt_id
+            if receipt_id and (tool_name=="transform_data" or tool_name=="top_n" and args.get("save_as")):
+                try:self.context.workspace._register_child_contract(receipt_id)
+                except Exception as exc:
+                    logger.warning("Derived contract unavailable; original operation receipt retained",
+                        extra={"extra_data":{"receipt_id":receipt_id,"error":str(exc)}})
+            if receipt_id and execution_binding is not None and tool_name in {"load_data","reload_data","load_sql"}:
+                # Only a successful host load can verify a pending replacement's
+                # new source. Older goals and already frozen plans are untouched.
+                before_requirements=deepcopy(state.answer_requirements)
+                try:
+                    for req in state.answer_requirements:
+                        pending=req.get("source_binding",{})
+                        if req.get("lifecycle_status")!="active" or req["id"] not in self.context.turn_requirement_ids or pending.get("status")!="pending": continue
+                        from data_agent.agent.publication.requirements import target_datasets
+                        for name in target_datasets(req):
+                            identity=self.context.workspace._publication_data_identity(name)
+                            if name==args.get("name","main") and identity and self.context.workspace._receipt_identity_matches(name,identities.get(name,{})):
+                                pending.setdefault("verified_load_receipts",{})[name]=receipt_id
+                    if state.answer_requirements!=before_requirements: state.save()
+                except Exception:
+                    state.answer_requirements=before_requirements
+                    raise
             if receipt_id:
                 self.context.turn_receipt_ids.append(receipt_id)
             turn_state = getattr(self.context, "turn_state", None)
             receipt_ids = getattr(turn_state, "tool_receipt_ids", None)
             if receipt_id and isinstance(receipt_ids, list):
                 receipt_ids.append(receipt_id)
+            if receipt_id and binding.get("required_delivery_ids"):
+                from data_agent.session.task_manager import task_manager
+                try:
+                    task_manager.reconcile_deliveries(self.session_id)
+                    self.__context_operation("refresh")
+                except Exception as exc:
+                    logger.warning("Delivery projection failed after receipt persistence", extra={"extra_data": {"receipt_id": receipt_id, "error": str(exc)}})
             return receipt_id
         except Exception as exc:
             logger.warning(
@@ -1782,234 +1994,9 @@ class AgentLoop:
             )
             return ""
 
-    @staticmethod
-    def _publication_facts_for_tool(structured_data: dict | None) -> list[dict[str, str]]:
-        if not isinstance(structured_data, dict):
-            return []
-        try:
-            from data_agent.agent.publication_synthesis import extract_publication_facts
 
-            # Receipts are the durable lossless-enough boundary.  The final
-            # packet applies its own display budget after it knows the user's
-            # complete request, so do not discard later business groups here.
-            return extract_publication_facts(structured_data, max_facts=500)
-        except Exception:
-            return []
 
-    @staticmethod
-    def _publication_groups_for_tool(
-        structured_data: dict | None,
-        *,
-        receipt_id: str = "",
-        detail_ref: dict | None = None,
-    ) -> dict:
-        if not isinstance(structured_data, dict):
-            return {"groups": [], "scan": {"scan_incomplete": False, "omitted_count": 0}}
-        try:
-            from data_agent.agent.publication_synthesis import extract_publication_fact_groups
 
-            return extract_publication_fact_groups(
-                structured_data,
-                receipt_id=receipt_id,
-                detail_ref=detail_ref,
-            )
-        except Exception:
-            return {"groups": [], "scan": {"scan_incomplete": True, "unknown_count": True}}
-
-    def _prepare_publication_packet(
-        self,
-        user_input: str,
-        *,
-        phase: str = "final",
-        persist: bool = True,
-    ) -> dict | None:
-        """Build a receipt-backed hand-off for preview or final publication."""
-        state = getattr(self.context, "analysis_state", None)
-        if state is None:
-            return None
-        try:
-            from data_agent.agent.publication_synthesis import build_publication_packet
-
-            trial = (self._typed_trial_enabled
-                     and bool(getattr(self, "_turn_typed_trial_receipts", [])))
-            receipt_ids = (list(self._turn_typed_trial_receipts) if trial
-                           else list(self.context.turn_receipt_ids))
-            if not receipt_ids:
-                prior_packet = getattr(self, "_turn_publication_packet", None)
-                if isinstance(prior_packet, dict):
-                    receipt_ids = [
-                        str(source.get("receipt_id") or "")
-                        for source in prior_packet.get("sources", [])
-                        if isinstance(source, dict) and source.get("receipt_id")
-                    ]
-            publication_tools = (
-                _SUBSTANTIVE_TOOLS if self._has_substantive_turn_evidence()
-                else _PUBLICATION_EVIDENCE_TOOLS
-            )
-            if trial:
-                publication_tools = publication_tools | {"preview_data"}
-            packet = build_publication_packet(
-                state,
-                user_input=user_input,
-                substantive_tools=publication_tools,
-                receipt_ids=receipt_ids,
-                requirement_ids=list(getattr(self.context, "turn_requirement_ids", []) or []),
-                phase=phase,
-                offline_trust_projection=trial,
-                offline_workspace=self.context.workspace if trial else None,
-                offline_confirmed_m02=trial,
-                offline_confirmed_aggregate=trial,
-                canonical_history=self._typed_trial_history() if trial else None,
-                confirmation_sessions_root=get_config().sessions_resolved if trial else None,
-            )
-            self._turn_publication_packet = packet
-            if packet.get("status") == "ready" and persist:
-                self._commit_publication_packet(packet)
-            return packet
-        except Exception as exc:
-            logger.warning(
-                "Publication synthesis packet skipped",
-                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
-            )
-            return None
-
-    def _typed_trial_history(self):
-        from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
-
-        messages = [dict(item) for item in self.messages if isinstance(item, dict)]
-        return CanonicalHistorySnapshot(
-            messages, len(messages), _history_sha256(messages), len(messages),
-        )
-
-    def _maybe_inject_typed_trial(self, user_input: str) -> bool:
-        """Opt-in local finalization with bounded, host-verified claim templates."""
-        if (not self._typed_trial_enabled
-                or getattr(self, "_turn_typed_trial_injected", False)):
-            return False
-        state = getattr(self.context, "analysis_state", None)
-        selected = set(getattr(self.context, "turn_receipt_ids", []) or [])
-        receipts = [item for item in getattr(state, "tool_receipts", []) or []
-                    if isinstance(item, dict) and item.get("id") in selected
-                    and item.get("tool_name") in {
-                        "compare_periods", "preview_data", "transform_data", "curve_fitting",
-                    }]
-        if not receipts:
-            from data_agent.agent.confirmation.models import ConfirmationStatus
-            from data_agent.agent.confirmation.store import ConfirmationStore
-
-            current_user = next((str(item.get("content") or "")
-                                 for item in reversed(self.messages)
-                                 if isinstance(item, dict) and item.get("role") == "user"), "")
-            current_ref = "msg_" + hashlib.sha256(current_user.encode("utf-8")).hexdigest()[:12]
-            try:
-                records = ConfirmationStore(
-                    get_config().sessions_resolved, self.session_id,
-                ).load_records().values()
-                targets = [record.resolution_params.get("aggregate_mapping")
-                           for record in records
-                           if record.status == ConfirmationStatus.RESOLVED
-                           and record.source == "host_aggregate_mapping.v1"
-                           and record.response in {"row_count_sum", "distinct_id_sum"}
-                           and isinstance(record.resolution_params.get("aggregate_mapping"), dict)
-                           and record.resolution_params["aggregate_mapping"].get("current_message_ref")
-                           == current_ref]
-            except (OSError, TypeError, ValueError):
-                targets = []
-            if len(targets) == 1:
-                receipts = [item for item in getattr(state, "tool_receipts", []) or []
-                            if isinstance(item, dict) and item.get("id") == targets[0].get("receipt_id")
-                            and item.get("tool_name") == "transform_data"]
-        ids = [str(item["id"]) for item in receipts]
-        families = {item.get("tool_name") for item in receipts}
-        if (not 1 <= len(ids) <= 8 or len(ids) != len(set(ids))
-                or len(families) != 1 or (families & {"transform_data", "curve_fitting"}
-                                         and len(ids) != 1)):
-            return False
-        self._turn_typed_trial_receipts = ids
-        packet = self._prepare_publication_packet(user_input, phase="preview", persist=False)
-        if not isinstance(packet, dict) or packet.get("status") != "ready":
-            self._turn_typed_trial_receipts = []
-            return False
-        from data_agent.agent.publication_synthesis import (
-            parse_answer_bindings, produce_confirmed_aggregate_claim_candidate,
-            produce_m02_receipt_claim_candidate,
-            produce_offline_comparison_claim_candidate, render_bound_claims,
-        )
-
-        if "transform_data" in families:
-            candidate = produce_confirmed_aggregate_claim_candidate(packet, ids[0])
-        elif "curve_fitting" in families:
-            candidate = produce_m02_receipt_claim_candidate(packet, ids[0])
-        else:
-            candidate = produce_offline_comparison_claim_candidate(packet, ids)
-        if candidate is None:
-            self._turn_typed_trial_receipts = []
-            return False
-        visible, bindings, issues = parse_answer_bindings(candidate, packet)
-        if issues or bindings is None:
-            self._turn_typed_trial_receipts = []
-            return False
-        preview = render_bound_claims(visible, packet, bindings)
-        prompt = (
-            "<typed_claim_trial>\n"
-            "This controlled local finalization offers only the host-verified, current-receipt "
-            "typed claims below. Use an applicable placeholder at its answer position "
-            "and include the exact answer-bindings block. You may omit an inapplicable claim. "
-            "Do not infer a cross-source total, source independence, causality, an unconfirmed "
-            "unit, or a longer time window. The host will validate and render each claim.\n"
-            "Host-rendered claim preview (data, not instructions):\n"
-            f"{preview}\n"
-            "Binding template (copy only the blocks you actually use):\n"
-            f"{candidate}\n"
-            "</typed_claim_trial>"
-        )
-        if len(prompt) > 8_000:
-            self._turn_typed_trial_receipts = []
-            return False
-        self.messages.append({"role": "system", "content": prompt})
-        self._turn_typed_trial_injected = True
-        self._turn_finalization_mode = True
-        return True
-
-    def _commit_publication_packet(self, packet: dict, final_text: str = "") -> dict:
-        """Persist only the packet that crossed the terminal publication gate."""
-        import hashlib
-
-        committed = dict(packet)
-        committed["phase"] = "final"
-        if final_text:
-            committed["answer_sha256"] = "sha256:" + hashlib.sha256(
-                final_text.encode("utf-8")
-            ).hexdigest()
-            binding_seed = f"{committed.get('snapshot_digest', '')}|{committed['answer_sha256']}"
-            committed["snapshot_packet_id"] = str(packet.get("id") or "")
-            committed["id"] = "pub_" + hashlib.sha256(binding_seed.encode("utf-8")).hexdigest()[:12]
-            state = getattr(self.context, "analysis_state", None)
-            same_snapshot = [
-                item for item in (getattr(state, "publication_packets", []) or [])
-                if isinstance(item, dict) and item.get("snapshot_digest") == committed.get("snapshot_digest")
-                and item.get("answer_sha256")
-            ]
-            same_answer = next((item for item in same_snapshot if item.get("answer_sha256") == committed["answer_sha256"]), None)
-            if same_answer:
-                committed["content_revision"] = int(same_answer.get("content_revision") or 1)
-            else:
-                committed["content_revision"] = 1 + max(
-                    [int(item.get("content_revision") or 0) for item in same_snapshot] or [0]
-                )
-                if same_snapshot:
-                    committed["supersedes_packet_id"] = str(same_snapshot[-1].get("id") or "")
-        self._turn_publication_packet = committed
-        state = getattr(self.context, "analysis_state", None)
-        if state is not None:
-            # The receipt artifact is part of the publication contract.  Write
-            # it before adding the packet to live state so a failed write
-            # cannot be mistaken for a complete, exportable publication.
-            self._register_publication_receipt_artifact(committed, state)
-            add_packet = getattr(state, "add_publication_packet", None)
-            if callable(add_packet):
-                add_packet(committed)
-        return committed
 
     def _close_ledger_for_published_turn(self) -> None:
         """Host-owned bookkeeping at successful publication.
@@ -2019,6 +2006,9 @@ class AgentLoop:
         stays honest (R21: both M04 runs left eternally-pending tasks and the
         deterministic auditor rightly flags that residue).
         """
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is not None:
+            turn_state.pending_fallback_resolution = False
         try:
             from data_agent.session.task_manager import task_manager
 
@@ -2032,248 +2022,23 @@ class AgentLoop:
             # any) is surfaced by the deterministic scenario auditor instead.
             return
 
-    def _persist_accepted_answer(self, assistant_msg: dict, final_text: str) -> str | None:
-        """Bind and persist one accepted terminal answer before exposure."""
-        packet = getattr(self, "_turn_publication_packet", None)
-        state = getattr(self.context, "analysis_state", None)
-        prior_packets = list(getattr(state, "publication_packets", []) or []) if state is not None else []
-        try:
-            if isinstance(packet, dict) and packet.get("status") == "ready":
-                committed = self._commit_publication_packet(packet, final_text)
-                assistant_msg["publication_packet_id"] = str(committed.get("id") or "")
-                assistant_msg["publication_snapshot_digest"] = str(committed.get("snapshot_digest") or "")
-                assistant_msg["answer_sha256"] = str(committed.get("answer_sha256") or "")
-                assistant_msg["publication_artifact_path"] = str(committed.get("publication_artifact_path") or "")
-            assistant_msg["content"] = final_text
-            self.messages.append(assistant_msg)
-            self._auto_save()
-            return None
-        except Exception as exc:
-            if self.messages and self.messages[-1] is assistant_msg:
-                self.messages.pop()
-            if state is not None:
-                state.publication_packets[:] = prior_packets
-            logger.error(
-                "Accepted answer persistence failed",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
-            return (
-                "最终回答已生成，但正文与来源绑定未能可靠保存，因此本轮未发布完整成功结果。"
-                f"可恢复失败：{type(exc).__name__}: {exc}"
-            )
+    def _persist_accepted_answer(self,assistant_msg,final_text):
+        from data_agent.agent.publication.runtime import commit,export_current_answer_deliveries
+        error=commit(self,assistant_msg,final_text)
+        if error is None:
+            turn_state=getattr(self.context,"turn_state",None)
+            if turn_state is not None:turn_state.pending_fallback_resolution=False
+            export_current_answer_deliveries(self)
+        return error
 
-    def _register_publication_receipt_artifact(self, packet: dict, state: Any) -> None:
-        """Persist an openable receipt artifact for the published packet (B03).
 
-        The browser artifacts panel and exports must show which sources,
-        receipts, and omissions back the published answer. One artifact per
-        packet id; re-preparing the same packet does not duplicate it.
-        """
-        receipted = getattr(self, "_publication_receipt_packet_ids", None)
-        if receipted is None:
-            receipted = set()
-            self._publication_receipt_packet_ids = receipted
-        packet_id = str(packet.get("id") or "")
-        if not packet_id or packet_id in receipted:
-            return
-        from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
-        from data_agent.agent.workbench_view import build_workbench_view
-        from data_agent.tools.report import _write_report_artifact
 
-        workbench = build_workbench_view(state)
-        content = render_publication_receipt_markdown(
-            packet,
-            pending_findings=workbench.get("pending_findings"),
-            verified_total=workbench.get("verified_total"),
-        )
-        artifact_path = _write_report_artifact(
-            self.session_id,
-            f"计算来源说明 {packet_id}",
-            content,
-            "md",
-            "publication_receipt",
-            "publication",
-        )
-        packet["publication_artifact_path"] = artifact_path
-        receipted.add(packet_id)
 
-    def _render_finalized_publication(self, final_text: str) -> tuple[str | None, str | None]:
-        """Validate the answer against persisted evidence without leaking audit records."""
-        packet = getattr(self, "_turn_publication_packet", None)
-        if not isinstance(packet, dict) or packet.get("status") != "ready":
-            return final_text, None
-        try:
-            from data_agent.agent.publication_synthesis import (
-                parse_answer_bindings,
-                partition_typed_trial_answer,
-                render_bound_claims_with_trace,
-                render_verified_partial_answer,
-                validate_final_narrative,
-            )
 
-            packet.pop("answer_render_trace", None)
-            visible_text, bindings, binding_issues = parse_answer_bindings(final_text, packet)
-            packet.pop("answer_bindings", None)
-            if bindings is not None:
-                packet["answer_bindings"] = bindings
-            error = validate_final_narrative(visible_text, packet)
-            if error and getattr(self, "_turn_origin_revision_issued", False):
-                # Second pass after the origin revision: origin-class findings
-                # no longer block; the host annotates the accepted answer.
-                from data_agent.agent.publication_synthesis import (
-                    drop_revision_only_issues,
-                    validate_final_narrative_issues,
-                )
+    def _render_terminal_publication(self,user_input,final_text,*,persist=False):
+        from data_agent.agent.publication.runtime import publish
+        return publish(self,final_text)
 
-                blocking, _revision_only = drop_revision_only_issues(
-                    validate_final_narrative_issues(visible_text, packet)
-                )
-                if not blocking:
-                    packet["provenance_unverified"] = True
-                    error = None
-            if binding_issues:
-                binding_error = "\n".join(
-                    f"[{issue['code']}] {issue['reason']}（位置：{issue['span']}）"
-                    for issue in binding_issues
-                )
-                error = "\n".join(filter(None, [error, binding_error]))
-            if error:
-                if getattr(self, "_turn_publication_recovery_used", False):
-                    partial, verified_bindings = render_verified_partial_answer(packet, bindings)
-                    if partial is not None and verified_bindings is not None:
-                        packet["answer_bindings"] = verified_bindings
-                        turn_state = getattr(self.context, "turn_state", None)
-                        if turn_state is not None and getattr(turn_state, "pending_fallback_resolution", False):
-                            turn_state.pending_fallback_resolution = False
-                        return partial, None
-                return None, error
-            # The free prose has passed its existing checks. In the opt-in
-            # trial only, separate host-rendered results from model prose.
-            candidate_text = visible_text
-            boundary_notes = []
-            if packet.get("provenance_unverified"):
-                boundary_notes.append(
-                    "数据来源状态：回执未声明数据来源；上述来源判断未经证实，"
-                    "请以数据提供方确认为准。"
-                )
-            from data_agent.agent.publication_synthesis import _extrapolation_issues
-
-            accepted_scenarios: list[dict] = []
-            _extrapolation_issues(
-                candidate_text, packet.get("publication_scope") or [],
-                accepted_scenarios=accepted_scenarios,
-            )
-            if accepted_scenarios:
-                boundary_notes.append(
-                    "上述观测区间外数值仅为拟合参数下的情景；"
-                    "未做留出验证、回测或外部验证，不是已验证预测。"
-                )
-            trial_partition = (
-                getattr(self, "_typed_trial_enabled", False)
-                and getattr(self, "_turn_typed_trial_injected", False)
-            )
-            pending_spans = []
-            if trial_partition:
-                visible_text, pending_spans = partition_typed_trial_answer(
-                    visible_text, bindings, boundary_notes,
-                )
-            pending_texts = [
-                visible_text[int(span["start"]):int(span["end"])]
-                for span in pending_spans
-            ]
-            pre_render_length = len(visible_text)
-            try:
-                visible_text, render_entries = render_bound_claims_with_trace(
-                    visible_text, packet, bindings,
-                )
-            except Exception as exc:
-                return None, f"[invalid_scenario_binding] 宿主无法复算或渲染绑定情景：{exc}"
-            accepted_text = visible_text.rstrip()
-            if boundary_notes and not trial_partition:
-                accepted_text += "\n\n" + "\n".join(boundary_notes)
-            located_pending = []
-            if pending_spans:
-                offset = len(visible_text) - pre_render_length
-                for span, expected_text in zip(pending_spans, pending_texts):
-                    start, end = int(span["start"]) + offset, int(span["end"]) + offset
-                    if (not 0 <= start < end <= len(accepted_text)
-                            or accepted_text[start:end] != expected_text):
-                        return None, "[publication_render_error] 待核解释无法定位。"
-                    located_pending.append({
-                        "span_id": span["span_id"], "start": start, "end": end,
-                        "text_sha256": "sha256:" + hashlib.sha256(
-                            accepted_text[start:end].encode("utf-8")
-                        ).hexdigest(),
-                    })
-            trace_body = {
-                "schema_version": "answer_render_trace.v1",
-                "packet_digest": packet.get("snapshot_digest"),
-                "answer_sha256": "sha256:" + hashlib.sha256(accepted_text.encode("utf-8")).hexdigest(),
-                "entries": render_entries,
-            }
-            if trial_partition:
-                trace_body["pending_spans"] = located_pending
-            trace_seed = json.dumps(
-                trace_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-            )
-            packet["answer_render_trace"] = {
-                **trace_body,
-                "trace_digest": "sha256:" + hashlib.sha256(trace_seed.encode("utf-8")).hexdigest(),
-            }
-            # P08-02：通过发布检查的最终答复是合法的解析结果——带证据边界的
-            # 拒答（如“无法预测 D30”）完成本轮，待解析状态随之满足。
-            turn_state = getattr(self.context, "turn_state", None)
-            if turn_state is not None and getattr(turn_state, "pending_fallback_resolution", False):
-                turn_state.pending_fallback_resolution = False
-            return accepted_text, None
-        except Exception as exc:
-            logger.warning(
-                "Publication synthesis rendering skipped",
-                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
-            )
-            return None, "[publication_render_error] 发布校验未能完成，未发布未经验证的候选正文。"
-
-    def _render_terminal_publication(
-        self,
-        user_input: str,
-        final_text: str,
-        *,
-        persist: bool = True,
-    ) -> tuple[str | None, str | None]:
-        """Publish a receipt-backed appendix for every evidenced terminal answer.
-
-        A model can choose to answer before the soft wrap-up threshold.  Its
-        final response still crosses the same product publication boundary,
-        so collecting the receipt packet only in forced finalization would
-        leave normal short analyses ungrounded.
-        """
-        packet = None
-        prior_packet = getattr(self, "_turn_publication_packet", None)
-        requires_current_packet = self._has_publishable_turn_evidence()
-        if requires_current_packet or (
-            isinstance(prior_packet, dict) and prior_packet.get("status") == "ready"
-        ):
-            # Always rebuild here.  A ready preview packet may predate late
-            # receipts, EvidenceRecords, or the final verification report.
-            packet = self._prepare_publication_packet(
-                user_input,
-                phase="final",
-                persist=False,
-            )
-        elif prior_packet is None:
-            packet = self._latest_publication_packet_for_presentation(user_input)
-            if packet is not None:
-                self._turn_publication_packet = packet
-        if isinstance(packet, dict) and packet.get("status") == "ready":
-            published_text, error = self._render_finalized_publication(final_text)
-            if not error and published_text is not None and persist:
-                self._commit_publication_packet(packet, published_text)
-            return published_text, error
-        if requires_current_packet or (
-            isinstance(prior_packet, dict) and prior_packet.get("status") == "ready"
-        ):
-            return None, "[publication_packet_unavailable] 本轮证据快照未能完成，未发布未经验证的候选正文。"
-        return final_text, None
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
         if not getattr(self, "_turn_loaded_data", False):
@@ -2283,7 +2048,16 @@ class AgentLoop:
             return
         self._prompt_cache_dirty = True
         with self.__context_operation("use"):
-            self._prepare_analysis_turn(user_input)
+            intent = getattr(self,"_last_turn_intent",None)
+            if intent is None:
+                return
+            from types import SimpleNamespace
+            from data_agent.session.workspace import workspace
+            prepared = dict(vars(intent))
+            loaded = bool(workspace.list_datasets())
+            prepared.update(data_state="data_loaded" if loaded else "no_data",
+                            execution_readiness="ready" if loaded else "missing_data")
+            self._complete_analysis_turn(user_input,SimpleNamespace(**prepared),register_outputs=False)
 
     def _turn_tool_error_count(self) -> int:
         turn_state = getattr(self.context, "turn_state", None)
@@ -2311,134 +2085,28 @@ class AgentLoop:
         return "\n".join(profile_lines)
 
     def _maybe_inject_synthesis_policy(self, user_input: str) -> None:
-        if getattr(self, "_turn_final_guard_injected", False) and getattr(
-            self, "_turn_analysis_quality_gaps", None
-        ):
-            # A plan may be recorded after the one-time synthesis hint ran.
-            # Refresh the existing host hypothesis set on that tool round so
-            # the next prompt can expose its new plan-scoped IDs.
-            from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+        intent=getattr(self,"_last_turn_intent",None)
+        state=getattr(self.context,"analysis_state",None)
+        if intent is None or state is None: return
+        from data_agent.agent.synthesis_policy import build_synthesis_instruction, derive_synthesis_policy
+        from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+        from data_agent.agent.hypotheses import hydrate_hypothesis_refs, hypotheses_prompt_brief
+        if (state.analysis_plan or {}).get("id"):
+            maybe_create_hypothesis_set(user_input,intent,state)
+        request_id=next((m.get("request_id") for m in reversed(self.messages) if m.get("role")=="user" and m.get("request_id")),None)
+        policy=derive_synthesis_policy(intent=intent,state=state,proficiency=self.context.user_proficiency,current_request_id=request_id)
+        instruction=build_synthesis_instruction(policy)
+        hydrated=hydrate_hypothesis_refs(list(state.hypothesis_sets or []))
+        brief=hypotheses_prompt_brief(state,hydrated=hydrated)
+        self._turn_synthesis_policy_instruction=instruction+("\n"+brief if brief else "")
+        self._turn_synthesis_policy_injected=True
 
-            intent = getattr(self, "_last_turn_intent", None)
-            state = getattr(self.context, "analysis_state", None)
-            if intent is not None and state is not None:
-                maybe_create_hypothesis_set(user_input, intent, state)
-        if getattr(self, "_turn_synthesis_policy_injected", False):
-            return
-        intent = getattr(self, "_last_turn_intent", None)
-        if intent is None or intent.intent_type not in ("directed_analysis", "comprehensive_report"):
-            return
-        state = getattr(self.context, "analysis_state", None)
-        if state is None:
-            return
-        evidence = getattr(state, "evidence_records", []) or []
-        if not evidence:
-            # An explicit competing-hypothesis task needs stable hypothesis
-            # IDs before the model can attach receipt-backed support/refute
-            # relations.  Create and expose only that deterministic brief;
-            # ordinary analyses keep the existing no-evidence fast path.
-            try:
-                from data_agent.agent.question_need_detector import explicit_task_reason
-                from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
-                from data_agent.agent.hypotheses import hydrate_hypothesis_refs, hypotheses_prompt_brief
+    def _verify_before_publication(self,user_input):
+        from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+        intent=getattr(self,"_last_turn_intent",None)
+        if intent is not None and self.context.analysis_state is not None:
+            maybe_create_hypothesis_set(user_input,intent,self.context.analysis_state)
 
-                if explicit_task_reason(user_input) in {"hypothesis_task", "competing_hypotheses", "evidence_reassessment"}:
-                    maybe_create_hypothesis_set(user_input, intent, state)
-                    hydrated = hydrate_hypothesis_refs(list(getattr(state, "hypothesis_sets", []) or []))
-                    brief = hypotheses_prompt_brief(state, hydrated=hydrated)
-                    if brief:
-                        self._turn_synthesis_policy_instruction = brief
-            except Exception as exc:
-                logger.warning(
-                    "Pre-evidence hypothesis brief skipped",
-                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-                )
-            return
-
-        if not getattr(self, "_turn_verification_injected", False):
-            try:
-                from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
-
-                self._turn_verification_injected = True
-                maybe_verify_turn_claims(user_input, state)
-            except Exception as exc:
-                logger.warning(
-                    "Trust workflow loop verification skipped",
-                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-                )
-
-        try:
-            from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
-
-            maybe_create_hypothesis_set(user_input, intent, state)
-        except Exception as exc:
-            logger.warning(
-                "Trust workflow loop hypothesis creation skipped",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
-
-        from data_agent.agent.synthesis_policy import (
-            build_synthesis_instruction,
-            derive_synthesis_policy,
-        )
-
-        policy = derive_synthesis_policy(
-            intent=intent,
-            state=state,
-            user_input=user_input,
-            data_profile=self._current_dataset_profile(),
-            tool_error_count=self._turn_tool_error_count(),
-            user_requirements=self.context.user_quality_requirements,
-            proficiency=self.context.user_proficiency,
-        )
-        instruction = build_synthesis_instruction(policy)
-        try:
-            from data_agent.agent.hypotheses import hydrate_hypothesis_refs, hypotheses_prompt_brief
-
-            hydrated = hydrate_hypothesis_refs(list(getattr(state, "hypothesis_sets", []) or []))
-            brief = hypotheses_prompt_brief(state, hydrated=hydrated)
-            if brief:
-                instruction = f"{instruction}\n{brief}"
-        except Exception as exc:
-            logger.warning(
-                "Hypothesis brief injection skipped",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
-        self._turn_synthesis_policy_instruction = instruction
-        self._turn_synthesis_policy_injected = True
-
-    def _verify_before_publication(self, user_input: str) -> None:
-        """Refresh deterministic claim verification at the publication boundary.
-
-        Tool rounds may create an EvidenceRecord after the earlier synthesis
-        hook ran.  A final answer must not be published with that fresh record
-        still labelled unverified in the Workbench.
-        """
-        state = getattr(self.context, "analysis_state", None)
-        if state is None or not getattr(state, "evidence_records", None):
-            return
-        try:
-            from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
-
-            maybe_verify_turn_claims(user_input, state)
-        except Exception as exc:
-            logger.warning(
-                "Publication-boundary verification skipped",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
-        # Hypothesis states are refreshed on the same evidence snapshot as
-        # verification, so a final answer never ships with stale verdicts.
-        intent = getattr(self, "_last_turn_intent", None)
-        if intent is not None:
-            try:
-                from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
-
-                maybe_create_hypothesis_set(user_input, intent, state)
-            except Exception as exc:
-                logger.warning(
-                    "Publication-boundary hypothesis refresh skipped",
-                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-                )
 
     @staticmethod
     def _budget_truncation_message(response) -> str | None:
@@ -2458,6 +2126,8 @@ class AgentLoop:
         )
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
+        if getattr(self, "_turn_budget_exhaustion", None):
+            return False
         hypothesis_gaps = self._competing_hypothesis_quality_gaps(user_input)
         self._turn_analysis_quality_gaps = hypothesis_gaps
         if hypothesis_gaps:
@@ -2468,12 +2138,12 @@ class AgentLoop:
         """Return missing audit structures for an explicit hypothesis task.
 
         The gate is deliberately host-owned: a plan-shaped object and one
-        relation-shaped record are not completion evidence.  Per the
+        model relation-shaped record are not completion evidence. Per the
         2026-09-21 goal realignment the task ledger is host bookkeeping:
         unfinished projected tasks no longer block publication (both R21 M04
         runs died on that), and the host closes open tasks with an explicit
         reason once the final answer publishes.  What still blocks is the
-        absence of the structured artifacts themselves.
+        absence of current, bound structured evidence.
         """
         try:
             from data_agent.agent.question_need_detector import explicit_task_reason
@@ -2495,19 +2165,17 @@ class AgentLoop:
             gaps.append("no persisted competing-hypothesis set exists")
         evidence_records = getattr(state, "evidence_records", None)
         has_relation_proposal = any(
-            isinstance(record, dict)
-            and isinstance(record.get("competing_hypotheses"), list)
-            and bool(record.get("competing_hypotheses"))
+            isinstance(record, dict) and bool(record.get("competing_hypotheses"))
             for record in (evidence_records or [])
         )
-        if not has_relation_proposal:
+        from data_agent.agent.hypotheses import receipt_verified_descriptive_directions
+
+        direct_directions = receipt_verified_descriptive_directions(
+            state, [record for record in (evidence_records or []) if isinstance(record, dict)],
+        )
+        if not has_relation_proposal and not direct_directions:
             gaps.append("no evidence record contains structured hypothesis relations")
-        elif isinstance(plan, dict) and isinstance(hypothesis_sets, list):
-            # The proposal field is not an audit verdict. R4 supplied relation
-            # aliases that matched no persisted hypothesis ID; the old presence
-            # check called that complete even though every set stayed undecided.
-            # Re-run the existing host validator against current-plan sets and
-            # fresh evidence, rather than trusting a model-authored relation.
+        if evidence_records and isinstance(plan, dict) and isinstance(hypothesis_sets, list):
             from data_agent.agent.hypotheses import (
                 hydrate_hypothesis_refs,
                 receipt_verified_hypothesis_measurements,
@@ -2524,12 +2192,14 @@ class AgentLoop:
                 _workspace_data_identities(),
             )
             verified_measurements = receipt_verified_hypothesis_measurements(state, fresh_records)
+            verified_directions = receipt_verified_descriptive_directions(state, fresh_records)
             has_audited_relation = False
             for hypothesis_set in hydrate_hypothesis_refs(hypothesis_sets):
                 if not current_plan_id or hypothesis_set.get("plan_id") != current_plan_id:
                     continue
                 refreshed = update_hypotheses_from_evidence(
                     hypothesis_set, fresh_records, verified_measurements=verified_measurements,
+                    verified_directions=verified_directions,
                 )
                 if any(
                     isinstance(hypothesis, dict)
@@ -2545,20 +2215,12 @@ class AgentLoop:
                     )
                     for hypothesis in (refreshed.get("hypotheses") or [])
                 ):
-                    # A current-ID proposal with an explicit evidence gap is
-                    # an auditable unresolved relation, not a support verdict.
-                    # Keep the task deliverable without an endless repair loop.
                     has_audited_relation = True
                     break
             if not has_audited_relation:
                 gaps.append("no current-plan host-validated hypothesis relation exists")
         return gaps
 
-    def _analysis_quality_failure_after_guard(self) -> str | None:
-        gaps = list(getattr(self, "_turn_analysis_quality_gaps", []) or [])
-        if not getattr(self, "_turn_final_guard_injected", False) or not gaps:
-            return None
-        return "[analysis_audit_incomplete] 竞争假设审计结构仍不完整：" + "; ".join(gaps)
 
     def _is_analysis_quality_guard_candidate(self) -> bool:
         if getattr(self, "_turn_final_guard_injected", False):
@@ -2659,78 +2321,56 @@ class AgentLoop:
         from data_agent.agent.confirmation.models import ConfirmationStatus
         from data_agent.agent.confirmation.policy import RequestDisposition
         from data_agent.agent.confirmation.runtime import (
-            build_aggregate_mapping_candidate,
             build_direct_question_candidate,
             build_measurement_mapping_candidate,
             confirmation_record_to_loop_result,
         )
 
+        from data_agent.agent.publication.runtime import current_request_uses_data
+        if (getattr(self.context.turn_intent,"intent_type",None) in {"analysis_consultation","knowledge_qa"}
+                and not current_request_uses_data(self)):
+            return "本轮是知识或方案咨询，没有需要阻塞的计算目标。请先交付所需字段、步骤和限制；口径不同可分别说明，不要求先选择或上传。"
         service = self._confirmation_runtime()
-        if request.measurement_mapping:
+        # A top-level model mapping cannot cancel unresolved batch members.
+        # Batch mappings stay unassessed; the existing per-question gate owns them.
+        if request.measurement_mapping and not request.context:
             from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
-
-            if request.context:
-                return "指标映射需单独确认；当前多问题请求保持单位和子问题覆盖未评估。"
             try:
                 target = json.loads(request.measurement_mapping)
             except (TypeError, ValueError):
                 target = None
-            aggregate_fields = {"kind", "exact_span", "dataset", "derived_dataset",
-                                "receipt_id", "order_column", "amount_column"}
-            is_aggregate = isinstance(target, dict) and set(target) == aggregate_fields \
-                and target.get("kind") == "group_aggregate"
-            if (not isinstance(target, dict)
-                    or (not is_aggregate and set(target) not in (
-                        {"exact_span", "dataset", "column"},
-                        {"exact_span", "dataset", "column", "x_column", "x_start", "x_end"}))):
-                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
+            if not isinstance(target, dict) or (set(target) - {"source_message_ref"}) not in (
+                {"exact_span", "dataset", "column"},
+                {"exact_span", "dataset", "column", "cost_scopes"},
+                {"exact_span", "dataset", "column", "x_column", "x_start", "x_end"},
+            ):
+                return "该指标映射未通过宿主校验；保持单位未评估。"
             span = target["exact_span"]
             if not isinstance(span, str):
-                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
-            source_messages = [
-                message["content"] for message in self.messages
-                if isinstance(message, dict) and message.get("role") == "user"
-                and isinstance(message.get("content"), str)
-                and message["content"].count(span) == 1
-            ]
-            if len(source_messages) != 1:
-                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
+                return "该指标映射未通过宿主校验；保持单位未评估。"
             messages = [dict(message) for message in self.messages if isinstance(message, dict)]
+            source_ref = target.get("source_message_ref") or next(
+                (message.get("request_id") for message in reversed(messages)
+                 if message.get("role") == "user"), None,
+            )
+            if not isinstance(source_ref, str):
+                return "该指标映射未通过宿主校验；保持单位未评估。"
             history = CanonicalHistorySnapshot(
                 messages, len(messages), _history_sha256(messages), len(messages),
             )
-            source_ref = "msg_" + hashlib.sha256(source_messages[0].encode("utf-8")).hexdigest()[:12]
-            if is_aggregate:
-                state = getattr(self.context, "analysis_state", None)
-                receipts = [item for item in (getattr(state, "tool_receipts", []) or [])
-                            if isinstance(item, dict) and item.get("id") == target["receipt_id"]]
-                if len(receipts) != 1:
-                    return "该聚合回执未通过宿主校验；保持口径和子问题覆盖未评估。"
-                current_user = next((message["content"] for message in reversed(messages)
-                                     if message.get("role") == "user"), "")
-                current_ref = "msg_" + hashlib.sha256(current_user.encode("utf-8")).hexdigest()[:12]
-                candidate = build_aggregate_mapping_candidate(
-                    session_id=self.session_id, turn_id=turn_id,
-                    workspace=self.context.workspace, receipt=receipts[0],
-                    canonical_history=history,
-                    source_message_ref=source_ref, current_message_ref=current_ref,
-                    exact_span=span, dataset=target["dataset"],
-                    derived_dataset=target["derived_dataset"],
-                    receipt_id=target["receipt_id"],
-                    order_column=target["order_column"],
-                    amount_column=target["amount_column"],
-                )
-            else:
-                candidate = build_measurement_mapping_candidate(
-                    session_id=self.session_id, turn_id=turn_id,
-                    workspace=self.context.workspace, canonical_history=history,
-                    source_message_ref=source_ref, exact_span=span,
-                    dataset=target["dataset"], column=target["column"],
-                    x_column=target.get("x_column", ""),
-                    x_start=target.get("x_start"), x_end=target.get("x_end"),
-                )
+            # Refresh the real task permission before the producer reads a frame.
+            self.__context_operation("refresh")
+            candidate = build_measurement_mapping_candidate(
+                session_id=self.session_id, turn_id=turn_id,
+                workspace=self.context.workspace, canonical_history=history,
+                source_message_ref=source_ref, exact_span=span,
+                dataset=target["dataset"], column=target["column"],
+                x_column=target.get("x_column", ""),
+                x_start=target.get("x_start"), x_end=target.get("x_end"),
+                cost_scopes=target.get("cost_scopes"),
+            )
             if candidate is None:
-                return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
+                return "该指标映射未通过宿主校验；保持单位未评估。"
         else:
             candidate = build_direct_question_candidate(
                 session_id=self.session_id,
@@ -2738,13 +2378,72 @@ class AgentLoop:
                 message_version=len(self.messages),
                 request=request,
             )
+        return self._request_confirmation_candidate(candidate)
+
+    def _request_confirmation_candidate(self, candidate):
+        from dataclasses import replace
+        from data_agent.agent.confirmation.models import ConfirmationStatus
+        from data_agent.agent.confirmation.policy import RequestDisposition
+        from data_agent.agent.confirmation.runtime import confirmation_record_to_loop_result
+        from data_agent.agent.confirmation.runtime import bind_confirmation_candidate
+        scope = self.__context_operation("refresh")
+        request_id = getattr(self,"_publication_turn_id",candidate.turn_id)
+        candidate = bind_confirmation_candidate(candidate, context=self.context,
+            scope=scope, request_id=request_id)
+        service = self._confirmation_runtime()
+        self._expire_stale_confirmation_bindings(service, scope, request_id=request_id)
+        from data_agent.agent.confirmation.runtime import bind_referenced_decision
+        candidate = bind_referenced_decision(candidate, service=service, context=self.context,
+            scope=scope, request_id=request_id)
+        intent = self.context.turn_intent
+        candidate = replace(candidate,continuation_context={
+            "turn_id":getattr(self,"_publication_turn_id",candidate.turn_id),
+            "intent":dict(vars(intent)) if intent is not None else {},
+            "requirement_ids":list(self.context.turn_requirement_ids),
+            "receipt_ids":list(self.context.turn_receipt_ids)})
         request_result = service.request(candidate)
+
+        def log_decision(suspended):
+            binding = candidate.resolution_params.get("host_binding", {})
+            # A grouped policy reason can embed original questions and answers.
+            reason = ("Member decisions: " + request_result.disposition.value
+                      if candidate.resolution_params.get("question_bindings")
+                      else request_result.reason)
+            logger.info("Confirmation decision", extra={"extra_data": {
+                "event": "confirmation_decision", "producer": candidate.source,
+                "disposition": request_result.disposition.value,
+                "reason": reason, "suspended": suspended,
+                "scope_summary": {
+                    "requirement_count": len(self.context.turn_requirement_ids),
+                    "object_count": len(binding.get("objects", [])),
+                    "bound": binding.get("status") == "host_bound",
+                    "data_version": candidate.data_version,
+                    "spec_version": candidate.spec_version}}})
+
         # IC2/设计§5：REUSED 恢复既有答案，不对旧 resolved record 再悬挂；
         # advisory/rejected 同样以一次正常工具响应继续本轮。
         if (
             request_result.disposition == RequestDisposition.REUSED
             or record_is_none(request_result)
         ):
+            from data_agent.agent.confirmation.decision import is_method_approval_shaped
+            turn_state = getattr(self.context, "turn_state", None)
+            if (request_result.disposition != RequestDisposition.REUSED
+                    and is_method_approval_shaped(candidate) and turn_state is not None):
+                # Wording cannot buy another allowance for the same irrelevant
+                # permission under the current host-owned goal/plan/scope.
+                host_scope = {"kind": "nonblocking_method_permission",
+                    "operation": candidate.operation,
+                    "requirement_ids": sorted(self.context.turn_requirement_ids),
+                    "requirement_revision": self.context.analysis_state.requirement_revision,
+                    "plan_id": (self.context.analysis_state.analysis_plan or {}).get("id", ""),
+                    "data_version": candidate.data_version, "spec_version": candidate.spec_version}
+                if turn_state.record_nonblocking_permission(host_scope):
+                    from data_agent.agent.execution_control import BudgetExceeded
+                    self._close_tools_on_budget_exhaustion(BudgetExceeded(
+                        "通用方法许可重复询问已耗尽现有无效调用额度；保留已核结果与未决缺口。",
+                        code="repeated_nonblocking_permission"))
+            log_decision(False)
             return self._nonblocking_confirmation_response(request_result)
 
         record = request_result.record
@@ -2758,10 +2457,12 @@ class AgentLoop:
                     f"confirmation {record.confirmation_id} was not suspended"
                 )
 
-        return confirmation_record_to_loop_result(
+        result = confirmation_record_to_loop_result(
             record,
             {"messages": self._serialize_messages()},
         )
+        log_decision(isinstance(result, SuspendedForConfirmation))
+        return result
 
     def _nonblocking_confirmation_response(self, request_result) -> str:
         """Tool-response text for advisory/reused/rejected confirmation results."""
@@ -2775,11 +2476,19 @@ class AgentLoop:
                 service = self._confirmation_runtime()
                 reused = service.get(self.session_id, request_result.reused_confirmation_id)
                 answer = reused.response if reused is not None else None
+                original_question = reused.question if reused is not None else ""
+                question_id = getattr(request_result, "reused_question_id", "")
+                if question_id and reused is not None:
+                    from data_agent.agent.confirmation.decision import resolved_question_records
+                    member = next((r for r in resolved_question_records(reused)
+                                   if r.resolution_params.get("_question_id") == question_id), None)
+                    answer = member.response if member is not None else None
+                    original_question = member.question if member is not None else ""
             except Exception:
                 answer = None
             if answer not in (None, "", [], {}):
                 return (
-                    f"此前的回答仍然适用：{json.dumps(answer, ensure_ascii=False, default=str)}。"
+                    f"此前的回答仍然适用（原问题：{original_question}）：{json.dumps(answer, ensure_ascii=False, default=str)}。"
                     "如业务口径已变化，请说明新的具体口径。"
                 )
         return (
@@ -2794,14 +2503,9 @@ class AgentLoop:
         *,
         source: str,
         operation: str,
-    ) -> SuspendedForConfirmation:
-        from data_agent.agent.confirmation.models import ConfirmationStatus
-        from data_agent.agent.confirmation.runtime import (
-            build_required_question_candidate,
-            confirmation_record_to_loop_result,
-        )
+    ) -> SuspendedForConfirmation | None:
+        from data_agent.agent.confirmation.runtime import build_required_question_candidate
 
-        service = self._confirmation_runtime()
         candidate = build_required_question_candidate(
             session_id=self.session_id,
             turn_id=str(payload.get("confirmation_type") or operation or "auto_required_question"),
@@ -2810,41 +2514,26 @@ class AgentLoop:
             source=source,
             operation=operation or "auto_required_question",
         )
-        request_result = service.request(candidate)
-        record = request_result.record
-        if record is None and request_result.reused_confirmation_id:
-            record = service.get(self.session_id, request_result.reused_confirmation_id)
-        if record is None:
-            # IC2/设计§5：自动门的 advisory/rejected 不悬挂不抛异常——记日志后
-            # 让本轮继续（该缺口已按策略判定无需用户决策）。
-            logger.info(
-                "Auto confirmation downgraded to non-blocking",
-                extra={"extra_data": {
-                    "session_id": self.session_id,
-                    "reason": request_result.reason,
-                }},
-            )
-            return None
+        result = self._request_confirmation_candidate(candidate)
+        return result if isinstance(result, SuspendedForConfirmation) else None
 
-        checkpoint = service.checkpoint(self.session_id)
-        if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
-            record = checkpoint
-        elif record.status == ConfirmationStatus.PENDING:
-            record = service.get(self.session_id, record.confirmation_id)
-            if record.status == ConfirmationStatus.PENDING:
-                raise RuntimeError(
-                    f"confirmation {record.confirmation_id} was not suspended"
-                )
-
-        return confirmation_record_to_loop_result(
-            record,
-            {"messages": self._serialize_messages()},
-        )
+    def _expire_stale_confirmation_bindings(self, service, scope, request_id=None):
+        from data_agent.agent.confirmation.runtime import confirmation_binding_is_current
+        from data_agent.agent.confirmation.models import ConfirmationStatus
+        if request_id is None:
+            request_id = getattr(self,"_publication_turn_id",None)
+        for record in service._store(self.session_id).load_records().values():
+            if (record.status in {ConfirmationStatus.PENDING, ConfirmationStatus.SUSPENDED}
+                    and not confirmation_binding_is_current(record, context=self.context, scope=scope, request_id=request_id)):
+                service.expire(self.session_id, record.confirmation_id, record.version,
+                    "confirmation_host_binding_changed: 本次请求、原需求、相关对象版本或原权限已变化，未应用用户回答。")
 
     def _runtime_confirmation_checkpoint(self) -> SuspendedForConfirmation | None:
         from data_agent.agent.confirmation.runtime import confirmation_record_to_loop_result
 
-        record = self._confirmation_runtime().checkpoint(self.session_id)
+        service = self._confirmation_runtime()
+        self._expire_stale_confirmation_bindings(service, self.__context_operation("refresh"))
+        record = service.checkpoint(self.session_id)
         if record is None:
             return None
         return confirmation_record_to_loop_result(
@@ -2907,10 +2596,34 @@ class AgentLoop:
         confirmation_id = susp.confirmation_id or susp.suspension_id
         service = self._confirmation_runtime()
         record = service.get(self.session_id, confirmation_id)
-        version = int(expected_version or record.version)
+        prepared = record.continuation_context
+        if prepared:
+            from types import SimpleNamespace
+            self._publication_turn_id = prepared["turn_id"]
+            self.context.turn_intent = SimpleNamespace(**prepared["intent"])
+            self._last_turn_intent = self.context.turn_intent
+            self.context.turn_requirement_ids = list(prepared["requirement_ids"])
+            self.context.turn_receipt_ids = list(prepared["receipt_ids"])
+        version = int(record.version if expected_version is None else expected_version)
         idempotency_key = str(idempotency_key or "").strip()
         response_text = str(user_response or "").strip()
         lowered = response_text.lower()
+
+        from data_agent.agent.confirmation.models import ConfirmationStatus
+        from data_agent.agent.confirmation.service import ConfirmationVersionConflict
+        from data_agent.agent.confirmation.runtime import confirmation_binding_is_current
+        if (lowered not in {"skipped", "cancelled"} and record.status == ConfirmationStatus.SUSPENDED
+                and version == record.version):
+            # CLI resumes after _loop has restored the caller's context. Replay
+            # the original owner before checking its exact metadata/permissions.
+            with self.__context_operation("use"):
+                binding_current = confirmation_binding_is_current(
+                    record, context=self.context, scope=self.__context_operation("refresh"),
+                    request_id=getattr(self,"_publication_turn_id",None))
+            if not binding_current:
+                service.expire(self.session_id, confirmation_id, record.version,
+                    "confirmation_host_binding_changed: 原需求、相关对象版本或原权限已变化，未应用用户回答。")
+                raise ConfirmationVersionConflict("确认绑定的需求、相关对象版本或原权限已变化；原回答未应用，请按当前范围重新提问。")
 
         if lowered == "skipped":
             operation = "skip"
@@ -2983,6 +2696,8 @@ class AgentLoop:
 
     def run_turn(self, user_input: str) -> str:
         """处理一轮用户输入，返回回复文本。CLI 模式使用。"""
+        from data_agent.agent.publication.runtime import require_writable
+        require_writable(self.session_id)
         logger.info("Turn started", extra={"extra_data": {"session": self.session_id}})
         self.clear_interrupt()
         self._quality_reminder_injected = False
@@ -2991,7 +2706,7 @@ class AgentLoop:
         if self._was_last_turn_interrupted():
             context = self._build_interrupt_context(user_input)
             self.messages.append({"role": "user", "content": context})
-        self.messages.append({"role": "user", "content": user_input})
+        self.messages.append({"role": "user", "content": user_input,"request_id":"msg_"+uuid.uuid4().hex})
         self._prompt_cache_dirty = True
         # 根据用户输入激活相关工具分组
         with self.__context_operation("use"):
@@ -3033,15 +2748,17 @@ class AgentLoop:
         self._maybe_archive(user_input, reply)
         self._auto_save()
         logger.info("Turn completed", extra={"extra_data": {"session": self.session_id}})
-        return reply
+        return reply+("\n\n"+result.execution_notice if result.execution_notice else "")
 
     def run_turn_structured(self, user_input: str) -> LoopResult:
         """处理一轮用户输入，返回 LoopResult。Web 模式使用。"""
+        from data_agent.agent.publication.runtime import require_writable
+        require_writable(self.session_id)
         logger.info("Turn started (structured)", extra={"extra_data": {"session": self.session_id}})
         self.clear_interrupt()
         self._quality_reminder_injected = False
         self._reset_turn_tracking()
-        self.messages.append({"role": "user", "content": user_input})
+        self.messages.append({"role": "user", "content": user_input,"request_id":"msg_"+uuid.uuid4().hex})
         self._prompt_cache_dirty = True
         with self.__context_operation("use"):
             self._prepare_analysis_turn(user_input)
@@ -3105,6 +2822,7 @@ class AgentLoop:
             loaded_skills = [s.name for s in self._skill_loader.list_loaded()]
 
         return {
+            "publication_schema":"answer_bindings.v2",
             "project_name": self.context.project_name,
             "datasets": {
                 name: {"rows": info["rows"], "columns": info["columns"]}
@@ -3123,6 +2841,9 @@ class AgentLoop:
         idempotency_key: str = "",
     ) -> LoopResult:
         """Resume after user answers a suspended question. Web mode."""
+        from data_agent.agent.publication.runtime import require_writable
+        require_writable(self.session_id)
+        from data_agent.agent.publication.runtime import resumed_answer
         susp = self._load_confirmation_for_resume(suspension_id)
         if not susp:
             return FinalResponse(content=f"Error: runtime confirmation {suspension_id} not found")
@@ -3135,7 +2856,17 @@ class AgentLoop:
             )
         except Exception as exc:
             return FinalResponse(content=f"Error: {exc}")
+        replay=resumed_answer(self,suspension_id)
+        if replay is not None:
+            return FinalResponse(content=replay["body"])
+        adapter = getattr(self,"_after_confirmation_resolution",None)
+        if adapter is not None and not adapter(self._confirmation_runtime().get(self.session_id,suspension_id)):
+            return FinalResponse(content="本轮附件对象映射已取消，未替换任何业务对象。")
+        record = self._confirmation_runtime().get(self.session_id, suspension_id)
+        if record.resolution_params.get("question_bindings"):
+            user_response = record.response
         self._resolve_confirmation(susp, user_response)
+        self._track_confirmed_result_for_publication(susp)
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
 
@@ -3145,10 +2876,50 @@ class AgentLoop:
             f"User answered: {user_response}\n"
             f"</confirmation_response>"
         )})
+        pending_mapping = self._auto_measurement_question()
+        if pending_mapping is not None:
+            self._auto_save()
+            return pending_mapping
         result = self._loop(resumed_input)
         if isinstance(result, FinalResponse):
             self._maybe_archive("", result.content)
         return result
+
+    def _track_confirmed_result_for_publication(self, susp: SuspendedForConfirmation) -> None:
+        """Carry original result identity through a business-scope resume."""
+        self._resumed_result_requirement_ids = []
+        self._resumed_analysis_goal_id = ""
+        self._resumed_business_confirmation_id = ""
+        if susp.confirmation_type not in {"metric_scope", "metric_definition"}:
+            return
+        self._resumed_business_confirmation_id = str(
+            getattr(susp, "confirmation_id", "") or getattr(susp, "suspension_id", "") or ""
+        )
+        state = getattr(self.context, "analysis_state", None)
+        spec = getattr(state, "analysis_spec", None)
+        if isinstance(spec, dict) and spec.get("id") and spec.get("goal"):
+            self._resumed_analysis_goal_id = str(spec["id"])
+        self._resumed_result_requirement_ids = [
+            str(item["id"])
+            for item in (getattr(state, "answer_requirements", []) or [])
+            if isinstance(item, dict) and item.get("id")
+            and item.get("origin") == "canonical_requirement.v3"
+            and item.get("semantic_kind") == "result"
+            and item.get("lifecycle_status", "active") == "active"
+        ]
+
+    @staticmethod
+    def _cli_confirmation_answer(result):
+        """Carry actual selected values and explicit text to the original service."""
+        if "answer_values" in result:
+            return result["answer_values"]
+        if not result.get("is_free_input"):
+            if result.get("selected_options"):
+                return [option.get("value", option.get("label")) for option in result["selected_options"]]
+            if result.get("selected_option"):
+                option = result["selected_option"]
+                return option.get("value", option.get("label"))
+        return result.get("answer", "cancelled")
 
     def _handle_cli_suspension(self, susp: SuspendedForConfirmation) -> str:
         """Handle a suspension in CLI mode by prompting the user directly.
@@ -3185,12 +2956,19 @@ class AgentLoop:
 
             if parsed_questions:
                 answers = result.get("answers", [])
-                answer = "; ".join(
-                    f"Q{i + 1}: {item.get('question', '')} => {item.get('answer', 'skipped')}"
-                    for i, item in enumerate(answers)
-                ) or "skipped"
+                normalized = []
+                for item in answers:
+                    value = self._cli_confirmation_answer(item)
+                    normalized.append({"question_id": item["question_id"], "question": item["question"],
+                                       "answer": value, "is_free_input": bool(item.get("is_free_input"))})
+                answer = json.dumps(normalized, ensure_ascii=False)
             else:
-                answer = result.get("answer", "cancelled")
+                answer = self._cli_confirmation_answer(result)
+            susp = self._resolve_runtime_confirmation(susp, answer, expected_version=susp.version,
+                idempotency_key=self._confirmation_response_key(susp.confirmation_id, "cli", answer))
+            record = self._confirmation_runtime().get(self.session_id, susp.confirmation_id)
+            if record.resolution_params.get("question_bindings"):
+                answer = record.response
             self._resolve_confirmation(susp, answer)
             resumed_input = self._build_resume_user_input(susp, answer)
 
@@ -3213,82 +2991,76 @@ class AgentLoop:
                 # None (max rounds) or unexpected
                 return loop_result.content if hasattr(loop_result, "content") else "达到最大轮次限制。"
 
-    def _register_confirmation(self, susp: SuspendedForConfirmation) -> None:
-        with self.__context_operation("use"):
-            try:
-                from data_agent.agent.analysis_state import current_analysis_state
-                state = current_analysis_state()
-                if state is None:
-                    return
-                state.add_confirmation({
-                    "id": susp.suspension_id,
-                    "suspension_id": susp.suspension_id,
-                    "question": susp.question,
-                    "options": susp.options,
-                    "context": susp.context,
-                    "confirmation_type": susp.confirmation_type,
-                    "blocking_reason": susp.blocking_reason,
-                    "state_updates": susp.state_updates,
-                    "related_task_id": susp.related_task_id,
-                    "related_spec_id": susp.related_spec_id,
-                })
-                state.save()
-            except Exception as e:
-                logger.warning("Failed to register confirmation", extra={"extra_data": {"error": str(e)}})
-
     def _resolve_confirmation(self, susp: SuspendedForConfirmation, answer: str) -> None:
-        with self.__context_operation("use"):
-            try:
-                from data_agent.agent.analysis_state import current_analysis_state
-                from data_agent.session.task_manager import task_manager
+        """Refresh the live projection of the one service-owned resolution."""
+        from data_agent.agent.analysis_state import load_analysis_state
+        from data_agent.agent.confirmation.models import ConfirmationStatus
+        record = self._confirmation_runtime().get(self.session_id, susp.confirmation_id or susp.suspension_id)
+        if record.status not in {ConfirmationStatus.RESOLVED, ConfirmationStatus.SKIPPED, ConfirmationStatus.CANCELLED}:
+            raise RuntimeError("confirmation has no durable user resolution")
+        live = self.context.analysis_state
+        # Recording a business answer has no state action. Keep the active turn's
+        # requirements; only a resolved state action changes the durable state.
+        stored = live
+        if stored is None or (record.status == ConfirmationStatus.RESOLVED
+                              and record.resolution_action != "record_confirmation_answer"):
+            stored = load_analysis_state(self.session_id)
+        pending_id = record.resolution_params.get("pending_state_id")
+        pending = [item for item in stored.pending_confirmations if item.get("id") == pending_id] if pending_id else []
+        if len(pending) == 1:
+            pending[0]["status"] = record.status.value
+            pending[0]["answer"] = record.response
+            stored.save()
+            from data_agent.session.task_manager import task_manager
+            task_id = record.resolution_params.get("related_task_id")
+            task = task_manager.get(task_id) if task_id else None
+            if (task and task.get("session_id") == self.session_id and task.get("node_type") == "confirmation"
+                    and pending_id in (task.get("confirmation_ids") or [])):
+                task_manager.update(task_id, status="completed" if record.status == ConfirmationStatus.RESOLVED else "superseded",
+                    confirmation_ids=list(dict.fromkeys(list(task.get("confirmation_ids") or []) + [record.confirmation_id])),
+                    result_summary="用户确认: " + str(record.response), completed_by="confirmation")
+        if live is None:
+            self.context.analysis_state = stored
+        elif live is not stored:
+            live.__dict__.clear()
+            live.__dict__.update(stored.__dict__)
 
-                state = current_analysis_state()
-                if state is not None:
-                    normalized = str(answer or "").strip().lower()
-                    should_apply = normalized not in {"skipped", "cancelled"}
-                    resolved = state.resolve_confirmation(susp.suspension_id, answer)
-                    task = task_manager.get(susp.related_task_id) if susp.related_task_id else None
-                    if resolved is None and task is not None:
-                        for confirmation_id in task.get("confirmation_ids") or []:
-                            resolved = state.resolve_confirmation(str(confirmation_id), answer)
-                            if resolved is not None:
-                                break
-                    if resolved is None and susp.related_spec_id:
-                        candidates = [
-                            item for item in state.pending_confirmations
-                            if item.get("status", "pending") == "pending"
-                            and item.get("related_spec_id") == susp.related_spec_id
-                            and (
-                                not susp.confirmation_type
-                                or item.get("confirmation_type") == susp.confirmation_type
-                            )
-                        ]
-                        if len(candidates) == 1:
-                            candidate = candidates[0]
-                            resolved = state.resolve_confirmation(str(candidate.get("id") or ""), answer)
-                    if should_apply:
-                        state.apply_state_updates(susp.state_updates, answer=answer)
-                    elif resolved is not None:
-                        resolved["status"] = normalized
-                    state.save()
-                if susp.related_task_id:
-                    current_task = task_manager.get(susp.related_task_id) or {}
-                    confirmation_ids = list(current_task.get("confirmation_ids") or [])
-                    if susp.suspension_id and susp.suspension_id not in confirmation_ids:
-                        confirmation_ids.append(susp.suspension_id)
-                    task_manager.update(
-                        susp.related_task_id,
-                        status=(
-                            "superseded"
-                            if str(answer or "").strip().lower() in {"skipped", "cancelled"}
-                            else "completed"
-                        ),
-                        confirmation_ids=confirmation_ids,
-                        result_summary=f"用户确认: {answer}",
-                        completed_by="confirmation",
-                    )
-            except Exception as e:
-                logger.warning("Failed to resolve confirmation", extra={"extra_data": {"error": str(e)}})
+    def _prepare_provider_request(self):
+        """Assemble and budget the same complete request for sync and streaming."""
+        from data_agent.llm.request_policy import resolve_request_budget
+        from data_agent.llm.client import _convert_tools
+        self._repair_broken_tool_sequence()
+        messages = self._provider_messages()
+        if messages is None: return None
+        system = self._get_system_prompt()
+        tools = self._tools_for_current_round()
+        cfg = get_config()
+        model = getattr(self.client, "model_id", None)
+        if not isinstance(model, str): model = cfg.model_id
+        output = getattr(self.client, "max_tokens", None)
+        if type(output) is not int: output = cfg.max_tokens
+        policy = resolve_request_budget(model, cfg, output)
+        def estimate():
+            clean = [{k:v for k,v in m.items() if k not in {"reply_id", "publication_rejected"}} for m in messages]
+            return policy.estimate([{"role":"system","content":system}] + clean, _convert_tools(tools) if tools else None)
+        projected = estimate()
+        if (projected["tokens"] > min(self.token_threshold, policy.input_allowance)
+                or getattr(self, "_publication_model_view_issue", None)):
+            # One existing compaction attempt, at a safe user-turn boundary.
+            # No paid retry or alternate output policy is introduced here.
+            self.messages[:] = compact_history(self.session_id, self.auxiliary_llm_client or self.client,
+                        self.messages, self._compact_state, token_threshold=min(self.token_threshold, policy.input_allowance))
+            self._repair_broken_tool_sequence()
+            messages = self._provider_messages()
+            if messages is None: return None
+            system = self._get_system_prompt()
+            tools = self._tools_for_current_round()
+            projected = estimate()
+        if projected["tokens"] > policy.input_allowance:
+            from data_agent.llm.request_policy import RequestCapacityError
+            raise RequestCapacityError("request_context_capacity", "安全压缩后完整请求仍超过当前模型容量；请分批完成，原证据保留。")
+        self._request_budget_estimate = projected
+        return {"messages":messages, "tools":tools, "system":system}
 
     def _stream_llm_round(self, round_num: int):
         """Execute one LLM round using streaming. Yields SSE event dicts.
@@ -3309,17 +3081,20 @@ class AgentLoop:
         self._repair_broken_tool_sequence()
 
         from data_agent.llm.request_policy import close_stream
-        provider_messages = self._provider_messages()
-        if provider_messages is None:
+        from data_agent.llm.request_policy import RequestCapacityError
+        try:
+            request = self._prepare_provider_request()
+        except RequestCapacityError as exc:
+            yield {"type":"_round_failure", "code":exc.code, "detail":str(exc)}
+            return
+        if request is None:
             yield {
                 "type": "_round_failure",
                 "code": "invalid_tool_message_sequence",
                 "detail": "会话工具消息存在不可配对条目，已阻止本次 Provider 投递；请回退或重开该轮。",
             }
             return
-        stream = self.client.stream_chat_structured(
-            messages=provider_messages, tools=self._tools_for_current_round(), system=self._get_system_prompt(),
-        )
+        stream = self.client.stream_chat_structured(**request)
         try:
             for ev in stream:
                 if self._interrupt_event.is_set():
@@ -3333,7 +3108,7 @@ class AgentLoop:
             if getattr(exc, "error_domain", "") == "acceptance":
                 code = "acceptance_stopped"
             else:
-                code = str(exc) if type(exc).__name__ == "JourneyStructureError" else "provider_request_failed"
+                code = getattr(exc, "code", None) or (str(exc) if type(exc).__name__ == "JourneyStructureError" else "provider_request_failed")
             detail = _provider_failure_detail(exc)
             logger.warning("Streaming request failed", extra={"extra_data": {
                 "error": type(exc).__name__, "code": code, "detail": detail,
@@ -3376,21 +3151,26 @@ class AgentLoop:
                 return
             if turn_state is not None:
                 try:
-                    turn_state.ensure_can_call(tc.name, tc.arguments)
+                    turn_state.ensure_can_call(
+                        tc.name, tc.arguments,
+                        source_version=self._tool_source_version(tc.name, tc.arguments),
+                    )
                 except BudgetExceeded as exc:
-                    error_payload = {"error": str(exc), "error_type": "budget_exceeded"}
+                    error_payload = {"error": str(exc), "error_type": "budget_exceeded", "budget_code": exc.code}
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": json.dumps(error_payload, ensure_ascii=False),
                     })
                     self._fill_remaining_tool_responses(response.tool_calls, i + 1, str(exc))
-                    if "Fallback Python result" in str(exc):
+                    closing = self._close_tools_on_budget_exhaustion(exc)
+                    if closing or exc.code == "fallback_resolution":
                         # P08-02: 指明两条合法继续路径，而不是让错误像终态。
-                        self.messages.append({
-                            "role": "system",
-                            "content": _FALLBACK_RESOLUTION_GUIDANCE,
-                        })
+                        if not closing:
+                            self.messages.append({
+                                "role": "system",
+                                "content": _FALLBACK_RESOLUTION_GUIDANCE,
+                            })
                         # This is a recoverable policy rejection, not a failed
                         # turn. Emit paired attempted-call/result events so the
                         # browser and durable message history observe the same
@@ -3417,7 +3197,10 @@ class AgentLoop:
                         return
                     yield {"type": "error", "message": str(exc)}
                     return
-                turn_state.record_tool_call(tc.name, tc.arguments)
+                turn_state.record_tool_call(
+                    tc.name, tc.arguments,
+                    source_version=self._tool_source_version(tc.name, tc.arguments),
+                )
             yield {
                 "type": "tool_call",
                 "tool_call_id": tc.id,
@@ -3436,12 +3219,16 @@ class AgentLoop:
                     "tool_call_id": tc.id,
                     "content": scope_error,
                 })
-                yield {"type": "error", "message": scope_error}
+                if json.loads(scope_error).get("error_type") == "consultation_execution_not_requested":
+                    yield {"type": "tool_result", "tool_call_id": tc.id, "name": tc.name, "content": scope_error, "duration_ms": 0}
+                else:
+                    yield {"type": "error", "message": scope_error}
                 continue
 
             t0 = time.monotonic()
             try:
                 with self.__context_operation("use"):
+                    execution_binding = self._capture_tool_execution_binding(tc.name, tc.arguments)
                     tool_result = registry.execute(tc.name, tc.arguments)
                 post_scope = self.__context_operation("refresh")
             except UserConfirmationRequired as ucc:
@@ -3457,6 +3244,9 @@ class AgentLoop:
                         "content": susp,
                     })
                     yield {"type": "tool_result", "tool_call_id": tc.id, "name": tc.name, "web": None, "duration_ms": 0}
+                    if getattr(self, "_turn_budget_exhaustion", None):
+                        self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Repeated nonblocking permission allowance exhausted")
+                        return
                     continue
                 self.messages.append({
                     "role": "tool",
@@ -3500,6 +3290,7 @@ class AgentLoop:
                 tc.arguments,
                 tc.id,
                 getattr(tool_result, "data", None),
+                execution_binding=execution_binding,
             )
             self._auto_track_task_progress(tc.name, True)
 
@@ -3533,6 +3324,8 @@ class AgentLoop:
 
     def _stream_turn_impl(self, user_input: str, turn_context: str = ""):
         """Generator variant of run_turn for SSE streaming. Yields event dicts."""
+        from data_agent.agent.publication.runtime import require_writable
+        require_writable(self.session_id)
         import time
 
         logger.info("Stream turn started", extra={"extra_data": {"session": self.session_id}})
@@ -3545,7 +3338,7 @@ class AgentLoop:
         if self._was_last_turn_interrupted():
             context = self._build_interrupt_context(user_input)
             self.messages.append({"role": "user", "content": context})
-        self.messages.append({"role": "user", "content": user_input})
+        self.messages.append({"role": "user", "content": user_input,"request_id":"msg_"+uuid.uuid4().hex})
         if turn_context:
             self.messages.append({"role": "system", "content": turn_context})
         self._prompt_cache_dirty = True
@@ -3592,18 +3385,11 @@ class AgentLoop:
                 )})
 
             _microcompact(self.session_id, self.messages)
-            if _estimate_tokens(self.messages) > self.token_threshold:
-                self.messages[:] = compact_history(
-                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
-                    self._compact_state, token_threshold=self.token_threshold,
-                )
 
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 yield self._suspended_event(blocked_confirmation)
                 return
-
-            self._maybe_inject_typed_trial(user_input)
 
             # A completed final answer must be persisted before any of its
             # text reaches the browser.  Buffering one LLM round also lets us
@@ -3664,21 +3450,14 @@ class AgentLoop:
                 yield {"type": "error", "message": budget_truncation}
                 return
 
-            if (
-                getattr(self, "_turn_finalization_mode", False)
-                and not response.has_tool_calls
-                and self._contains_unexecuted_tool_markup(response.text)
-            ):
-                if self._recover_finalization_tool_markup():
-                    continue
-                yield {"type": "error", "message": "最终化轮未生成可发布回答（检测到未执行工具标记）"}
-                return
-
+            response = self._budget_finalization_response(response)
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response.text:
-                final_text = response.text
+            if response.text or not response.has_tool_calls:
+                # A terminal empty candidate has its own identity; never reuse
+                # the preceding tool prose or rejected candidate as its draft.
+                final_text = response.text or ""
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -3694,28 +3473,20 @@ class AgentLoop:
                 ]
 
             if not response.has_tool_calls:
-                self._verify_before_publication(user_input)
-                published_text, publication_error = self._render_terminal_publication(
-                    user_input, final_text, persist=False
-                )
-                if publication_error:
-                    if self._recover_publication_narrative(assistant_msg, publication_error):
-                        continue
-                    yield {"type": "error", "message": publication_error}
-                    return
-                final_text = published_text or final_text
-                assistant_msg["content"] = final_text
-                pending_text_events = ([separator_event] if separator_event else []) + [{"type": "text_delta", "text": final_text, "turn_id": None}]
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     rejected = dict(assistant_msg)
                     rejected["publication_rejected"] = True
                     self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
-                analysis_quality_failure = self._analysis_quality_failure_after_guard()
-                if analysis_quality_failure:
-                    yield {"type": "error", "message": analysis_quality_failure}
-                    return
+                published_text, publication_error = self._render_terminal_publication(
+                    user_input, final_text, persist=False
+                )
+                if publication_error:
+                    continue
+                final_text = published_text or final_text
+                assistant_msg["content"] = final_text
+                pending_text_events = [{"type": "text_delta", "text": final_text, "turn_id": None}]
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     rejected = dict(assistant_msg)
@@ -3730,20 +3501,16 @@ class AgentLoop:
                     yield {"type": "error", "message": persistence_error}
                     return
                 self._close_ledger_for_published_turn()
+                for ev in self._post_commit_export_events:yield ev
                 for ev in pending_text_events:
                     yield ev
                 return
 
             self.messages.append(assistant_msg)
 
-            if buffer_text_events:
-                # This is an intermediate tool-call round rather than the
-                # final answer, but it is still browser-visible text.  Persist
-                # the assistant message before publishing it so refresh/replay
-                # cannot lose text that the user already saw.
-                self._auto_save()
-                for ev in pending_text_events:
-                    yield ev
+            # Tool-round prose is execution context, not a second published answer.
+            # Only the committed accepted body is emitted as text_delta.
+            self._auto_save()
 
             # Budget-based quality reminder injection
             self._maybe_inject_quality_reminder()
@@ -3785,6 +3552,9 @@ class AgentLoop:
         idempotency_key: str = "",
     ):
         """Generator variant of resume_turn for SSE streaming."""
+        from data_agent.agent.publication.runtime import require_writable
+        require_writable(self.session_id)
+        from data_agent.agent.publication.runtime import resumed_answer
         susp = self._load_confirmation_for_resume(suspension_id)
         if not susp:
             yield {"type": "error", "message": f"runtime confirmation {suspension_id} not found"}
@@ -3799,7 +3569,19 @@ class AgentLoop:
         except Exception as exc:
             yield {"type": "error", "message": str(exc)}
             return
+        replay=resumed_answer(self,suspension_id)
+        if replay is not None:
+            yield {"type":"text_delta","text":replay["body"],"turn_id":None,"reply_id":replay["reply_id"]}
+            return
+        adapter = getattr(self,"_after_confirmation_resolution",None)
+        if adapter is not None and not adapter(self._confirmation_runtime().get(self.session_id,suspension_id)):
+            yield {"type":"text_delta","text":"本轮附件对象映射已取消，未替换任何业务对象。","turn_id":None}
+            return
+        record = self._confirmation_runtime().get(self.session_id, suspension_id)
+        if record.resolution_params.get("question_bindings"):
+            user_response = record.response
         self._resolve_confirmation(susp, user_response)
+        self._track_confirmed_result_for_publication(susp)
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
 
@@ -3810,6 +3592,11 @@ class AgentLoop:
             f"</confirmation_response>"
         )})
 
+        pending_mapping = self._auto_measurement_question()
+        if pending_mapping is not None:
+            self._auto_save()
+            yield self._suspended_event(pending_mapping)
+            return
         yield from self._stream_analysis_loop(resumed_input)
 
     def _loop(self, user_input: str = "") -> LoopResult:
@@ -3840,25 +3627,36 @@ class AgentLoop:
                 return FinalResponse(content=blocked)
             if turn_state is not None:
                 try:
-                    turn_state.ensure_can_call(tc.name, tc.arguments)
+                    turn_state.ensure_can_call(
+                        tc.name, tc.arguments,
+                        source_version=self._tool_source_version(tc.name, tc.arguments),
+                    )
                 except BudgetExceeded as exc:
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
+                        "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded", "budget_code": exc.code}, ensure_ascii=False),
                     })
                     self._fill_remaining_tool_responses(tool_calls, i + 1, str(exc))
-                    if "Fallback Python result" in str(exc):
+                    if self._close_tools_on_budget_exhaustion(exc):
+                        return None
+                    if exc.code == "fallback_resolution":
                         self.messages.append({
                             "role": "system",
                             "content": _FALLBACK_RESOLUTION_GUIDANCE,
                         })
                     return FinalResponse(content=str(exc))
-                turn_state.record_tool_call(tc.name, tc.arguments)
+                turn_state.record_tool_call(
+                    tc.name, tc.arguments,
+                    source_version=self._tool_source_version(tc.name, tc.arguments),
+                )
 
             result = self._execute_single_tool(tc, tool_calls, i)
             if result is not None:
                 return result
+            if getattr(self, "_turn_budget_exhaustion", None):
+                self._fill_remaining_tool_responses(tool_calls, i + 1, "Repeated nonblocking permission allowance exhausted")
+                return None
         return None
 
     def _execute_single_tool(
@@ -3891,6 +3689,7 @@ class AgentLoop:
 
         try:
             with self.__context_operation("use"):
+                execution_binding = self._capture_tool_execution_binding(tc.name, tc.arguments)
                 tool_result = registry.execute(tc.name, tc.arguments)
             post_scope = self.__context_operation("refresh")
         except UserConfirmationRequired as ucc:
@@ -3945,6 +3744,7 @@ class AgentLoop:
             tc.arguments,
             tc.id,
             getattr(tool_result, "data", None),
+            execution_binding=execution_binding,
         )
         self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
 
@@ -3997,9 +3797,10 @@ class AgentLoop:
             try:
                 scope_error = guard_errors.get(tc.id, "")
                 if scope_error:
-                    return (tc, scope_error, None, None)
+                    return (tc, scope_error, None, None, {})
                 t0 = time.monotonic()
                 with self.__context_operation("use"):
+                    execution_binding = self._capture_tool_execution_binding(tc.name, tc.arguments)
                     tool_result = registry.execute(tc.name, tc.arguments)
                 post_scope = self.__context_operation("refresh")
                 if post_scope.phase == "error":
@@ -4009,7 +3810,7 @@ class AgentLoop:
                     )
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                    return (tc, scope_error, post_scope, None)
+                    return (tc, scope_error, post_scope, None, {})
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 
@@ -4020,12 +3821,12 @@ class AgentLoop:
                 elif turn_state is not None:
                     turn_state.record_tool_success()
 
-                return (tc, tool_msg_content, None, getattr(tool_result, "data", None))
+                return (tc, tool_msg_content, None, getattr(tool_result, "data", None), execution_binding)
             except Exception as e:
                 error_content = json.dumps({"error": str(e)}, ensure_ascii=False)
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, error_content)
-                return (tc, error_content, None, None)
+                return (tc, error_content, None, None, {})
 
         import time
 
@@ -4040,10 +3841,10 @@ class AgentLoop:
                 futures[future] = tc.id
 
             for future in as_completed(futures):
-                tc_obj, content, refresh_error, structured_data = future.result()
+                tc_obj, content, refresh_error, structured_data, execution_binding = future.result()
                 if refresh_error is not None:
                     self.__context_operation("record_worker_refresh_error", refresh_error)
-                results[tc_obj.id] = (tc_obj, content, structured_data)
+                results[tc_obj.id] = (tc_obj, content, structured_data, execution_binding)
 
         # Return in original order
         return [results[tc.id] for tc in tool_calls if tc.id in results]
@@ -4071,47 +3872,30 @@ class AgentLoop:
                 )})
 
             _microcompact(self.session_id, self.messages)
-            if _estimate_tokens(self.messages) > self.token_threshold:
-                self.messages[:] = compact_history(
-                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
-                    self._compact_state, token_threshold=self.token_threshold,
-                )
 
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 return blocked_confirmation
 
-            self._maybe_inject_typed_trial(user_input)
-
             # Defensive: repair any broken tool_call sequences from prior turns
             self._repair_broken_tool_sequence()
 
-            provider_messages = self._provider_messages()
-            if provider_messages is None:
+            request = self._prepare_provider_request()
+            if request is None:
                 return FinalResponse(content=(
                     "会话工具消息存在不可配对条目，已阻止本次请求；"
                     "请回退到上一完整轮次或重开该轮后再继续。"
                 ))
-            response = self.client.chat(
-                messages=provider_messages,
-                tools=self._tools_for_current_round(),
-                system=self._get_system_prompt(),
-            )
+            response = self.client.chat(**request)
 
-            if (
-                getattr(self, "_turn_finalization_mode", False)
-                and not response.has_tool_calls
-                and self._contains_unexecuted_tool_markup(response.text)
-            ):
-                if self._recover_finalization_tool_markup():
-                    continue
-                return FinalResponse(content="最终化轮未生成可发布回答（检测到未执行工具标记）。")
-
+            response = self._budget_finalization_response(response)
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response.text:
-                final_text = response.text
+            if response.text or not response.has_tool_calls:
+                # A terminal empty candidate has its own identity; never reuse
+                # the preceding tool prose or rejected candidate as its draft.
+                final_text = response.text or ""
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -4127,25 +3911,19 @@ class AgentLoop:
                 ]
 
             if not response.has_tool_calls:
-                self._verify_before_publication(user_input)
-                published_text, publication_error = self._render_terminal_publication(
-                    user_input, final_text, persist=False
-                )
-                if publication_error:
-                    if self._recover_publication_narrative(assistant_msg, publication_error):
-                        continue
-                    return FinalResponse(content=publication_error)
-                final_text = published_text or final_text
-                assistant_msg["content"] = final_text
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     rejected = dict(assistant_msg)
                     rejected["publication_rejected"] = True
                     self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
-                analysis_quality_failure = self._analysis_quality_failure_after_guard()
-                if analysis_quality_failure:
-                    return FinalResponse(content=analysis_quality_failure)
+                published_text, publication_error = self._render_terminal_publication(
+                    user_input, final_text, persist=False
+                )
+                if publication_error:
+                    continue
+                final_text = published_text or final_text
+                assistant_msg["content"] = final_text
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     rejected = dict(assistant_msg)
@@ -4157,7 +3935,7 @@ class AgentLoop:
                 if persistence_error:
                     return FinalResponse(content=persistence_error)
                 self._close_ledger_for_published_turn()
-                return FinalResponse(content=final_text)
+                return FinalResponse(content=final_text,execution_notice=getattr(self,"_post_commit_export_notice",""))
 
             self.messages.append(assistant_msg)
 
@@ -4192,13 +3970,14 @@ class AgentLoop:
 
                 if can_parallelize:
                     results = self._execute_tools_parallel(tool_calls)
-                    for tc, tool_msg_content, structured_data in results:
+                    for tc, tool_msg_content, structured_data, execution_binding in results:
                         self._record_turn_tool_result(
                             tc.name,
                             tool_msg_content,
                             tc.arguments,
                             tc.id,
                             structured_data,
+                            execution_binding=execution_binding,
                         )
                         self.messages.append({
                             "role": "tool",
@@ -4265,14 +4044,14 @@ class AgentLoop:
 
         P08-04: assistant.tool_calls 与 tool.tool_call_id 的配对字段必须
         保留——只写 role/content 会在恢复后制造孤立的 tool 消息，触发
-        Provider 400。参数字符串截断到 2000 字符控制快照体积。
+        Provider 400。原用户文本与工具参数原样保留，不能改变规范需求来源。
         """
         serialized = []
         for msg in self.messages:
             m = {"role": msg["role"]}
             content = msg.get("content")
             if isinstance(content, str):
-                m["content"] = content[:5000]
+                m["content"] = content
             elif isinstance(content, list):
                 parts = []
                 for part in content:
@@ -4295,7 +4074,7 @@ class AgentLoop:
                         "type": str(call.get("type") or "function"),
                         "function": {
                             "name": str(function.get("name") or ""),
-                            "arguments": str(function.get("arguments") or "")[:2000],
+                            "arguments": str(function.get("arguments") or ""),
                         },
                     })
                 if preserved_calls:
@@ -4303,6 +4082,8 @@ class AgentLoop:
             tool_call_id = msg.get("tool_call_id")
             if isinstance(tool_call_id, str) and tool_call_id:
                 m["tool_call_id"] = tool_call_id
+            for key in ("request_id","canonical_transcript","answer_id","answer_ref","answer_sha256","inherited_from","inherited_answer_ref","context_kind"):
+                if key in msg: m[key]=copy.deepcopy(msg[key])
             serialized.append(m)
         return serialized
 
@@ -4330,7 +4111,35 @@ class AgentLoop:
                 extra={"extra_data": {"violations": violations[:10], "session_id": self.session_id}},
             )
             return None
-        return provider_copy
+        from data_agent.agent.publication.runtime import CONSULTATION_INTENTS, current_request_uses_data
+        if (getattr(self.context.turn_intent,"intent_type",None) in CONSULTATION_INTENTS
+                and not current_request_uses_data(self)):
+            # Preserve canonical history; project only the current consultation
+            # round for transport. Previous analysis and summaries are not facts.
+            current = next((i for i in range(len(provider_copy)-1,-1,-1)
+                            if provider_copy[i].get("role")=="user" and provider_copy[i].get("request_id")),0)
+            from data_agent.session.history import read_canonical_transcript
+            def knowledge(messages,depth=0):
+                if depth>16:return []
+                result=[]
+                for m in messages:
+                    if m.get("canonical_transcript"):
+                        try:
+                            _,archived=read_canonical_transcript(self.session_id,m["canonical_transcript"])
+                            result.extend(knowledge(archived,depth+1))
+                        except (ValueError,OSError,KeyError,TypeError):continue
+                    elif m.get("context_kind")=="knowledge" and m.get("role") in {"user","assistant"} and not m.get("tool_calls"):
+                        result.append(m)
+                return result
+            prior=knowledge(provider_copy[:current]);size=0;bounded=[]
+            for m in reversed(prior):
+                size+=len(m.get("content") or "")
+                if size>20000:break
+                bounded.append(m)
+            provider_copy=list(reversed(bounded))+provider_copy[current:]
+            if len(bounded)<len(prior):provider_copy.insert(0,{"role":"system","content":"较早咨询历史超出本轮上下文预算，仍保留在原历史中；当前未携带内容不能猜测为事实或已完成。"})
+
+        return [{k:v for k,v in message.items() if k in {"role","content","tool_calls","tool_call_id","name","reasoning_content"}} for message in provider_copy]
 
 
 def _create_streaming_context_methods(loop_context_operation, stream_impl, resume_impl):

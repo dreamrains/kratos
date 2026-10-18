@@ -23,9 +23,9 @@ def test_ac30_briefness_does_not_remove_explicit_question_coverage_contract():
         intent=_Intent(), state=_state(), user_input="简短回答收入和复购率",
     )
     instruction = build_synthesis_instruction(policy)
-    assert policy.answer_mode == "direct"
-    assert "Preserve every supported material finding" in instruction
-    assert "distinct requested questions" in instruction
+    assert policy.answer_mode == "analytical"
+    assert "original business goals" in instruction
+    assert "verified values and explicit gaps" in instruction
 
 
 def test_ac31_explicit_presentation_preferences_remain_in_prompt_source():

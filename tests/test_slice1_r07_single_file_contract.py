@@ -10,7 +10,6 @@ import pandas as pd
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.agent.execution_control import TurnExecutionState
-from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
 from data_agent.agent.workbench_view import build_workbench_view
 from data_agent.config import get_config
 from data_agent.session.workspace import Workspace
@@ -164,7 +163,7 @@ def test_r07_evidence_chart_rejects_unknown_evidence_id(tmp_path):
 
 
 def test_r07_evidence_chart_and_confirmed_conclusion_share_one_verified_record(tmp_path):
-    """The D03 chart may be called evidence only after the record is verified."""
+    """An annotated chart keeps provenance without granting verified facts."""
     source, daily = _daily_orders_frame()
     cfg = get_config()
     old_sessions = cfg.sessions_dir
@@ -223,15 +222,10 @@ def test_r07_evidence_chart_and_confirmed_conclusion_share_one_verified_record(t
                 purpose="evidence",
                 evidence_ids="ev_r07_daily_revenue_verified",
             )
-            verification = maybe_verify_turn_claims("分析收入趋势", state)
 
         assert chart_result.startswith("Chart saved: sessions/slice1_r07_verified/charts/")
-        assert verification is not None
-        assert verification["overall_status"] == "pass"
         view = build_workbench_view(state)
-        assert [item["claim"] for item in view["verified_conclusions"]] == [
-            "按支付时间汇总的 30 个自然日中，后 15 天收入低于前 15 天。"
-        ]
-        assert "limitations" not in view["verified_conclusions"][0]
+        assert view["verified_conclusions"] == []
+        assert state.evidence_records[0]["tool_receipt_ids"] == ["tr_r07_daily_aggregation"]
     finally:
         cfg.sessions_dir = old_sessions

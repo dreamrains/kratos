@@ -240,7 +240,7 @@ def test_line_chart_color_col_creates_grouped_traces(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
-def test_line_chart_aggregates_duplicate_dates_to_daily_sum(tmp_path):
+def test_line_chart_preserves_hours_with_explicit_sum(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     ws = Workspace()
     ws.add("orders", pd.DataFrame({
@@ -270,10 +270,10 @@ def test_line_chart_aggregates_duplicate_dates_to_daily_sum(tmp_path):
         metadata = json.loads(next(chart_dir.glob("*.json")).read_text(encoding="utf-8"))
         assert "2026-05-01" in html
         assert "2026-05-02" in html
-        assert "2026-05-01 10:00:00" not in html
-        assert metadata["aggregation"] == "sum_by_day"
+        assert "2026-05-01T10:00:00" in html
+        assert metadata["aggregation"] == "sum_by_timestamp"
         assert "aggregation:sum" in metadata["transformations"]
-        assert metadata["row_count"] == 2
+        assert metadata["row_count"] == 3
     finally:
         cfg.sessions_dir = old_sessions
 

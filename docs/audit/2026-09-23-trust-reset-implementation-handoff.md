@@ -1,5 +1,7 @@
 # 中文数据分析 Agent 可信发布重置：实施交接（2026-09-23）
 
+> 2026-09-27 起，本文件是历史实施与收据索引。当前任务与授权边界只见[修订总计划](../superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md)和当次用户指令；不从下文旧 HEAD、旧阶段或旧授权继续追加切片。历史内容保留，供[重建取舍](2026-09-27-trust-reset-rebuild-assessment.md)追溯。
+
 ## 0. 精确现场与授权边界
 
 - 根工作树：`D:\Project\Daily\data-agent`；本次插入修复的基线为 `main@5c0e4b2f79a0bd6f0a9d9e095812d7b2c7405557`，比 `origin/main` 超前 50 个提交，没有 push。提交后的确切 HEAD 应以 `git rev-parse HEAD` 复核，不从这条基线推断。
