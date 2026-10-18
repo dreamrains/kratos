@@ -1,3 +1,4 @@
+from tests.support.rendered_text import has_numeric_literal
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: sessions. Shared fixtures have one owner."""
 from copy import deepcopy
@@ -64,7 +65,7 @@ def test_s3_original_e02_receipt_scope_preserved_across_five_plans_and_exact_exp
  assert all(r['arguments'].get('name')!='q1' for r in receipts[-4:])
  assert all(c['basis_refs'][0]['receipt_id']==first_receipt['id'] for c in filtered[0]) and filtered[0]
  admitted={x['ref'] for x in last['render_trace'] if x['kind']=='claim' and x['disposition']=='accepted'};claims=[c for c in last['source_snapshot']['claims'] if c['id'] in admitted];assert claims and all(c['scope']['dataset']=='q1' for c in claims)
- assert '| D | 999 |' in last['body'] and '1998' not in last['body'] and all(c['value']!=4995 for c in claims)
+ assert '| D | 999 |' in last['body'] and not has_numeric_literal(last['body'], '1998') and all(c['value']!=4995 for c in claims)
  assert last['requirement_outcomes'][-1]['status']=='partial' and 'interpretation' in last['requirement_outcomes'][-1]['reason']
  assert last['body'] in mdpath.read_text(encoding='utf-8')
  idpath=cfg.sessions_resolved.parent/api_id.get_json()['artifact_path']

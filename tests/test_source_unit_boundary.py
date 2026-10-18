@@ -1,4 +1,5 @@
 """AC25 actual source units; declared labels do not become source authority."""
+from tests.support.rendered_text import has_numeric_literal
 import json
 import pandas as pd
 import pytest
@@ -1014,7 +1015,7 @@ def test_ac25_normal_explicit_ratio_and_multimetric_table_original_quote_save_co
     target=answer['source_snapshot']['requirements'][0];claims=[c for c in answer['source_snapshot']['claims'] if c['id'] in target['claim_ids']];tables=[c for c in claims if c['basis_refs'][0]['result_path']==['metrics']]
     assert answer['requirement_outcomes'][0]['status']=='answered' and len(tables)==1
     table=tables[0];assert table['value']['amount']['exact_aggregates']==dict(period_a=10.,period_b=20.,diff=10.) and table['value']['amount_per_cost']['exact_aggregates']==dict(period_a=5.,period_b=5.,diff=0.)
-    assert {m:p['units'] for m,p in table['target']['source_unit_proofs'].items()}=={'amount':['CNY'],'amount_per_cost':['无量纲']} and 'CNY' in answer['body'] and '无量纲' in answer['body'] and '999' not in answer['body']
+    assert {m:p['units'] for m,p in table['target']['source_unit_proofs'].items()}=={'amount':['CNY'],'amount_per_cost':['无量纲']} and 'CNY' in answer['body'] and '无量纲' in answer['body'] and not has_numeric_literal(answer['body'], '999')
     assert hydrate_refs([loop.context.analysis_state.analysis_spec])[0]['goal']==quote
     (tmp_path/'normal-explicit-formula-unit.json').write_text(json.dumps(dict(answer=answer,calls=model.calls,original_quote=quote,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
 

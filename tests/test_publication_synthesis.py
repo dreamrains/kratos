@@ -1,3 +1,4 @@
+from tests.support.rendered_text import has_numeric_literal
 from tests.support.rendered_text import visible_text, table_rows, has_pair, has_number, has_record
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.loop import AgentLoop
@@ -1169,7 +1170,7 @@ def test_r1_publication_validator_exception_never_releases_candidate(engine):
         def chat(self,*a,**k): raise ZeroDivisionError("unavailable audit")
     loop.client=BrokenAudit()
     body,error=publish(loop,json.dumps(raw));assert error is None
-    assert "999" not in body and "12" in body and loop._accepted_answer["audit_status"]=="unavailable"
+    assert not has_numeric_literal(body, '999') and "12" in body and loop._accepted_answer["audit_status"]=="unavailable"
 
 
 def test_r1_missing_current_packet_never_releases_candidate(engine):
@@ -1178,7 +1179,7 @@ def test_r1_missing_current_packet_never_releases_candidate(engine):
     _v2_request(loop,"计算收入",{'kind': 'measurement', 'scope': {'datasets': ['orders'], 'metrics': ['amount'], 'quantity': 'sum'}})
     host=snapshot_for_turn(loop);raw=json.loads(_v2_draft(host));raw["sections"][0]["parts"]=[{"kind":"claim","ref":"fabricated_income_999"}]
     body,error=publish(loop,json.dumps(raw));assert error is None
-    assert "999" not in body and "未计算" in body and host.as_dict()["claims"]==[]
+    assert not has_numeric_literal(body, '999') and "未计算" in body and host.as_dict()["claims"]==[]
 
 
 def test_r1_exhausted_revision_retains_only_selected_current_receipt_values(engine):

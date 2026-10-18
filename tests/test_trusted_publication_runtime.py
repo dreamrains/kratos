@@ -1,3 +1,4 @@
+from tests.support.rendered_text import has_numeric_literal
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: runtime. Shared fixtures have one owner."""
 from data_agent.agent.publication.contracts import encode
@@ -403,7 +404,7 @@ def test_actual_http_sse_terminal_agrees_with_accepted_body_and_durable_run(engi
     terminals=[data for event,data in events if event=="turn_end"]
     assert len(terminals)==1 and runs.snapshot(loop.session_id)["turn_id"]==terminals[0]["turn_id"]
     body="".join(data["text"] for event,data in events if event=="text_delta")
-    assert "999" not in body and "answer_bindings.v2" not in body
+    assert not has_numeric_literal(body, '999') and "answer_bindings.v2" not in body
     assert terminals[0]["status"]==runs.snapshot(loop.session_id)["status"]==("failed" if fault else "completed")
     saved=load_session(loop.session_id)["messages"]
     if fault:

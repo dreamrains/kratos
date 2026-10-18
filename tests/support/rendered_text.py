@@ -48,6 +48,18 @@ def has_number(markdown,label,value):
     return any(Decimal(m)==Decimal(str(value)) for m in re.findall(pattern,visible_text(markdown)))
 
 
+def has_numeric_literal(markdown, value):
+    """Find a visible numeric value without treating opaque IDs as numbers."""
+    import re
+    text = ' '.join(_read(markdown).parts)
+    pattern = (r'(?<![A-Za-z0-9_.])'
+               r'[+-]?(?:\d{1,3}(?:,\d{3})+(?:\.\d*)?|\d+(?:\.\d*)?|\.\d+)'
+               r'(?:[eE][+-]?\d+)?(?![A-Za-z0-9_.])')
+    expected = Decimal(str(value))
+    return any(Decimal(token.replace(',', '')) == expected
+               for token in re.findall(pattern, text))
+
+
 def has_record(markdown,expected):
     def equal(cell,value):
         if type(value) in {int,float}:return _same_number(cell,value)

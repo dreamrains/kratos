@@ -1,3 +1,4 @@
+from tests.support.rendered_text import has_numeric_literal
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: records. Shared fixtures have one owner."""
 from copy import deepcopy
@@ -405,7 +406,7 @@ def test_normal_analysis_summary_navigation_then_native_delivery_s3_analysis_sum
  selected={t['ref'] for t in answer['render_trace'] if t['kind']=='claim'}
  assert all(b['tool_name']=='describe_dataset' for c in answer['source_snapshot']['claims'] if c['id'] in selected for b in c['basis_refs'])
  assert all(b['tool_name']!='get_analysis_summary' for c in answer['source_snapshot']['claims'] for b in c['basis_refs'])
- assert '9999' not in answer['body']
+ assert not has_numeric_literal(answer['body'], '9999')
  with use_agent_context(loop.context):md=export_assistant_reply(sid,answer['body'],'md')
  assert md['status']=='exported';file=cfg.sessions_resolved/sid/'reports'/md['artifact_path'].split('/')[-1];(folder/('normal_'+case+'.md')).write_bytes(file.read_bytes())
 
@@ -1407,7 +1408,7 @@ def test_canonical_measurement_arithmetic_and_hypothesis_relation_need_same_orig
             assert claims and claims[0]['value']=='supported' and all(r['receipt_id']==rid and r['basis']=='receipt-verified amount trend direction = increased' for r in checked['evidence_relations'])
             assert all(b['result_path']==['trend','slope'] and b['receipt_id']==rid for c in claims for b in c['basis_refs'])
     snap=snapshot_for_turn(loop);body,error=publish(loop,draft(snap));assert error is None
-    assert '999' not in body
+    assert not has_numeric_literal(body, '999')
     assert bool([c for c in snap.as_dict()['claims'] if c['target'].get('hypothesis_id')==hid])==(case in {'current','forged_measurement'})
 
 
@@ -1453,7 +1454,7 @@ def test_normal_canonical_self_consistent_note_cannot_replace_actual_sum(engine,
             return super().chat(messages,system=system,**kw)
     model=Model(content,'sales','describe_dataset',dict(name='sales'),[spec]);loop,answer=_joint_http_answer(engine,tmp_path,model,['sales'],[pd.DataFrame(dict(amount=[10.,20.]))],'canonical_normal');records=hydrate_refs(loop.context.analysis_state.evidence_records)
     assert len(records)==1 and records[0]['measurements'][0]['value']==999. and records[0]['dataset_contract_id']=='unverified_model_declaration'
-    assert model.recorded==2 and answer['requirement_outcomes'][0]['status']=='answered' and '999' not in answer['body'] and '1000' not in answer['body']
+    assert model.recorded==2 and answer['requirement_outcomes'][0]['status']=='answered' and not has_numeric_literal(answer['body'], '999') and not has_numeric_literal(answer['body'], '1000')
     selected={c for q in answer['source_snapshot']['requirements'] for c in q['claim_ids']};claims=[c for c in answer['source_snapshot']['claims'] if c['id'] in selected];assert len(claims)==1 and claims[0]['value']==30.
     assert all(b['tool_name']=='describe_dataset' for c in claims for b in c['basis_refs'])
     (tmp_path/'canonical-normal.json').write_text(json.dumps(dict(calls=model.calls,records=records,answer=answer,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
@@ -1581,7 +1582,7 @@ def test_normal_canonical_five_operators_rejections_keep_actual_original_table(e
     model=Model(content,'rates','run_python',dict(code=code),[dict(kind='table',scope=dict(datasets=['rates']))]);loop,answer=_joint_http_answer(engine,tmp_path,model,['rates'],[pd.DataFrame(dict(rate=[.10,.20]))],'canonical_five_normal');records=hydrate_refs(loop.context.analysis_state.evidence_records);assert model.recorded==3 and len(records)==1
     assert {d['operation']:Decimal(d['result']) for d in records[0]['derived_measurements']}=={k:Decimal(v) for k,v in operations.items()}
     selected={cid for q in answer['source_snapshot']['requirements'] for cid in q['claim_ids']};claims=[c for c in answer['source_snapshot']['claims'] if c['id'] in selected];assert claims and answer['requirement_outcomes'][0]['status']=='answered'
-    assert all(b['tool_name']=='run_python' for c in claims for b in c['basis_refs']) and '999' not in answer['body']
+    assert all(b['tool_name']=='run_python' for c in claims for b in c['basis_refs']) and not has_numeric_literal(answer['body'], '999')
     values=next(c['value'] for c in claims if isinstance(c['value'],dict));assert all(values[k]==pytest.approx(float(v)) for k,v in operations.items())
     (tmp_path/'canonical-five-normal.json').write_text(json.dumps(dict(calls=model.calls,records=records,answer=answer,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
 
@@ -1606,7 +1607,7 @@ def test_six_entry_display_note_internal_shapes_cannot_break_current_plan_or_fac
     rid,_,_=_p1_original_call(loop,route,'describe_dataset',dict(name='orders'));snap=snapshot_for_turn(loop);body,fault=publish(loop,draft(snap));answer=loop._accepted_answer
     (tmp_path/'display-note-internal.json').write_text(json.dumps(dict(route=route,case=case,payload=payload,result=result,summary=summary,error=error,answer=answer,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
     assert error is None,'Display-only note internal values must not crash the actual signal reader'
-    assert fault is None and answer['requirement_outcomes'][0]['status']=='answered' and '999' not in body
+    assert fault is None and answer['requirement_outcomes'][0]['status']=='answered' and not has_numeric_literal(body, '999')
     assert all(c['value']==12 and all(b['receipt_id']==rid for b in c['basis_refs']) for c in snap.as_dict()['claims'] if c['target'].get('statistic')=='rows')
 
 
@@ -1636,7 +1637,7 @@ def test_normal_display_nested_spec_then_cold_next_turn_keeps_original_row_answe
     with app.test_client() as http:cold=http.get('/api/sessions/'+loop.session_id).get_json()
     (tmp_path/'nested-display-cold-normal.json').write_text(json.dumps(dict(payload=payload,first=first,answer=answer,events=events,refresh=refresh,cold=cold,export=export,calls=second.calls,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
     ends=[v for k,v in events if k=='turn_end'];assert len(ends)==1 and ends[0]['status']=='completed' and ends[0]['reply_content']==answer['body']
-    assert all(p.read_bytes()==raw for p,raw in originals.items()) and '999' not in answer['body'];assert answer['requirement_outcomes'][-1]['status']=='answered' and any(c['value']==2 for c in answer['source_snapshot']['claims'])
+    assert all(p.read_bytes()==raw for p,raw in originals.items()) and not has_numeric_literal(answer['body'], '999');assert answer['requirement_outcomes'][-1]['status']=='answered' and any(c['value']==2 for c in answer['source_snapshot']['claims'])
     assert any(m.get('answer_ref')==last['answer_ref'] and m['content']==answer['body'] for m in cold['messages']) and export['status']=='exported' and answer['body'] in (root/'reports'/export['artifact_path'].split('/')[-1]).read_text(encoding='utf-8')
 
 
@@ -1695,7 +1696,7 @@ def test_six_entry_original_quote_is_preserved_without_new_measurement_or_scope(
     value=getattr(state,field);original=hydrate_refs(value if isinstance(value,list) else [value]);assert any(x.get('claim' if action=='record_evidence_record' else 'goal')==quote for x in original)
     root=cfg.sessions_resolved/loop.session_id;originals={p:p.read_bytes() for p in root.rglob('*.json')};cold=load_analysis_state(loop.session_id);assert getattr(cold,field)==value and all(p.read_bytes()==raw for p,raw in originals.items())
     _p1_original_call(loop,route,'describe_dataset',dict(name='orders'));snap=snapshot_for_turn(loop);body,error=publish(loop,draft(snap));answer=loop._accepted_answer
-    assert error is None and answer['requirement_outcomes'][0]['status']=='answered' and '999' not in body and '1.14万人' not in body
+    assert error is None and answer['requirement_outcomes'][0]['status']=='answered' and not has_numeric_literal(body, '999') and '1.14万人' not in body
     assert any(c['value']==12 and c['target'].get('statistic')=='rows' for c in answer['source_snapshot']['claims'])
     (tmp_path/'original-quote-authority.json').write_text(json.dumps(dict(action=action,route=route,quote=quote,original=original,result=result,answer=answer,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
 
@@ -1711,7 +1712,7 @@ def test_six_entry_summary_preserves_original_note_fields_readonly_and_not_fact(
     payload=_evidence_record_payload('upsert');payload.update(claim=quote,sample_size=999,confidence='high');saved=_evidence_record_invoke(payload,route);assert saved.get('saved'),saved;state=loop.context.analysis_state;record=deepcopy(state.evidence_records[0]);before=deepcopy(state.to_dict());root=cfg.sessions_resolved/loop.session_id;originals={p:p.read_bytes() for p in root.rglob('*.json')};summary=_analysis_summary_invoke(route)
     expected={k:record[k] for k in ['claim','method','confidence','sample_size'] if k in record};assert summary['evidence_records']==[expected] and expected['claim']==quote and summary['evidence_count']==1;assert state.to_dict()==before and all(p.read_bytes()==raw for p,raw in originals.items())
     cold=load_analysis_state(loop.session_id);assert cold.evidence_records==state.evidence_records
-    snap=snapshot_for_turn(loop);body,error=publish(loop,draft(snap));answer=loop._accepted_answer;assert error is None and answer['requirement_outcomes'][0]['status']=='answered' and '999' not in body and '1.14万人' not in body;assert any(c['value']==12 and c['target'].get('statistic')=='rows' for c in snap.as_dict()['claims'])
+    snap=snapshot_for_turn(loop);body,error=publish(loop,draft(snap));answer=loop._accepted_answer;assert error is None and answer['requirement_outcomes'][0]['status']=='answered' and not has_numeric_literal(body, '999') and '1.14万人' not in body;assert any(c['value']==12 and c['target'].get('statistic')=='rows' for c in snap.as_dict()['claims'])
     (tmp_path/'summary-original-note-readonly.json').write_text(json.dumps(dict(route=route,record=record,summary=summary,answer=answer,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
 
 
@@ -1726,5 +1727,5 @@ def test_normal_six_entry_summary_original_note_then_actual_answer_cold_export(e
             if self.step>=3 and self.note<2:
                 self.note+=1;name='record_evidence_record' if self.note==1 else 'get_analysis_summary';args=dict(record_json=payload) if self.note==1 else {};self.calls.append(name);return Response(tool_calls=[ToolCall('original_note_'+str(self.note),name,args)])
             return super().chat(messages,system=system,**kw)
-    model=Notes();loop,answer=_joint_http_answer(engine,tmp_path,model,['sales'],[pd.DataFrame(dict(amount=[10.,20.]))],'original_summary_note');assert model.note==2 and answer['requirement_outcomes'][0]['status']=='answered' and '999' not in answer['body'] and '1.14万人' not in answer['body'];assert loop.context.analysis_state.evidence_records[0]['claim']==quote;assert any(c['value']==2 and c['target'].get('statistic')=='rows' for c in answer['source_snapshot']['claims'])
+    model=Notes();loop,answer=_joint_http_answer(engine,tmp_path,model,['sales'],[pd.DataFrame(dict(amount=[10.,20.]))],'original_summary_note');assert model.note==2 and answer['requirement_outcomes'][0]['status']=='answered' and not has_numeric_literal(answer['body'], '999') and '1.14万人' not in answer['body'];assert loop.context.analysis_state.evidence_records[0]['claim']==quote;assert any(c['value']==2 and c['target'].get('statistic')=='rows' for c in answer['source_snapshot']['claims'])
     (tmp_path/'normal-original-summary-note.json').write_text(json.dumps(dict(answer=answer,calls=model.calls,record=loop.context.analysis_state.evidence_records[0],Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')

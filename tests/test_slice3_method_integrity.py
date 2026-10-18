@@ -1,6 +1,7 @@
 """Slice 3 deterministic method contracts and real-data oracle tests."""
 
 from __future__ import annotations
+from tests.support.rendered_text import has_numeric_literal
 
 import json
 from tests.support.rendered_text import visible_text, table_rows, has_pair, has_number, has_record
@@ -3094,7 +3095,7 @@ def test_original_p4_open_and_joint_faults_keep_actual_independent_values(engine
     (tmp_path/'p4-open-joint.json').write_text(json.dumps(dict(route=route,case=case,result=result,host=host,audits=audits,first=first,answer=loop._accepted_answer,Provider=0,semantic_model='unassessed;fixed independent dispositions'),ensure_ascii=False,indent=2),encoding='utf-8')
     assert len(audits)==1 and bad not in body and loop._accepted_answer['requirement_outcomes'][0]['status']=='partial'
     if case in ['zero_pair','bad_d30']:assert result['zero_value_semantics']=='unknown' and '10%' in body
-    else:assert '180' in body and '99999' not in body
+    else:assert '180' in body and not has_numeric_literal(body, '99999')
     if case=='unassessed':assert good not in body
     if case=='three_faults_exhausted':
         codes={i['code'] for i in first['issues']};assert 'unbound_deliverable_ref' in codes and any('field' in c for c in codes)
@@ -3580,7 +3581,7 @@ def test_original_ac35_whole_chart_rejection_and_wrong_scope_keep_real_table_or_
     assert table["records"]==[{"group":"B","amount":30.},{"group":"C","amount":20.},{"group":"A","amount":10.}]
     assert "| group | amount |" in body and all(z in body for z in ["| B | 30.0 |","| C | 20.0 |","| A | 10.0 |"])
     assert answer["requirement_outcomes"][0]["status"]=="partial"
-    assert "mermaid" not in body.lower() and "[[chart:" not in body and "999" not in body
+    assert "mermaid" not in body.lower() and "[[chart:" not in body and not has_numeric_literal(body, '999')
     files=list((cfg.sessions_resolved/loop.session_id/"charts").glob("*.html"))
     if case=="validation":
         assert not files and chart["error_type"]=="chart_validation" and chart["error"] in body
@@ -3665,7 +3666,7 @@ def test_original_ac33_ac35_normal_agentloop_original_chart_table_and_local_gap(
         assert answer["requirement_outcomes"][0]["status"]=="partial" and not model.audits
         frontend=_original_chart_frontend_projection(loop.session_id,[],[])
         assert all("Data-backed Mermaid charts are blocked" in rendered and 'class="mermaid"' not in rendered for rendered in frontend["mermaid"])
-        assert "mermaid" not in body.lower() and "999" not in body and any(i["code"]=="invalid_kind" for i in answer["issues"])
+        assert "mermaid" not in body.lower() and not has_numeric_literal(body, '999') and any(i["code"]=="invalid_kind" for i in answer["issues"])
         if case=="validation":
             assert not answer["artifact_refs"] and not list((root/"charts").glob("*.html")) and "incomplete_scatter_axes" in body
         else:
@@ -3923,7 +3924,7 @@ def test_original_ac06_first_publication_observes_durable_answer_for_sync_stream
         with app.test_client() as http:
             response=http.post('/api/chat',json=dict(session_id=sid,message=content));rows=[(b.split('\n',1)[0][7:],json.loads(b.split('\ndata: ',1)[1])) for b in response.get_data(as_text=True).split('\n\n') if b.startswith('event:')]
         assert [v['status'] for k,v in rows if k=='turn_end']==['failed' if case=='disconnect' else 'completed'],rows
-        body=''.join(v['text'] for k,v in rows if k=='text_delta');assert '999' not in body and 'answer_bindings.v2' not in body
+        body=''.join(v['text'] for k,v in rows if k=='text_delta');assert not has_numeric_literal(body, '999') and 'answer_bindings.v2' not in body
     else:
         returned=loop.run_turn_structured(content);body=returned.content
         if case!='disconnect':observe(body,'sync_return')

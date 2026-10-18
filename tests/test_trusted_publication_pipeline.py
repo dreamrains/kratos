@@ -1,4 +1,5 @@
 """New publication behavior: model text cannot own host facts or coverage."""
+from tests.support.rendered_text import has_numeric_literal
 import json
 from copy import deepcopy
 
@@ -89,7 +90,7 @@ def test_model_cannot_replace_values_schema_or_coverage(mutation):
     obj = json.loads(draft(snap, [{"kind": "claim", "ref": "total"}]))
     mutation(obj)
     answer = publish(snap, json.dumps(obj), accept_all)
-    assert "120" in answer["body"] and "999" not in answer["body"]
+    assert "120" in answer["body"] and not has_numeric_literal(answer["body"], '999')
     assert outcomes(answer)["r1"]["status"] == "partial"
     assert answer["issues"]
 

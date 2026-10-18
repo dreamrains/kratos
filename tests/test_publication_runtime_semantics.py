@@ -1,3 +1,4 @@
+from tests.support.rendered_text import has_numeric_literal
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: semantics. Shared fixtures have one owner."""
 from copy import deepcopy
@@ -381,7 +382,7 @@ def test_style_followup_cannot_execute_unrequested_totals_and_only_publishes_ori
     assert len(loop.context.analysis_state.tool_receipts)==before
     assert any("followup_execution_not_requested" in str(m.get("content")) for m in loop.messages if m.get("role")=="tool")
     assert {c["id"] for c in answer["source_snapshot"]["claims"]}=={t["ref"] for t in original["render_trace"] if t["kind"]=="claim" and t["disposition"]=="accepted"}
-    assert "999" not in answer["body"]
+    assert not has_numeric_literal(answer["body"], '999')
 
 
 @pytest.mark.parametrize("ambiguous,restart,explicit",[(False,False,False),(True,False,False),(True,True,False),(True,False,True),(True,True,True)])
