@@ -1,3 +1,4 @@
+from tests.support.publication_runtime import audit_reasons
 """Current grouped frames keep source grain, methods and version identity."""
 from tests.support.rendered_text import visible_text, table_rows, has_pair, has_number, has_record
 
@@ -103,7 +104,8 @@ def test_current_action_subgoal_has_a_bound_gap_without_losing_aggregate_values(
     request(loop,"请给出有条件行动建议。",kind="conditional_action")
     snap=snapshot_for_turn(loop);req=next(r for r in snap.as_dict()["requirements"] if r["text"]=="请给出有条件行动建议。")
     body,error=publish(loop,draft(snap)); assert error is None
-    assert has_number(body, 'amount_sum', 20.0) and "未交付所需开放内容：conditional_action" in body
+    assert has_number(body, 'amount_sum', 20.0) and "条件性建议未核" in body
+    assert "未交付所需开放内容：conditional_action" in audit_reasons(loop._accepted_answer)
     action=next(r for r in loop._accepted_answer["requirement_outcomes"] if r["requirement_id"]==req["id"])
     assert action["status"]!="answered"
     # A locator can bind existing facts; it cannot invent missing conditions.

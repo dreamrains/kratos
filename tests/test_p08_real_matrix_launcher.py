@@ -181,7 +181,8 @@ def test_preflight_contract_freezes_complete_prompts_oracles_and_http_protocol()
     contract = launcher._frozen_matrix_contract(root, 5215)
 
     assert contract["matrix"] == ["M01", "M02", "M03", "M04", "M05", "M06"]
-    assert contract["operator_protocol"]["control_route"] == "local_http_api"
+    assert contract["operator_protocol"]["control_route"] == "combined_http_api_browser"
+    assert contract["operator_protocol"]["visual_checkpoint"] == "closed_ledger_stdin_v2"
     assert contract["operator_protocol"]["service_port"] == 5215
     assert contract["http_driver_digest"].startswith("sha256:")
     assert contract["matrix_plan"]["sha256"].startswith("sha256:")
@@ -460,3 +461,17 @@ def test_actual_primary_and_auxiliary_clients_share_deadline_failure_latch(tmp_p
     with pytest.raises(RuntimeError,match="provider_failure_latched"):
         primary.for_purpose(max_tokens=2048).chat([{"role":"user","content":"auxiliary"}])
     assert len(calls)==ledger.count==1
+
+
+def test_current_batch_requires_browser_full_matrix_and_800_shared_cap(tmp_path,monkeypatch):
+    import json
+    launcher=_launcher_module()
+    assert launcher.DEFAULT_CALL_CAP==800
+    with pytest.raises(SystemExit,match="complete M01-M06"):launcher._prepare(tmp_path,tmp_path/"tmp/new",800,8904,tmp_path/"tmp/old")
+    with pytest.raises(SystemExit,match="between 1 and 800"):launcher._prepare(tmp_path,tmp_path/"tmp/new",801,8904)
+    root=Path(__file__).parents[1]
+    contract=json.loads((root/launcher.MATRIX_CONTRACT_PATH).read_text('utf8'));contract['operator_protocol']['control_route']='local_http_api'
+    path=tmp_path/launcher.MATRIX_CONTRACT_PATH;path.parent.mkdir(parents=True);path.write_text(json.dumps(contract))
+    with pytest.raises(SystemExit,match="browser route"):launcher._frozen_matrix_contract(tmp_path,8904)
+    inventory=launcher._source_inventory(root)
+    assert 'AGENTS.md' in inventory and 'docs/testing/acceptance-control-routes.md' in inventory

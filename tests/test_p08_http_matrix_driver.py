@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from tests.test_trusted_publication_semantics import engine
 
 
 def _driver():
@@ -149,9 +150,15 @@ def test_publication_snapshot_reads_normal_persisted_binding_and_rejects_tamper(
     analysis={"state":{"accepted_answers":[ref]}}
     monkeypatch.setattr(driver,"_json",lambda m,u:analysis if u.endswith("/analysis") else session)
     assert driver._snapshot("http://local",tmp_path,sid)["accepted_answers"]=={"a1":answer}
-    path.write_text("tampered")
-    with pytest.raises(RuntimeError,match="file identity"):
+    session["messages"].append(dict(session["messages"][0]))
+    with pytest.raises(driver.ScenarioFailure,match="public projection"):
         driver._snapshot("http://local",tmp_path,sid)
+    records=[json.loads(line) for line in (tmp_path/"http-matrix.jsonl").read_text().splitlines()]
+    assert records[-1]["action"]=="raw_publication_response" and len(records[-1]["session"]["messages"])==2
+    path.write_text("tampered")
+    with pytest.raises(RuntimeError,match="file identity") as failure:
+        driver._snapshot("http://local",tmp_path,sid)
+    assert not isinstance(failure.value,driver.ScenarioFailure)
 
 
 def test_multiple_frozen_confirmations_keep_distinct_resume_identities(tmp_path, monkeypatch):
@@ -169,6 +176,7 @@ def test_multiple_frozen_confirmations_keep_distinct_resume_identities(tmp_path,
                 "suspended":{"allow_free_text":True,"confirmation_type":"metric_definition","confirmation_id":"c"+str(len(bodies)),"version":1}}
     monkeypatch.setattr(driver,"_chat",chat)
     monkeypatch.setattr(driver,"_snapshot",lambda *args:{})
+    monkeypatch.setattr(driver,"_check_turn_publication",lambda *args:None)
     monkeypatch.setattr(driver,"_json",lambda *args,**kw:{"messages":[],"run_state":{"status":"completed"}})
     monkeypatch.setattr(driver,"_ledger_state",lambda *args:{"started":0})
     monkeypatch.setattr(sys,"argv",["driver","--base-url","http://127.0.0.1:1","--run-dir",str(tmp_path)])
@@ -192,6 +200,7 @@ def test_accounting_stop_marks_remaining_cases_without_sending_them(tmp_path, mo
         return {"session_id":"s1","terminal":"completed"}
     monkeypatch.setattr(driver,"_chat",chat)
     monkeypatch.setattr(driver,"_snapshot",lambda *args:{})
+    monkeypatch.setattr(driver,"_check_turn_publication",lambda *args:None)
     monkeypatch.setattr(driver,"_json",lambda *args:{"messages":[]})
     def failed(*args): raise RuntimeError("Provider ledger failed")
     monkeypatch.setattr(driver,"_ledger_state",failed)
@@ -218,6 +227,120 @@ def test_export_checks_http_download_against_owned_bytes_and_original_body(tmp_p
     Response.content=b"different download"
     with pytest.raises(RuntimeError,match="owned export bytes"):
         driver._export_evidence("http://local",tmp_path,"s1",snapshot)
+
+
+@pytest.mark.parametrize("failure", ["projection", "tool", "host_failure", "confirmation", "sha", "sse", "cross_session", "unknown"])
+def test_owned_scenario_failure_continues_but_uncertain_batch_stops(tmp_path, monkeypatch, failure):
+    import sys, json
+    driver=_driver()
+    freeze={"matrix":["M01","M02"],"call_cap":5,"fixtures":{},"scenario_inputs":{
+        name:{"prompts":[name+" first",name+" dependent"],"fixtures":[],"actions":[]} for name in ("M01","M02")}}
+    monkeypatch.setattr(driver,"_preflight",lambda *args:freeze)
+    calls=[]
+    def chat(base,route,body):
+        calls.append(body)
+        sid="s1" if body["message"].startswith("M01") else "s2"
+        return {"session_id":sid,"terminal":"failed" if failure=="tool" and sid=="s1" else "suspended" if failure=="confirmation" and sid=="s1" else "completed","terminal_payload":{"reply_id":sid+"reply","reply_content":sid+"body"}}
+    monkeypatch.setattr(driver,"_chat",chat)
+    def snap(base,run,sid):
+        if sid=="s1" and failure=="projection":raise driver.ScenarioFailure("scenario_integrity_failure","owned projection")
+        if sid=="s1" and failure in {"sha","sse","cross_session"}:raise RuntimeError(failure)
+        if sid=="s1" and failure=="unknown":raise KeyError("unexpected")
+        return {"session":{"messages":[{"reply_id":sid+"reply","answer_id":"a"}]},"accepted_answers":{"a":{"body":sid+"body","source_snapshot":{"requirements":[{"id":"r","withdrawn":False,"gap":{"status":"failed"} if failure=="host_failure" and sid=="s1" else None}]}}}}
+    monkeypatch.setattr(driver,"_snapshot",snap)
+    monkeypatch.setattr(driver,"_json",lambda *args,**kw:{"messages":[]})
+    monkeypatch.setattr(driver,"_ledger_state",lambda *args:{"started":0,"completed":0})
+    monkeypatch.setattr(sys,"argv",["driver","--base-url","http://local","--run-dir",str(tmp_path)])
+    local=failure in {"projection","tool","host_failure","confirmation"}
+    if local:driver.main()
+    else:
+        with pytest.raises((RuntimeError,KeyError)):driver.main()
+    assert [row["message"] for row in calls]==(["M01 first","M02 first","M02 dependent"] if local else ["M01 first"])
+    rows=[json.loads(line) for line in (tmp_path/"http-matrix.jsonl").read_text().splitlines()]
+    assert any(row.get("classification")==("scenario_failure" if local else "global_stop") for row in rows)
+    assert any(row.get("classification")=="blocked_not_started" for row in rows)==(not local)
+
+
+def test_visual_checkpoint_binds_readonly_receipt_and_keeps_same_closed_ledger(tmp_path, monkeypatch):
+    import json
+    driver=_driver()
+    receipt=tmp_path/"visual.json"
+    receipt.write_text(json.dumps({'scenario':'M01','session_id':'s1','checkpoint':'scenario_end','status':'unassessed','reason':'readonly browser bridge unavailable'}))
+    freeze={"call_cap":5,"operator_protocol":{"control_route":"combined_http_api_browser","visual_checkpoint":"closed_ledger_stdin_v2"}}
+    monkeypatch.setattr(driver,"_ledger_state",lambda *args:{"started":2,"completed":2})
+    monkeypatch.setattr("builtins.input",lambda:json.dumps({"scenario":"M01","session_id":"s1","checkpoint":"scenario_end","visual_status":"unassessed",
+        "evidence_path":"visual.json","evidence_sha256":driver._sha(receipt)}))
+    driver._visual_checkpoint("http://local",freeze,tmp_path/"http-matrix.jsonl","M01","s1")
+    records=[json.loads(line) for line in (tmp_path/"http-matrix.jsonl").read_text().splitlines()]
+    assert [row["action"] for row in records]==["visual_checkpoint_ready","visual_checkpoint_result"]
+    assert records[0]["provider_calls"]=={"started":2,"completed":2}
+
+
+def test_owned_projection_failure_still_executes_next_actual_app_scenario(engine, monkeypatch):
+    """Same driver batch: an owned UI defect cannot erase independent engine evidence."""
+    import copy, io, json, sys
+    from urllib.parse import urlsplit
+    from data_agent.web.app import create_app
+    from data_agent.web.agent_manager import AgentManager
+    from scripts.testing.run_p7_browser_rehearsal import ScriptedClient, RunTrace
+    driver=_driver();_,cfg=engine
+    run=cfg.sessions_resolved.parent
+    (run/"fixtures").mkdir()
+    data=("date,amount\n"+"".join(f"2026-09-{i:02},10\n" for i in range(1,13))).encode()
+    (run/"fixtures/M01-sales.csv").write_bytes(data)
+    contract=json.loads(Path("scripts/testing/p08_real_matrix_contract.json").read_text("utf-8"))
+    freeze={"matrix":["M01","M05"],"call_cap":1,"fixtures":{"M01-sales.csv":driver._sha(run/"fixtures/M01-sales.csv")},
+        "scenario_inputs":{name:{**copy.deepcopy(contract["scenario_inputs"][name]),"prompts":[contract["scenario_inputs"][name]["prompts"][0]],"actions":[]}
+                           for name in ("M01","M05")}}
+    freeze["scenario_inputs"]["M01"].update(fixtures=[],upload_stages=[])
+    trace=RunTrace(run)
+    manager=AgentManager(client_factory=lambda **kw:ScriptedClient(trace),auxiliary_client_factory=lambda:ScriptedClient(trace))
+    app=create_app();app.config["agent_manager"]=manager
+    http=app.test_client()
+    class Reply:
+        def __init__(self,response):
+            self.response=response;self.status_code=response.status_code;self.headers=response.headers
+        def raise_for_status(self):
+            assert self.status_code<400,self.response.get_data(as_text=True)
+        def json(self):return self.response.get_json()
+        def iter_lines(self,decode_unicode=False):
+            value=self.response.get_data(as_text=True).splitlines()
+            return iter(value if decode_unicode else [line.encode() for line in value])
+        def __enter__(self):return self
+        def __exit__(self,*args):self.response.close()
+    def dispatch(method,url,**kwargs):
+        route=urlsplit(url).path
+        body={}
+        if "json" in kwargs:body["json"]=kwargs["json"]
+        if kwargs.get("files"):
+            name,stream,_=kwargs["files"]["file"]
+            body.update(data={"file":(io.BytesIO(stream.read()),name)},content_type="multipart/form-data")
+        return Reply(http.open(route,method=method,buffered=False,**body))
+    monkeypatch.setattr(driver.requests,"request",dispatch)
+    monkeypatch.setattr(driver.requests,"post",lambda url,**kw:dispatch("POST",url,**kw))
+    monkeypatch.setattr(driver,"_preflight",lambda *args:freeze)
+    original_json=driver._json
+    first_sid=[]
+    def projection(method,url,**kwargs):
+        value=original_json(method,url,**kwargs)
+        if method=="GET" and urlsplit(url).path.startswith("/api/sessions/") and "/analysis" not in url and "/run-state" not in url:
+            sid=urlsplit(url).path.rsplit("/",1)[-1]
+            if not first_sid:first_sid.append(sid)
+            if sid==first_sid[0]:
+                value=copy.deepcopy(value)
+                value["messages"].append(copy.deepcopy(next(m for m in value["messages"] if m.get("answer_id"))))
+        return value
+    monkeypatch.setattr(driver,"_json",projection)
+    monkeypatch.setattr(driver,"_ledger_state",lambda *args:{"started":0,"completed":0})
+    monkeypatch.setattr(sys,"argv",["driver","--base-url","http://local","--run-dir",str(run)])
+    driver.main()
+    rows=[json.loads(line) for line in (run/"http-matrix.jsonl").read_text("utf-8").splitlines()]
+    assert any(r.get("scenario")=="M01" and r.get("code")=="scenario_integrity_failure" for r in rows)
+    second=next(r for r in rows if r.get("scenario")=="M05" and r.get("terminal")=="completed")
+    assert second["session_id"]!=first_sid[0]
+    state=http.get('/api/sessions/'+second['session_id']+'/analysis').get_json()['state']
+    assert any(r['tool_name']=='describe_dataset' for r in state['tool_receipts'])
+    assert not any(r.get('classification')=='global_stop' for r in rows)
 
 
 @pytest.mark.parametrize("terminal", [
@@ -249,3 +372,14 @@ def test_export_normalizes_only_line_endings_and_still_rejects_missing_content(t
     result=driver._export_evidence("http://local",tmp_path,"s1",{"accepted_answers":{"a1":{"body":"来源\n金额：120\n限制：仅当前文件"}}})
     assert result["content_verified"] is (not changed)
     assert result["download_bytes"]==len(content)
+
+
+@pytest.mark.parametrize("host_gap", [None,{"status":"failed"},{"status":"evidence_insufficient"}])
+def test_completed_turn_uses_reply_identity_and_only_host_failure_stops_dependents(host_gap):
+    driver=_driver()
+    result={"terminal":"completed","turn_id":"sse-turn","terminal_payload":{"reply_id":"reply1","reply_content":"original"}}
+    answer={"body":"original","turn_id":"publication-turn","source_snapshot":{"requirements":[{"id":"r","withdrawn":False,"gap":host_gap}]},"requirement_outcomes":[{"status":"failed"}]}
+    snapshot={"session":{"messages":[{"reply_id":"reply1","role":"assistant","tool_calls":[{"id":"tool1"}]},{"reply_id":"reply1","answer_id":"a1"}]},"accepted_answers":{"a1":answer}}
+    if host_gap and host_gap["status"]=="failed":
+        with pytest.raises(driver.ScenarioFailure,match="host execution failure"):driver._check_turn_publication(result,snapshot)
+    else:driver._check_turn_publication(result,snapshot)

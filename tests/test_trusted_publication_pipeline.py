@@ -186,7 +186,9 @@ def test_one_fact_cannot_answer_two_independent_metric_requirements():
     answer = publish(snap, draft(snap, [{"kind": "claim", "ref": "total"}], refs=["revenue", "cost"]))
     assert outcomes(answer)["revenue"]["status"] == "answered"
     assert outcomes(answer)["cost"]["status"] == "not_computed"
-    assert "成本数据未提供" in answer["body"]
+    assert "未计算" in answer["body"]
+    assert outcomes(answer)["cost"]["reason"] == "成本数据未提供"
+    assert next(t for t in answer["render_trace"] if t["part_id"] == "gap:cost")["reason"] == "成本数据未提供"
 
 
 def test_nine_requirements_keep_eight_answers_and_one_precise_gap():
@@ -482,3 +484,59 @@ def test_s4_unaccepted_gap_guidance_is_not_published_as_a_reviewed_action(decisi
     assert outcomes(answer)["r1"]["status"] == "not_computed"
     trace = next(t for t in answer["render_trace"] if t["kind"] == "text")
     assert trace["semantic_reviewed"] is False
+
+
+def test_gap_body_does_not_republish_rejected_numbers_or_internal_diagnostics():
+    def reviewer(request):
+        result = accept_all(request)
+        result["decisions"][0].update(disposition="reject", reason="internal-selector: unsupported 99999 threshold")
+        return result
+    snap = snapshot(claims=[claim()], requirements=[requirement(claims=["total"], purposes=["conditional_action"],
+        gap={"status":"not_computed", "reason":"host internal-key: not computed 88888"})])
+    answer = publish(snap, draft(snap, [{"kind":"claim", "ref":"total"}, text_part("新增门槛 99999。", "conditional_action", ["total"])]), reviewer)
+    assert "120" in answer["body"] and "条件性建议未核" in answer["body"]
+    assert all(value not in answer["body"] for value in ["99999", "88888", "internal-key", "internal-selector"])
+    assert "88888" in outcomes(answer)["r1"]["reason"]
+    assert any("99999" in t["reason"] for t in answer["render_trace"])
+
+
+def test_one_audit_shares_exact_full_original_request_for_related_parts():
+    calls = []
+    original = "收入和利润同时增长才增加预算；基准成本保持不变；未来窗口未观测。"
+    req = dict(requirement(claims=["total"], purposes=["conditional_action"]), source_request=original)
+    def reviewer(request):
+        calls.append(request)
+        return accept_all(request)
+    snap = snapshot(claims=[claim()], requirements=[req])
+    answer = publish(snap, draft(snap, [text_part("两项同时达标后再评估。", "conditional_action", ["total"])]), reviewer)
+    assert len(calls) == 1 and calls[0]["shared_user_requests"] == [{"source_turn":req["source_turn"], "text":original}]
+    assert "两项同时达标" in answer["body"]
+
+
+def test_gap_without_reviewed_next_action_remains_explicitly_unassessed():
+    snap=snapshot(requirements=[dict(requirement(gap={"status":"evidence_insufficient","reason":"internal detail"}),
+        gap_context={"code":"dataset_missing","datasets":["missing_orders"]})])
+    answer=publish(snap,draft(snap,[]))
+    assert "下一步建议未核" in answer["body"] and "缺少数据集" in answer["body"]
+    assert "internal detail" not in answer["body"]
+
+
+@pytest.mark.parametrize("different",["same","origin","evidence","rejected"])
+def test_equal_reviewed_text_keeps_each_owner_without_repeating_one_origin(different):
+    a=requirement("r1",claims=["total"],purposes=["interpretation"])
+    b=requirement("r2",claims=["other"] if different=="evidence" else ["total"],purposes=["interpretation"])
+    if different=="origin":b["source_turn"]="user-2"
+    snap=snapshot(requirements=[a,b],claims=[claim(),claim("other",30)] if different=="evidence" else [claim()])
+    proposal={"schema":"answer_bindings.v2","snapshot_digest":snap.digest,"sections":[{"requirement_ids":[r["id"]],"parts":[text_part("同一范围的已审解释。",refs=r["claim_ids"])]} for r in [a,b]]}
+    calls=[]
+    def reviewer(value):
+        calls.append(value);response=accept_all(value)
+        if different=="rejected":response["decisions"][1]["disposition"]="reject"
+        return response
+    answer=publish(snap,json.dumps(proposal,ensure_ascii=False),reviewer)
+    assert len(calls)==1
+    assert answer["body"].count("同一范围的已审解释。")== (2 if different in {"origin","evidence"} else 1)
+    traces=[r for r in answer["render_trace"] if r["kind"]=="text"]
+    assert len(traces)==2 and {tuple(r["requirement_ids"]) for r in traces}=={("r1",),("r2",)}
+    if different=="same":assert traces[0]["start"]==traces[1]["start"] and traces[0]["end"]==traces[1]["end"]
+    if different=="rejected":assert outcomes(answer)["r2"]["status"]!="answered" and traces[1]["start"] is None

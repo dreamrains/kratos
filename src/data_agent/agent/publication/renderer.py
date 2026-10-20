@@ -10,6 +10,36 @@ STATUS_LABELS = {"partial":"部分完成", "not_computed":"未计算", "evidence
                  "needs_confirmation":"需要业务口径确认", "failed":"未完成"}
 
 
+def public_gap_text(requirement, status, missing_purposes, failed_open, *, reviewed_action=False):
+    """Project typed missing work, never turn a reject reason into public prose."""
+    kinds={"measurement":"测量结果","comparison":"对照结果","table":"结果表","chart":"图表",
+           "forecast":"实际预测序列","hypothesis":"假设检验","artifact":"产物","operation":"操作"}
+    quantities={"sum":"合计","mean":"均值","rows":"记录数","calendar_days":"含首尾天数",
+                "difference":"差值","relative_change":"相对变化","value":"值"}
+    details=[]
+    context=requirement.get("gap_context",{})
+    if context:
+        labels={"source_version_changed":"来源版本已变化：","dataset_missing":"当前会话缺少数据集：","source_replacement_pending":"新版来源尚未成功加载核验：","execution_failed":"本次执行未完成，诊断保留在审核记录："}
+        details.append(labels[context["code"]]+", ".join(_cell(n) for n in context["datasets"]))
+    for item in requirement.get("verified_limits",[]):
+        if item["kind"]=="source_unit":
+            label={"unit_mixed":"混合源单位，未执行换汇，金额不可相加比较","unit_missing":"有效度量观测存在缺失或非文本源单位","unit_unverified":"原源单位范围尚未核定"}[item["code"]]
+            details.append(_cell(item["dataset"])+" / "+_cell(item["metric"])+"："+label+("（"+", ".join(_cell(u) for u in item["units"])+"）" if item["units"] else ""))
+        else:
+            details.append(("候选解释："+_cell(item["claim"]) if item["claim"] else "假设 "+_cell(item["hypothesis_id"]))+"；未决；缺少可核当前原测量关系。"+
+                ("原字段角色原件、版本或原权限尚未核定；无法列出具体区分检验。" if not item["roles_current"] else ""))
+    for d in requirement.get("pending_deliveries",[]):
+        scope=" / ".join([*d["datasets"],*d["metrics"],*d["hypothesis_ids"], *([quantities.get(d["quantity"],d["quantity"])] if d["quantity"] else [])])
+        details.append(kinds.get(d["kind"],"必要交付")+("（"+_cell(scope)+"）" if scope else "")+"："+STATUS_LABELS[d["status"]])
+    purposes={"knowledge":"知识说明未核","interpretation":"方法与结果解释未核",
+              "limitation":"限制说明未核","conditional_action":"条件性建议未核"}
+    details.extend(purposes[p] for p in sorted(missing_purposes))
+    if failed_open and not missing_purposes:details.append("部分开放说明未核")
+    if not details:details.append("该需求的必要交付尚未核定")
+    if not reviewed_action and "conditional_action" not in missing_purposes:details.append("下一步建议未核")
+    return requirement["text"]+"："+STATUS_LABELS[status]+"；"+"；".join(details)+"。"
+
+
 def _cell(value):
     """Escape a canonical value for Markdown without changing its precision."""
     text = "未知" if value is None else value if isinstance(value, str) else encode(value)
@@ -282,7 +312,7 @@ def _scope_caption(claim, context):
     return "来源与口径：" + "；".join(_cell(v) for v in details + [time_scope] if v) + ("\n\n" + parameters if parameters else "")
 
 
-def _curve_product_table(claim, context):
+def _curve_product_table(claim, context, *, include_context=True):
     if claim.get("target", {}).get("tool") != "curve_fitting":
         return None
     path = claim["basis_refs"][0]["result_path"]
@@ -295,14 +325,15 @@ def _curve_product_table(claim, context):
     if path == ["points"] and scale in {"fraction", "percentage_points"}:
         value = [{**row, "y": _declared_curve_number(row["y"], scale)} for row in value]
     unit = "单位未知" if claim["unit"] is None else _cell(claim["unit"])
-    return "\n\n".join([title, _structured_tables(value, labels=_CURVE_LABELS, fit_vectors=path == ["fits"]), _scope_caption(claim, context), unit,
-                            "；".join(_cell(v) for v in dict.fromkeys(claim["limitations"]))])
+    pieces=[title, _structured_tables(value, labels=_CURVE_LABELS, fit_vectors=path == ["fits"])]
+    if include_context:pieces += [_scope_caption(claim, context),unit,"；".join(_cell(v) for v in dict.fromkeys(claim["limitations"]))]
+    return "\n\n".join(pieces)
 
 
 def _scalar_group_key(claim, requirement_ids):
     target = claim.get("target", {})
     tool = target.get("tool")
-    if tool not in {"compare_periods", "curve_fitting"} or type(claim["value"]) not in {int, float, type(None)}:
+    if tool not in {"compare_periods", "curve_fitting"} or (tool!="curve_fitting" and type(claim["value"]) not in {int, float, type(None)}):
         return None
     proofs = [{k: v for k, v in basis.items() if k != "result_path"} for basis in claim["basis_refs"]]
     if not proofs:
@@ -389,22 +420,89 @@ class Renderer:
         self._length = 0
         self.trace = []
         self._pending_claims = []
+        self._reviewed_text_spans = {}
+        self._curve_bundles = {}
+        self._curve_spans = {}
+
+    @staticmethod
+    def _curve_identity(claim):
+        target=claim.get("target",{})
+        if target.get("tool")!="curve_fitting":return None
+        proofs=[{k:v for k,v in p.items() if k!="result_path"} for p in claim["basis_refs"]]
+        if len(proofs)!=1:return None
+        scope={k:v for k,v in claim["scope"].items() if k!="time_scope"}
+        return encode([proofs,scope,claim["unit"],target.get("metric"),target.get("parameters"),
+                       {k:target.get(k) for k in ("curve_display","source_unit_proof","source_unit_proofs")}])
+
+    def bind_curve_products(self, claims):
+        """One display for active, already verified products, across section owners."""
+        groups={}
+        for claim in claims:
+            if _curve_product_table(claim,()) is None:continue
+            identity=self._curve_identity(claim)
+            if identity is None:continue
+            key=encode([identity,claim["scope"]["time_scope"]])
+            groups.setdefault(key,[]).append(claim)
+        for claim in claims:
+            if _curve_product_table(claim,()) is not None:continue
+            matches=[]
+            for key,products in groups.items():
+                first=products[0]
+                if self._curve_identity(claim)!=self._curve_identity(first) or claim["scope"]["time_scope"] not in ("",first["scope"]["time_scope"]):continue
+                path=claim["basis_refs"][0]["result_path"]
+                for product in products:
+                    prefix=product["basis_refs"][0]["result_path"]
+                    if len(path)<=len(prefix) or path[:len(prefix)]!=prefix:continue
+                    value=product["value"]
+                    try:
+                        for part in path[len(prefix):]:value=value[part]
+                    except (KeyError,IndexError,TypeError):continue
+                    if encode(value)==encode(claim["value"]):matches.append(key);break
+            if len(matches)==1:groups[matches[0]].append(claim)
+        for key,group in groups.items():
+            for claim in group:self._curve_bundles[claim["id"]]=(key,group)
+
+    def _add_curve_product(self,claim,context,part_id,ref,requirement_ids):
+        key,group=self._curve_bundles[claim["id"]]
+        self._flush_claims()
+        if key not in self._curve_spans:
+            products=[c for c in group if _curve_product_table(c,()) is not None]
+            first=products[0]
+            pieces=[_curve_product_table(c,context,include_context=False) for c in products]
+            limits=list(dict.fromkeys(note for c in group for note in c["limitations"]))
+            pieces += [_scope_caption(first,context),"单位未知" if first["unit"] is None else _cell(first["unit"]),
+                       "；".join(_cell(note) for note in limits)]
+            value="\n\n".join(p for p in pieces if p)
+            start=self._length+(2 if self._pieces else 0);end=start+len(value)
+            self._pieces.append(value);self._length=end
+            self._curve_spans[key]=(start,end,value)
+        start,end,value=self._curve_spans[key]
+        self.trace.append(dict(part_id=part_id,kind="claim",ref=ref,requirement_ids=list(requirement_ids),
+            disposition="accepted",reason="",start=start,end=end,rendered_text=value))
 
     def add(self, value, *, part_id, kind, ref=None, requirement_ids=(), disposition="accepted", reason="",
-            purpose=None, claim_refs=(), semantic_reviewed=False):
+            purpose=None, claim_refs=(), semantic_reviewed=False, source_turns=()):
         self._flush_claims()
         start = end = None
-        if value is not None:
+        identity = (value,tuple(sorted(set(claim_refs))),tuple(sorted(set(source_turns)))) if kind=="text" and semantic_reviewed and source_turns and value is not None else None
+        shared=self._reviewed_text_spans.get(identity) if identity is not None else None
+        if shared is not None:
+            start,end=shared
+        elif value is not None:
             start = self._length + (2 if self._pieces else 0)
             end = start + len(value)
             self._pieces.append(value)
             self._length = end
+            if identity is not None:self._reviewed_text_spans[identity]=(start,end)
         self.trace.append(dict(part_id=part_id,kind=kind,ref=ref,requirement_ids=list(requirement_ids),
             disposition=disposition,reason=reason,start=start,end=end,rendered_text=value))
         if purpose is not None:
             self.trace[-1].update(purpose=purpose, claim_refs=list(claim_refs), semantic_reviewed=semantic_reviewed)
 
     def add_claim(self, claim, *, context=(), part_id, ref, requirement_ids=()):
+        if claim["id"] in self._curve_bundles:
+            self._add_curve_product(claim,context,part_id,ref,requirement_ids)
+            return
         key = _scalar_group_key(claim, requirement_ids)
         if key is None:
             self.add(claim_text(claim, context=context), part_id=part_id, kind="claim", ref=ref, requirement_ids=requirement_ids)
@@ -428,6 +526,20 @@ class Renderer:
             self.add(claim_text(claim, context=context), part_id=pid, kind="claim", ref=ref, requirement_ids=rids)
             return
         first, context = pending[0][:2]
+        if first.get("target",{}).get("tool")=="curve_fitting" and any(isinstance(c["value"],list) for c,*_ in pending):
+            products=[c for c,*_ in pending if c["basis_refs"][0]["result_path"] in (["points"],["fits"],["scenarios"])]
+            prefixes=[c["basis_refs"][0]["result_path"] for c in products]
+            pieces=[_curve_product_table(c,context,include_context=False) for c in products]
+            from copy import deepcopy
+            for claim,*_ in pending:
+                path=claim["basis_refs"][0]["result_path"]
+                if any(path[:len(prefix)]==prefix for prefix in prefixes):continue
+                local=deepcopy(claim);local["limitations"]=[]
+                pieces.append(claim_text(local,context=context))
+            pieces += [_scope_caption(first,context),"单位未知" if first["unit"] is None else _cell(first["unit"]),
+                       "；".join(_cell(v) for v in dict.fromkeys(first["limitations"]))]
+            self._append_claim_group("\n\n".join(p for p in pieces if p),pending)
+            return
         rows = []
         for claim, _, _, _, _ in pending:
             display = claim.get("target", {}).get("curve_display", {})
@@ -439,6 +551,9 @@ class Renderer:
             rows.append([claim["label"], shown])
         value = "\n\n".join([_scope_caption(first, context), _table(["指标", "已核值与单位"], rows),
                                 "；".join(_cell(v) for v in dict.fromkeys(first["limitations"]))])
+        self._append_claim_group(value,pending)
+
+    def _append_claim_group(self,value,pending):
         start = self._length + (2 if self._pieces else 0)
         end = start + len(value)
         self._pieces.append(value)

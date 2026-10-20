@@ -472,8 +472,18 @@ def compact_history(
         "summary_length": len(summary),
     }})
 
+    transcript_raw = transcript_path.read_bytes()
+    prefix_raw = b"".join(transcript_raw.splitlines(keepends=True)[:split_idx])
+    reference = {
+        "filename": transcript_path.name,
+        "sha256": "sha256:" + hashlib.sha256(transcript_raw).hexdigest(),
+        "early_range": {
+            "schema": "canonical_prefix.v1", "stop": split_idx,
+            "sha256": "sha256:" + hashlib.sha256(prefix_raw).hexdigest(),
+        },
+    }
     return [
-        {"role": "user", "canonical_transcript": {"filename":transcript_path.name,"sha256":"sha256:"+hashlib.sha256(transcript_path.read_bytes()).hexdigest()}, "content": (
+        {"role": "user", "canonical_transcript": reference, "content": (
             f"[Context compressed at turn boundary]\n{summary}\n\n"
             "[Instruction: This is a compressed summary of earlier conversation. "
             "Do NOT re-acknowledge or re-summarize this context. "

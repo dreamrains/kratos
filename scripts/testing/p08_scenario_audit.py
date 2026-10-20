@@ -12,6 +12,7 @@ from the approved principles is detectable (``oracle_contract_is_consistent``).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -240,7 +241,7 @@ def _http_turn_outcome_check(run_dir: Path) -> dict | None:
                       o["blocking"], o["dim"], o["principle"])
     expected = {
         (str(scenario), index)
-        for scenario in freeze.get("matrix", [])
+        for scenario in freeze.get("execution_scope",freeze.get("matrix", []))
         for index, _prompt in enumerate(
             (freeze.get("scenario_inputs", {}).get(scenario) or {}).get("prompts", []), 1
         )
@@ -248,6 +249,7 @@ def _http_turn_outcome_check(run_dir: Path) -> dict | None:
     observed: dict[tuple[str, int], list[dict]] = {}
     resumes: list[dict] = []
     malformed = 0
+    last_turn = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -256,11 +258,15 @@ def _http_turn_outcome_check(run_dir: Path) -> dict | None:
         except ValueError:
             malformed += 1
             continue
-        if not isinstance(row, dict) or not isinstance(row.get("turn"), int):
-            if isinstance(row, dict) and row.get("turn") == "resume":
+        if not isinstance(row,dict) or row.get("action") or "terminal" not in row:
+            continue
+        if type(row.get("turn")) is not int:
+            if row.get("turn") == "resume":
+                row.setdefault("parent_turn",last_turn.get((row.get("scenario"),row.get("session_id"))))
                 resumes.append(row)
             continue
         key = (str(row.get("scenario") or ""), row["turn"])
+        last_turn[(row.get("scenario"),row.get("session_id"))]=row["turn"]
         observed.setdefault(key, []).append(row)
     failures = [] if expected else ["freeze has no expected turns"]
     for scenario, index in sorted(expected | set(observed)):
@@ -271,20 +277,23 @@ def _http_turn_outcome_check(run_dir: Path) -> dict | None:
         row = rows[0]
         terminal = str(row.get("terminal") or "")
         durable = row.get("run_state") or {}
-        expected_resume = scenario == "M06" and index == 2 and terminal == "suspended"
+        confirmations=(freeze.get("scenario_inputs",{}).get(scenario) or {}).get("confirmations",{})
+        # Read-only compatibility for original v3 M06 turn2 contracts.
+        authorized = str(index) in confirmations or not confirmations and scenario == "M06" and index == 2
+        expected_resume = authorized and terminal == "suspended"
         if (not row.get("session_id") or terminal not in ({"completed", "suspended"} if expected_resume else {"completed"})
                 or durable.get("status") != terminal
                 or str(durable.get("session_id") or "") != row["session_id"]):
             failures.append(f"{scenario}/{index}: terminal={terminal or 'missing'}, durable={durable.get('status')}")
         if expected_resume:
             matched = [item for item in resumes if item.get("scenario") == scenario
-                       and item.get("session_id") == row["session_id"]]
+                       and item.get("session_id") == row["session_id"] and item.get("parent_turn")==index]
             if (len(matched) != 1 or matched[0].get("terminal") != "completed"
                     or (matched[0].get("run_state") or {}).get("status") != "completed"):
                 failures.append(f"{scenario}/{index}: cost-scope resume not completed")
-    if resumes and not any(scenario == "M06" and index == 2
-                           and rows[0].get("terminal") == "suspended"
-                           for (scenario, index), rows in observed.items() if len(rows) == 1):
+    if any(not any(item.get("scenario")==scenario and item.get("parent_turn")==index
+                   and len(rows)==1 and rows[0].get("terminal")=="suspended"
+                   for (scenario,index),rows in observed.items()) for item in resumes):
         failures.append("unexpected_resume")
     if malformed:
         failures.append(f"malformed_http_rows={malformed}")
@@ -601,6 +610,52 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
 # run-level checks
 # ---------------------------------------------------------------------------
 
+def _browser_assessments(run_dir: Path, freeze: dict) -> dict:
+    """Bind operator observations; absence is never a visual pass."""
+    protocol=freeze.get("operator_protocol",{})
+    if protocol.get("visual_checkpoint")!="closed_ledger_stdin_v2":
+        return {}  # Historical HTTP batches retain their original identity.
+    path=run_dir/"http-matrix.jsonl"
+    rows=[]
+    if path.exists():
+        for line in path.read_text("utf-8").splitlines():
+            try: row=json.loads(line)
+            except ValueError:continue
+            if isinstance(row,dict):rows.append(row)
+    assessments={}
+    for scenario in freeze.get("matrix",[]):
+        spec=freeze["scenario_inputs"][scenario]
+        checkpoints=["scenario_end"]+[f"confirmation:{n}" for n in spec.get("confirmations",{})]
+        sids={r.get("session_id") for r in rows if r.get("scenario")==scenario and "terminal" in r and not r.get("action")}
+        for checkpoint in checkpoints:
+            key=f"browser:{scenario}:{checkpoint}"
+            result={"status":"unassessed","reason":"required browser receipt missing"}
+            matches=[r for r in rows if r.get("action")=="visual_checkpoint_result" and r.get("scenario")==scenario and r.get("checkpoint")==checkpoint]
+            if matches:
+                try:
+                    if len(matches)!=1 or len(sids)!=1:raise ValueError("ambiguous browser/session identity")
+                    row=matches[0]
+                    file=(run_dir/row["evidence_path"]).resolve()
+                    if not file.is_relative_to(run_dir.resolve()):raise ValueError("browser evidence path escaped")
+                    raw=file.read_bytes()
+                    if "sha256:"+hashlib.sha256(raw).hexdigest()!=row["evidence_sha256"]:raise ValueError("browser receipt SHA mismatch")
+                    receipt=json.loads(raw)
+                    if row.get("session_id") not in sids or any(receipt.get(k)!=row[k] for k in ("scenario","session_id","checkpoint")):
+                        raise ValueError("browser receipt identity mismatch")
+                    status=receipt["status"]
+                    if status!=row["visual_status"] or status not in {"passed","failed","unassessed"}:raise ValueError("invalid browser status")
+                    expected=list(protocol.get("visual_checks",{}).get("confirmation" if checkpoint.startswith("confirmation:") else "scenario_end",[]))
+                    if checkpoint=="scenario_end" and "export_markdown" in spec.get("actions",[]):expected.append("exports")
+                    checks=receipt.get("checks",{})
+                    if status=="passed" and (not expected or any(checks.get(k)!="passed" for k in expected) or not receipt.get("evidence")):
+                        raise ValueError("visual pass lacks frozen checks or actual evidence")
+                    result={"status":status,"evidence_path":row["evidence_path"],"checks":checks}
+                except (ValueError,KeyError,TypeError,OSError) as exc:
+                    result={"status":"failed","reason":str(exc)}
+            assessments[key]=result
+    return assessments
+
+
 def audit_run_dir(run_dir: Path) -> dict:
     run_checks: list[dict] = []
 
@@ -613,6 +668,7 @@ def audit_run_dir(run_dir: Path) -> dict:
     started = dispatched = failed = 0
     max_duration = 0.0
     pairs: dict[int, dict] = {}
+    malformed_ledger=False
     if ledger_path.exists():
         for line in ledger_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -621,8 +677,14 @@ def audit_run_dir(run_dir: Path) -> dict:
             try:
                 entry = json.loads(line)
             except ValueError:
-                continue
-            pairs.setdefault(int(entry.get("call_number") or 0), {})[str(entry.get("event"))] = float(entry.get("at") or 0)
+                malformed_ledger=True;continue
+            number=entry.get("call_number")
+            if type(number) is not int or number<=0:
+                malformed_ledger=True;continue
+            event=str(entry.get("event"))
+            events=pairs.setdefault(number,{})
+            if event in events:malformed_ledger=True
+            events[event]=float(entry.get("at") or 0)
             if entry.get("event") == "started":
                 started += 1
             elif entry.get("event") == "dispatched":
@@ -630,9 +692,16 @@ def audit_run_dir(run_dir: Path) -> dict:
             elif entry.get("event") == "failed":
                 failed += 1
         for events in pairs.values():
-            if "started" in events and "dispatched" in events:
-                max_duration = max(max_duration, events["dispatched"] - events["started"])
-    ledger_ok = (started == dispatched + failed) and started > 0
+            settled=[events[e] for e in ("completed","stream_exhausted") if e in events]
+            if "started" in events:
+                end=settled[0] if len(settled)==1 else events.get("dispatched",events["started"])
+                max_duration=max(max_duration,end-events["started"])
+    ledger_ok = (not malformed_ledger and started>0 and started==dispatched and failed==0
+        and sorted(pairs)==list(range(1,started+1)) and all(
+            "started" in e and "dispatched" in e and sum(k in e for k in ("completed","stream_exhausted"))==1
+            and not set(e)&{"failed","stream_failed","stream_closed","gate_fault","denied"}
+            and e["dispatched"]>=e["started"] and max(e.get("completed",0),e.get("stream_exhausted",0))>=e["dispatched"]
+            for e in pairs.values()))
     run_checks.append(_check(
         ledger_ok, o["id"],
         f"started={started} dispatched={dispatched} failed={failed}",
@@ -648,17 +717,36 @@ def audit_run_dir(run_dir: Path) -> dict:
     ))
 
     sessions: dict[str, dict] = {}
+    frozen=_read_json(run_dir / "freeze.json") or {}
+    authoritative={}
+    mapping_errors=[]
+    http_path=run_dir / "http-matrix.jsonl"
+    if http_path.exists():
+        for line in http_path.read_text("utf-8").splitlines():
+            try: row=json.loads(line)
+            except ValueError:continue  # The turn check owns malformed records.
+            if not isinstance(row,dict) or row.get("action") or "terminal" not in row:continue
+            sid,scenario=row.get("session_id"),row.get("scenario")
+            if not sid or scenario not in frozen.get("execution_scope",frozen.get("matrix",[])):
+                mapping_errors.append("unfrozen_session_mapping");continue
+            if sid in authoritative and authoritative[sid]!=scenario:
+                mapping_errors.append("cross_scenario_session_reuse");continue
+            authoritative[sid]=scenario
+    if mapping_errors:
+        meta=_oracle_meta("matrix_turn_outcomes")
+        run_checks.append(_check(False,meta["id"],";".join(mapping_errors),meta["blocking"],meta["dim"],meta["principle"]))
     sessions_root = run_dir / "sessions"
     if sessions_root.exists():
         for sdir in sorted(sessions_root.iterdir()):
             if not (sdir / "run_state.json").exists():
                 continue
-            scenario = _detect_scenario_from(sdir)
+            scenario = authoritative.get(sdir.name) if http_path.exists() else _detect_scenario_from(sdir)
             if scenario is None:
                 continue
             sessions[sdir.name] = audit_session(sdir, scenario=scenario)
 
-    any_blocking = any(
+    browser_assessments=_browser_assessments(run_dir,frozen)
+    any_blocking = any(a["status"]=="failed" for a in browser_assessments.values()) or any(
         (not c["passed"]) and c["blocking"]
         for c in run_checks
     ) or any(
@@ -666,7 +754,7 @@ def audit_run_dir(run_dir: Path) -> dict:
         for verdict in sessions.values()
         for c in verdict["checks"]
     )
-    required_unassessed = sorted({
+    required_unassessed = sorted({k for k,v in browser_assessments.items() if v["status"]=="unassessed"} | {
         assessment_id
         for session in sessions.values()
         for assessment_id, assessment in session.get("required_assessments", {}).items()
@@ -676,6 +764,7 @@ def audit_run_dir(run_dir: Path) -> dict:
         "run_dir": str(run_dir),
         "run_checks": run_checks,
         "sessions": sessions,
+        "browser_assessments": browser_assessments,
         "required_unassessed": required_unassessed,
         "verdict": "failed" if any_blocking else ("incomplete" if required_unassessed else "passed"),
     }

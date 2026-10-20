@@ -2246,6 +2246,7 @@ function chatApp() {
                     art.type === 'chart' && art.path === path &&
                     this._artifactBelongsToSession(art, this.currentSessionId));
                 if (matches.length !== 1) return link;
+                if (paths.has(path)) return link;
                 paths.add(path);
                 return this._chartArtifactHtml(matches[0]);
             });
@@ -2254,7 +2255,9 @@ function chatApp() {
 
         _replaceChartReferences(text, turn) {
             if (!turn || !text) return text;
-            text = this._renderAcceptedChartLinks(text, turn).html;
+            const accepted = this._renderAcceptedChartLinks(text, turn);
+            text = accepted.html;
+            const shown = new Set(accepted.paths);
             return text.replace(/\[\[chart:([^\]\n]*)\]\]/g, (match, rawRef) => {
                 const result = this._findChartArtifact(turn, rawRef.trim());
                 if (result.status === 'ambiguous') {
@@ -2263,6 +2266,10 @@ function chatApp() {
                 if (result.status !== 'found') {
                     return `<div class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 not-prose">Chart reference not found: ${this._escapeHtml(rawRef.trim())}</div>`;
                 }
+                if (shown.has(result.artifact.path)) {
+                    return `<a href="${this._escapeHtml(this.artifactUrl(result.artifact.path))}" target="_blank" rel="noopener">查看已展示图表：${this._escapeHtml(result.artifact.description || 'chart')}</a>`;
+                }
+                shown.add(result.artifact.path);
                 return this._chartArtifactHtml(result.artifact);
             });
         },

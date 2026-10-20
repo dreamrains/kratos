@@ -115,7 +115,35 @@ class HostSnapshot:
             if len(items) > limit:
                 raise ContractError("manifest_size", "宿主清单超过上限。")
         for req in requirements:
-            fields(req, {"id","text","source_turn","claim_ids","open_purposes","artifact_ids","gap","withdrawn"}, {"context_claim_ids","effect_ids"})
+            fields(req, {"id","text","source_turn","claim_ids","open_purposes","artifact_ids","gap","withdrawn"}, {"context_claim_ids","effect_ids","source_request","pending_deliveries","gap_context","verified_limits"})
+            if "verified_limits" in req:
+                if not isinstance(req["verified_limits"],list) or len(req["verified_limits"])>128:raise ContractError("public_gap","已核范围清单无效。")
+                for item in req["verified_limits"]:
+                    if item.get("kind")=="source_unit":
+                        fields(item,{"kind","code","dataset","metric","units"})
+                        if item["code"] not in {"unit_unverified","unit_missing","unit_mixed"}:raise ContractError("public_gap","源单位状态未知。")
+                        text(item["dataset"]);text(item["metric"]);refs(item["units"])
+                    elif item.get("kind")=="hypothesis_pending":
+                        fields(item,{"kind","hypothesis_id","dataset","claim","source_current","roles_current","candidate_action"})
+                        text(item["hypothesis_id"]);text(item["dataset"])
+                        if any(type(item[k]) is not bool for k in ("source_current","roles_current")) or not isinstance(item["claim"],str) or not isinstance(item["candidate_action"],str):raise ContractError("public_gap","假设范围无效。")
+                        if not item["source_current"] and item["claim"] or not item["roles_current"] and item["candidate_action"]:raise ContractError("public_gap","未核来源不能公开候选内容或建议。")
+                    else:raise ContractError("public_gap","已核范围类型未知。")
+            if "gap_context" in req:
+                fields(req["gap_context"],{"code","datasets"})
+                if req["gap_context"]["code"] not in {"source_version_changed","dataset_missing","source_replacement_pending","execution_failed"}:raise ContractError("public_gap","缺口上下文类型未知。")
+                refs(req["gap_context"]["datasets"])
+            if "source_request" in req: text(req["source_request"],limit=128_000)
+            if "pending_deliveries" in req:
+                pending=req["pending_deliveries"]
+                if not isinstance(pending,list) or len(pending)>128: raise ContractError("public_gap","缺口清单无效。")
+                for delivery in pending:
+                    fields(delivery,{"id","kind","datasets","metrics","quantity","status","hypothesis_ids"})
+                    from data_agent.agent.analysis_plan_contracts import DELIVERY_KINDS
+                    if delivery["kind"] not in DELIVERY_KINDS or delivery["status"] not in GAP_STATUSES: raise ContractError("public_gap","缺口类型未知。")
+                    text(delivery["id"],limit=128);refs(delivery["datasets"]);refs(delivery["metrics"])
+                    refs(delivery["hypothesis_ids"])
+                    if delivery["quantity"] is not None:text(delivery["quantity"],limit=128)
             if "effect_ids" in req:
                 refs(req["effect_ids"])
                 if not set(req["effect_ids"]).issubset({e["id"] for e in effects}):raise ContractError("effect_ref","操作效果引用不属于当前宿主清单。")

@@ -39,6 +39,25 @@ def _save_chart(fig: go.Figure, title: str = "chart", metadata: dict | None = No
         fig.add_annotation(text="探索图：未绑定正式证据" if exploratory else "计算绑定图：结论验证状态见工作台",
                            xref="paper", yref="paper", x=0, y=1.12, showarrow=False,
                            font={"size": 11, "color": "#92400e"})
+        # Fixed pixel spacing above the plotting area survives responsive height
+        # changes; paper fractions previously collided with the chart title.
+        header_notes=[a for a in fig.layout.annotations if a.xref=="paper" and a.yref=="paper" and a.y is not None and a.y>=1]
+        offset=10
+        for note in reversed(header_notes):
+            lines=[]
+            for line in re.split(r"<br\s*/?>",note.text or ""):
+                tokens=re.findall(r"&(?:#\d+|#x[0-9a-fA-F]+|\w+);|<[^>]*>|.",line)
+                wrapped=[];width=0
+                for token in tokens:
+                    if width>=54 and not token.startswith('<'):wrapped.append('<br>');width=0
+                    wrapped.append(token)
+                    if not token.startswith('<'):width+=1
+                lines.append(''.join(wrapped))
+            text='<br>'.join(lines)
+            note.update(text=text,x=0,xanchor='left',y=1,yanchor='bottom',yshift=offset)
+            offset+=15*(text.count('<br>')+1)+10
+        fig.update_layout(margin={'t':max(fig.layout.margin.t or 100,offset+45)},
+                          title={'y':1,'yanchor':'top','pad':{'t':10}})
     session_id = current_session_id()
     cfg = get_config()
     root = (cfg.sessions_resolved / session_id).resolve() if session_id else cfg.project_resolved.resolve()

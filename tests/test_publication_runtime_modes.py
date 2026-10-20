@@ -270,7 +270,7 @@ def test_original_m04_rules_preserve_each_unmeasured_competitor_and_current_dire
     missing=[h["id"] for h in hypothesis_set["hypotheses"][1:]]
     assert all(hid in req["gap"]["reason"] for hid in missing)
     body,error=publish(loop,encode({"schema":"answer_bindings.v2","snapshot_digest":snap.digest,"sections":[]}))
-    assert error is None and all(hid in body for hid in missing)
+    assert error is None and all(hid in body.replace("\\_","_") for hid in missing)
     assert loop._accepted_answer["requirement_outcomes"][-1]["status"]=="partial"
     assert all(hid in loop._accepted_answer["requirement_outcomes"][-1]["reason"] for hid in missing)
     assert len(loop.context.analysis_state.hypothesis_sets)==1

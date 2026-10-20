@@ -626,7 +626,9 @@ class ScriptedClient:
         }.get(key, "")
         if scenario=="M05":
             text=["事实摘要：先列当前订单的原始记录数与amount总额，再说明证据边界。","业务负责人：这些原值用于核对当前业务规模；行动前先确认成本和效果，不据此扩大投放。","分析师：计算方法为记录计数与amount原列求和；来源、日期范围和回执均随原测量保留。","管理者：当前证据只支持规模描述；决策条件是补齐成本与对照证据，条件不足时保留判断。","大白话：这是上传这批订单的数量和金额加总；这点信息还不能说明活动有没有用。","技术表达：使用describe_dataset原始计数及列求和，保留精确来源版本、观测日期和必要限制。"][number-1]+"金额单位未知，仅描述当前上传记录，不作总体或因果推断。"
-        return self._draft(messages,system,text)
+        guidance = ({r["text"]:{"conditional_action":text} for r in host["requirements"] if r["gap"]}
+                    if key==("M06",1) else None)
+        return self._draft(messages,system,text,gap_guidance=guidance)
 
     def chat(self, messages, tools=None, system=None):  # auxiliary intent/playbook calls
         self.trace.append("auxiliary_call", messages=len(messages))

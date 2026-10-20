@@ -1,3 +1,4 @@
+from tests.support.publication_runtime import audit_reasons
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: extensions. Shared fixtures have one owner."""
 from copy import deepcopy
@@ -439,7 +440,8 @@ def test_mcp_normal_app_config_effect_refusal_failure_save_refresh_and_md(engine
  else:assert saved['messages'][-1]['content']==answer['body']==ends[0]['reply_content']
  if case in {'failed_write','missing'}:
   assert answer['requirement_outcomes'][0]['status']=='failed'
-  assert ('MCP caught replacement after_replace' if case=='failed_write' else 'MCP server not found') in answer['body']
+  assert ('MCP caught replacement after_replace' if case=='failed_write' else 'MCP server not found') in audit_reasons(answer)
+  assert 'MCP server not found' not in answer['body'] and 'MCP caught replacement after_replace' not in answer['body']
   assert not any(r['tool_name']==action for r in loop.context.analysis_state.tool_receipts)
  if case=='failed_write':assert fired
  assert any(m.get('answer_ref')==refs[0] and m['content']==answer['body'] for m in refreshed['messages'])
@@ -784,7 +786,7 @@ def test_conv_export_normal_standalone_actual_file(engine,tmp_path,monkeypatch,f
  saved=load_session(sid);refs=[m['answer_ref'] for m in saved['messages'] if m.get('answer_ref')];answer=read_answer(sid,refs[-1]) if refs else None;files=[{'path':str(p),'content':p.read_text(encoding='utf-8') if p.suffix!='.pdf' else None,'sha256':__import__('hashlib').sha256(p.read_bytes()).hexdigest()} for p in (cfg.sessions_resolved/sid/'reports').glob('*')]
  _conv_capture('normal_'+case,{'warmup_sse':first_raw,'response_status':response.status_code,'response_text':response.get_data(as_text=True),'answer':answer,'events':events,'saved':saved,'refreshed':refresh,'files':files,'download_hex':download_bytes.hex(),'download_status':download_status,'model_calls':model.calls,'session_dir':str(cfg.sessions_resolved/sid),'provider_calls':0})
  if case=='storage_failed':
-  assert not files and result['error_type']=='conversation_export_failed' and answer['requirement_outcomes'][0]['status']=='failed' and 'injected export storage failure' in answer['body'];return
+  assert not files and result['error_type']=='conversation_export_failed' and answer['requirement_outcomes'][0]['status']=='failed' and 'injected export storage failure' in audit_reasons(answer) and 'injected export storage failure' not in answer['body'];return
  if case.startswith('blocked_'):
   assert not files and any(e=='turn_end' and d['status']=='failed' and 'operation_plan_required' in d['execution_notice'] for e,d in events)
   assert not any(r['tool_name']=='export_conversation' for r in manager.get(sid).context.analysis_state.tool_receipts);return

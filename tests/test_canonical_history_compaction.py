@@ -325,3 +325,85 @@ def test_long_complete_analysis_then_short_followup_is_actually_compacted(tmp_pa
     assert [json.loads(line) for line in archive.read_text("utf-8").splitlines()] == messages
     meta = json.loads(archive.with_suffix(".meta.json").read_text("utf-8"))
     assert meta["split_index"] == 27 and meta["recent_message_count"] == 2
+
+
+@pytest.mark.parametrize("changed_field", ["reply_id", "tool_preview"])
+def test_repeated_compaction_preserves_each_original_turn_once(tmp_path, monkeypatch, changed_field):
+    """Retained messages may change without becoming another original turn."""
+    from copy import deepcopy
+    from data_agent.session.public_messages import public_messages
+
+    _use_session_root(monkeypatch, tmp_path)
+    client = MagicMock()
+    client.chat.return_value = SimpleNamespace(text="read_data executed: 12 observations")
+    state = CompactState()
+
+    def pair(value):
+        # Reuse across closed blocks is legal; it must not be global-deduped.
+        return [
+            {"role": "assistant", "content": "", "reply_id": "before",
+             "tool_calls": [{"id": "reusable", "type": "function",
+                             "function": {"name": "read_data", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "reusable", "content": value},
+        ]
+
+    messages = [{"role": "user", "request_id": "request_first", "content": "same original question"}]
+    for i in range(5):
+        messages.extend(pair(f"first result {i}"))
+    messages.append({"role": "assistant", "content": "first accepted original", "answer_id": "answer_first"})
+    messages.append({"role": "user", "request_id": "request_second", "content": "same original question"})
+    for i in range(5):
+        messages.extend(pair(f"second result {i}"))
+    for generation in range(3):
+        messages = compact_history("repeated", client, messages, state, token_threshold=0)
+        for message in messages[2:]:
+            if changed_field == "reply_id" and message.get("role") == "assistant":
+                message["reply_id"] = f"after_{generation}"
+            elif changed_field == "tool_preview" and message.get("role") == "tool":
+                message["content"] = f"[Compacted: result_{generation}.txt]"
+        messages.extend(pair(f"new result {generation}"))
+    messages.append({"role": "assistant", "content": "second accepted original", "answer_id": "answer_second"})
+    before = deepcopy(messages)
+
+    public = public_messages(messages, "repeated")
+
+    assert messages == before  # Expansion is read-only.
+    assert [m["request_id"] for m in public if m.get("role") == "user"] == ["request_first", "request_second"]
+    assert [m["answer_id"] for m in public if m.get("answer_id")] == ["answer_first", "answer_second"]
+    assert [m["content"] for m in public if m.get("answer_id")] == ["first accepted original", "second accepted original"]
+    assert len([m for m in public if m.get("role") == "tool"]) == 13
+
+
+@pytest.mark.parametrize("fault", [None, "legacy", "range", "prefix_sha", "unknown", "legacy_unknown", "cycle"])
+def test_archive_prefix_requires_verified_codec_and_complete_range(tmp_path, monkeypatch, fault):
+    from copy import deepcopy
+    from data_agent.session.public_messages import public_messages
+
+    sessions = _use_session_root(monkeypatch, tmp_path)
+    original = _m03_single_turn_shape() + [
+        {"role": "user", "content": "followup", "request_id": "last"},
+        {"role": "assistant", "content": "last answer"},
+    ]
+    client = MagicMock()
+    client.chat.return_value = SimpleNamespace(text="read_data executed")
+    compacted = compact_history("prefix", client, original, CompactState())
+    ref = compacted[0]["canonical_transcript"]
+    archive = sessions / "prefix" / "transcripts" / ref["filename"]
+    before = archive.read_bytes()
+    if fault in {"legacy", "legacy_unknown"}:
+        ref.pop("early_range")
+        # An unsigned sidecar cannot select a different early range.
+        archive.with_suffix(".meta.json").write_text('{"split_index":1}', encoding="utf-8")
+        if fault == "legacy_unknown": compacted[0]["content"] = "unknown codec"
+    if fault == "range": ref["early_range"]["stop"] = True
+    if fault == "prefix_sha": ref["early_range"]["sha256"] = "sha256:" + "0" * 64
+    if fault == "unknown": ref["early_range"]["schema"] = "unknown"
+    if fault == "cycle":
+        monkeypatch.setattr(history, "read_canonical_prefix", lambda *a: [deepcopy(compacted[0])])
+    public = public_messages(compacted, "prefix")
+    assert archive.read_bytes() == before
+    if fault in {None, "legacy"}:
+        assert [m["content"] for m in public] == [m["content"] for m in original]
+    else:
+        assert any("历史归档不可核" in m.get("content", "") for m in public)
+    assert [m.get("request_id") for m in public if m.get("request_id")] == ["last"]

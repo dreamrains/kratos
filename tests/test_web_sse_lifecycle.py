@@ -506,6 +506,10 @@ function acceptedHostChartLinksRenderAtTheirExactBodyPosition() {
   assert(rendered.indexOf('<iframe') < rendered.indexOf('After'));
   assert(rendered.includes('title="原图"') && rendered.includes('Open chart in a new tab'));
   assert.strictEqual(app.supplementalArtifacts(turn).length, 0);
+  const repeated = body + `\n[[chart:原图_abc123.html]]\n[原图](/api/files/${encodeURI(own.path)})`;
+  assert.strictEqual((app._replaceChartReferences(repeated, turn).match(/<iframe/g) || []).length, 1);
+  assert(app._replaceChartReferences(repeated, turn).includes('查看已展示图表'));
+
   for (const href of [
     '/api/files/sessions/session-a/charts/原图_wronghash.html',
     '/api/files/' + encodeURI(foreign.path),

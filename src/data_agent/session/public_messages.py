@@ -60,7 +60,7 @@ def assign_reply_ids(messages: list[dict]) -> None:
 
 def _expanded_public_history(messages: list[dict], session_id: str, visited=None) -> list[dict]:
     """Restore display history, never use the generated context summary as a reply."""
-    from data_agent.session.history import read_canonical_transcript
+    from data_agent.session.history import read_canonical_prefix
     visited = set() if visited is None else visited
     for index, message in enumerate(messages):
         reference = message.get("canonical_transcript")
@@ -71,7 +71,7 @@ def _expanded_public_history(messages: list[dict], session_id: str, visited=None
             if identity in visited or len(visited) >= 32:
                 raise ValueError("Canonical transcript cycle or budget exceeded")
             visited.add(identity)
-            _, archived = read_canonical_transcript(session_id, reference)
+            archived = read_canonical_prefix(session_id, reference, message)
             inherited = message.get("inherited_from")
             if inherited:
                 archived = [dict(item) for item in archived]
@@ -83,11 +83,7 @@ def _expanded_public_history(messages: list[dict], session_id: str, visited=None
                             item.pop(key, None)
             start = index + 2 if index + 1 < len(messages) and _is_compaction_ack(messages, index + 1) else index + 1
             recent = messages[start:]
-            # The archived input includes the retained recent turn. Match the
-            # exact suffix before joining, so each original reply appears once.
-            overlap = max((n for n in range(1, min(len(archived), len(recent)) + 1)
-                           if archived[-n:] == recent[:n]), default=0)
-            return messages[:index] + _expanded_public_history(archived, session_id, visited) + _expanded_public_history(recent[overlap:], session_id, visited)
+            return messages[:index] + _expanded_public_history(archived, session_id, visited) + _expanded_public_history(recent, session_id, visited)
         except (ValueError, OSError, KeyError, TypeError, UnicodeError):
             start = index + 2 if index + 1 < len(messages) and _is_compaction_ack(messages, index + 1) else index + 1
             return messages[:index] + [{"role": "assistant", "content": "历史归档不可核，原答案暂不可展示。"}] + messages[start:]

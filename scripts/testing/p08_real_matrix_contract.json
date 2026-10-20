@@ -11,8 +11,10 @@
     "path": "docs/superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md"
   },
   "operator_protocol": {
-    "control_route": "local_http_api",
-    "ui_evidence": "upload picker, visual answer and browser refresh unassessed",
+    "control_route": "combined_http_api_browser",
+    "visual_checkpoint": "closed_ledger_stdin_v2",
+    "visual_checks": {"scenario_end": ["answer", "workbench", "refresh"], "confirmation": ["confirmation"]},
+    "ui_evidence": "HTTP owns prompts and frozen confirmation submissions. Browser inspects each confirmation before submission, and the same session's answer, workbench, refresh and required exports at scenario end. Each checkpoint echoes scenario/session/checkpoint and binds a JSON receipt SHA with named checks and actual visual evidence. Missing/unassessed visual checks cannot sign S4/S5. Upload picker unassessed unless separately observed. Pure read-only browser-control failure remains unassessed; an unknown send or action stops the batch.",
     "service_port": null,
     "scenario_order": [
       "M01",
@@ -24,7 +26,7 @@
     ],
     "session_policy": "fresh isolated session per scenario",
     "upload_policy": "POST each frozen file to /api/upload, verify filename and SHA256, and pass the returned ticket to /api/chat; staged uploads stay in the same scenario session",
-    "failure_policy": "record ordinary scenario failures and continue; stop only for global service unavailability, session/data isolation failure, event integrity failure, evidence escalation, or accounting failure",
+    "failure_policy": "semantic/content failure remains a failed scenario; owned projection/export mismatch with intact originals and proven isolation stops only that dependent session. Tool guard or unfrozen/ambiguous confirmation also stops that session. Continue an independent fresh scenario only after unique durable terminal and closed Provider ledger. SHA/path/permission/cross-session/version/receipt conflict, SSE/inflight uncertainty, Provider/ledger/cap/frozen identity, whole-service/storage failure or unexpected exception stops the whole batch. Preserve raw API responses before validation. No retry/fallback/resume.",
     "mutation_policy": "no code, prompt, fixture, oracle, model, endpoint, budget, or ledger changes during the batch; no partial reruns",
     "confirmation_action": "M06 turn2: frozen free-text business choice only when original ask_user_question allows it; turns3/5: exact metric_scope_formula.v1 option JSON matching frozen current cost-column set (order irrelevant; no repeats), never label/prose guessing"
   },

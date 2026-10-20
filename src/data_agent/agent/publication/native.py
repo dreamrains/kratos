@@ -721,6 +721,8 @@ def resolve_native_claims(*,session_id,receipt_id,result_paths=()):
                             raise ContractError("native_display","比率期值显示与原测量不一致。")
                         add(path+["exact_aggregates",key],exact[key],label+"："+title,None,scope)
                         facts[-1]["target"].update(metric=metric,statistic="ratio_of_sums",completion_gap=gap)
+                        facts[-1]["limitations"].append("窗口比率的分母为零或原列合计缺失："+", ".join(unknown)+"；差值与相对变化未知。")
+                        facts[-1]["limitations"].append("窗口比率 = SUM("+aggregation["numerator"]+") / SUM("+aggregation["denominator"]+")；不是逐行比率之和")
                     continue
             elif aggregation.get("operator")!="sum":
                 raise ContractError("native_aggregation","未知聚合算术。")
@@ -1085,6 +1087,12 @@ def resolve_native_claims(*,session_id,receipt_id,result_paths=()):
                        for d in declarations):
                     claim["target"]["curve_display"]={"value_scale":args["value_scale"],"basis":"plan_declaration","source_unit_verified":unit is not None}
                     if unit is None: claim["limitations"].append("按本次计划声明的呈现口径显示；原值保留，源单位未独立核定。")
+    # Successful native products own these closed data/method coverage limits.
+    # Arbitrary requirement failures and audit rejection prose are not facts.
+    for claim in facts:
+        gap = claim.get("target", {}).get("completion_gap")
+        if gap and gap["reason"] not in claim["limitations"]:
+            claim["limitations"].append(gap["reason"])
     from .source_units import apply_source_units
     return apply_source_units(context,receipt,result,facts)
 
@@ -1736,7 +1744,10 @@ def resolve_hypothesis_claims(*,session_id,hypothesis_set,evidence_records):
         if not current_roles and item.get("distinguishing_test",{}).get("kind"):
             next_step="原字段角色原件、版本或原权限尚未核定；无法列出具体区分检验。"
         if item["status"] not in {"supported","refuted","contested"} or not relations:
-            gaps.append({"hypothesis_id":item["id"],"dataset":hypothesis_set["dataset"],"plan_id":hypothesis_set["plan_id"],"status":"evidence_insufficient","reason":label+"；"+_STATUS_LABELS.get(item["status"],item["status"])+("；"+next_step if next_step else "")+"；"+("缺少可核当前原测量关系。" if current_content else "原假设内容与当前对象、版本及原权限尚未核定；缺少可核当前原测量关系。")})
+            gaps.append({"hypothesis_id":item["id"],"dataset":hypothesis_set["dataset"],"plan_id":hypothesis_set["plan_id"],"status":"evidence_insufficient","reason":label+"；"+_STATUS_LABELS.get(item["status"],item["status"])+("；"+next_step if next_step else "")+"；"+("缺少可核当前原测量关系。" if current_content else "原假设内容与当前对象、版本及原权限尚未核定；缺少可核当前原测量关系。"),
+                "public_context":{"kind":"hypothesis_pending","hypothesis_id":item["id"],"dataset":hypothesis_set["dataset"],
+                    "claim":original_text,"source_current":current_content,"roles_current":current_roles,
+                    "candidate_action":next_step if current_roles else ""}})
             continue
         proofs=[]
         for relation in relations:

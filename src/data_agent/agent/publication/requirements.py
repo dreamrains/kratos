@@ -205,6 +205,7 @@ def project_requirements(state, snapshot, bindings):
             gap = ({"status":"evidence_insufficient","reason":"该判断尚无对应的当前可核证据。"} if req["semantic_kind"]=="gap"
                    else {"status":"not_computed","reason":"该需求尚无对应的成功计算或宿主交付绑定。"})
         result.append(dict(id=req["id"],text=req["original_text"],source_turn=req["source_message_ref"],
+            source_request=source,
             claim_ids=binding.get("claim_ids",[]),context_claim_ids=binding.get("context_claim_ids",[]),artifact_ids=binding.get("artifact_ids",[]),effect_ids=binding.get("effect_ids",[]),open_purposes=purposes,
             gap=gap,withdrawn=req["lifecycle_status"] == "withdrawn"))
     return result
@@ -266,7 +267,7 @@ def record_execution_targets(state, history, workspace, payload):
         expected=req.get("source_data_identities",{})
         if any(not workspace._receipt_identity_matches(n,i) for n,i in expected.items()):
             raise ContractError("requirement_version","原业务来源版本已变化。")
-        if any(not isinstance(i,str) or i not in products or products[i].get("source_message_ref") not in {None,req["source_message_ref"]} or not matches(delivery,products[i],expected) for i in ids):
+        if any(not isinstance(i,str) or i not in products or products[i].get("source_message_ref") not in {None,req["source_message_ref"]} or not matches(delivery,products[i],expected,explicit=True) for i in ids):
             raise ContractError("delivery_mismatch","目录产品不符合原交付的来源、指标、窗口或类型。")
         req.setdefault("catalogue_bindings",{})[did]=list(ids)
     before=deepcopy(vars(state))

@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 
-DEFAULT_CALL_CAP = 180
+DEFAULT_CALL_CAP = 800
 P08_OUTPUT_MAX_TOKENS = 65_536
 MATRIX_IDS = ["M01", "M02", "M03", "M04", "M05", "M06"]
 MATRIX_SCHEMA_VERSION = "p08.real_matrix.v3"
@@ -39,8 +39,11 @@ def _frozen_matrix_contract(root: Path, port: int) -> dict[str, Any]:
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     if contract.get("matrix") != MATRIX_IDS or set(contract.get("scenario_inputs", {})) != set(MATRIX_IDS):
         raise SystemExit("P08 matrix contract is incomplete or out of order")
-    if contract.get("operator_protocol", {}).get("control_route") != "local_http_api":
-        raise SystemExit("P08 HTTP batch requires the frozen local HTTP control route")
+    if contract.get("operator_protocol", {}).get("control_route") != "combined_http_api_browser":
+        raise SystemExit("Current S5 batch requires the frozen combined HTTP and browser route")
+    if (contract["operator_protocol"]["control_route"]=="combined_http_api_browser"
+            and contract["operator_protocol"].get("visual_checkpoint")!="closed_ledger_stdin_v2"):
+        raise SystemExit("P08 combined route requires its frozen visual checkpoint protocol")
     plan_path = (root / contract["matrix_plan"]["path"]).resolve()
     contract["matrix_plan"]["sha256"] = _sha256(plan_path)
     contract["contract_file"] = {
@@ -180,7 +183,7 @@ def _source_inventory(root: Path) -> dict[str, str]:
     suffixes = {".py", ".js", ".html", ".css", ".json", ".md", ".yaml", ".yml", ".txt"}
     paths = [p for name in ("src", "scripts", "tests") for p in (root / name).rglob("*")
              if p.is_file() and p.suffix in suffixes and "__pycache__" not in p.parts]
-    paths += [root / name for name in ("AGENTS.md", "pyproject.toml", "uv.lock") if (root / name).is_file()]
+    paths += [root / name for name in ("AGENTS.md", "docs/testing/acceptance-control-routes.md", "pyproject.toml", "uv.lock") if (root / name).is_file()]
     return {p.relative_to(root).as_posix(): _sha256(p) for p in sorted(paths)}
 
 
@@ -197,6 +200,10 @@ def _public_config(cfg: Any) -> dict[str, Any]:
 
 def _prepare(root: Path, run_dir: Path, call_cap: int, port: int,
              prior_run: Path | None = None) -> dict[str, Any]:
+    if prior_run is not None:
+        raise SystemExit("Current acceptance requires the complete M01-M06 matrix; historical supplements are read-only")
+    if not 0 < call_cap <= DEFAULT_CALL_CAP:
+        raise SystemExit("Current acceptance call cap must be between 1 and 800")
     _require_clean_source(root)
     tmp_root = (root / "tmp").resolve()
     if not run_dir.is_relative_to(tmp_root) or run_dir.exists():
@@ -257,6 +264,8 @@ def _prepare(root: Path, run_dir: Path, call_cap: int, port: int,
 def _load_frozen_preflight(root: Path, run_dir: Path, call_cap: int, port: int,
                            prior_run: Path | None = None) -> dict[str, Any]:
     """Revalidate one preflight before serving it; never regenerate its inputs."""
+    if prior_run is not None or not 0 < call_cap <= DEFAULT_CALL_CAP:
+        raise SystemExit("Current acceptance requires a full matrix and a call cap no greater than 800")
     _require_clean_source(root)
     freeze_path = run_dir / "freeze.json"
     if not freeze_path.is_file():

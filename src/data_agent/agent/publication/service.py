@@ -104,6 +104,15 @@ class PublicationService:
                            "answer_context":{"artifacts":[a for aid,a in artifacts.items() if any(aid in r["artifact_ids"] for r in active.values())],
                                              "effects":[e for eid,e in effects.items() if any(eid in r.get("effect_ids",[]) for r in active.values())],
                                              "nodes":[n for n in nodes if "error" not in n]}}
+                shared = {}
+                for req in active.values():
+                    if "source_request" not in req:
+                        continue  # Old snapshots only bind individual spans.
+                    text = req["source_request"]
+                    prior = shared.setdefault(req["source_turn"],text)
+                    if prior != text:
+                        raise ContractError("requirement_origin","同一原用户请求身份存在冲突。")
+                request["shared_user_requests"]=[{"source_turn":sid,"text":text} for sid,text in shared.items()]
                 self._review_result = review_parts(request,self.auditor)
             if self._review_digest == raw_digest:
                 decisions, audit_status = self._review_result
@@ -116,8 +125,10 @@ class PublicationService:
         render_context_ids = {cid for r in active.values() for cid in r["claim_ids"] + r.get("context_claim_ids", [])}
         render_context = [c for cid, c in claims.items() if cid in render_context_ids]
         renderer = Renderer()
+        renderer.bind_curve_products([c for cid,c in claims.items() if any(cid in r["claim_ids"] for r in active.values())])
         published_claims, published_artifacts, published_effects = set(), set(), set()
         delivered_purposes = {rid:set() for rid in active}
+        reviewed_actions = set()
         failed_open = {rid:[] for rid in active}
         for node in nodes:
             pid,kind,rids = node["part_id"],node["kind"],node["requirement_ids"]
@@ -142,6 +153,8 @@ class PublicationService:
                 decision = decisions[pid]
                 if decision["disposition"] == "accept":
                     value = node["text"]
+                    if requires_review and node["purpose"]=="conditional_action":
+                        reviewed_actions.update(rids)
                     for rid in rids:
                         # Gap guidance explains a missing delivery; it does not
                         # supply the missing result or promote its host status.
@@ -156,7 +169,8 @@ class PublicationService:
                         failed_open[rid].append(reason)
             text_identity = ({"purpose": node["purpose"], "claim_refs": node["claim_refs"],
                               "semantic_reviewed": bool(requires_review and disposition == "accepted"
-                                  and decisions.get(pid, {}).get("disposition") == "accept")} if kind == "text" else {})
+                                  and decisions.get(pid, {}).get("disposition") == "accept"),
+                              "source_turns":[active[r]["source_turn"] for r in rids]} if kind == "text" else {})
             renderer.add(value,part_id=pid,kind=kind,ref=node.get("ref"),requirement_ids=rids,
                          disposition=disposition,reason=reason,**text_identity)
         # Host facts remain deliverable even when the model omits or corrupts
@@ -204,8 +218,9 @@ class PublicationService:
                         reasons.extend(failed_open[rid] or ([issues[0]["reason"]] if issues else ["草案未提供对应片段。 "]))
                     status = "partial" if fulfilled else gap["status"] if gap else "not_computed" if missing_claims else "failed"
                     reason = " ".join(dict.fromkeys(reasons))
-                    renderer.add(req["text"]+"："+STATUS_LABELS[status]+"；"+reason,
-                                 part_id="gap:"+rid,kind="gap",ref=rid,requirement_ids=[rid])
+                    from .renderer import public_gap_text
+                    renderer.add(public_gap_text(req,status,missing_purposes,failed_open[rid],reviewed_action=rid in reviewed_actions),
+                                 part_id="gap:"+rid,kind="gap",ref=rid,requirement_ids=[rid],reason=reason)
             outcomes.append({"requirement_id":rid,"source_turn":req["source_turn"],"status":status,"reason":reason})
         payload = {"schema":SCHEMA,"session_id":host["session_id"],"turn_id":host["turn_id"],
                    "snapshot_digest":self.snapshot.digest,"draft_digest":raw_digest,"source_snapshot":host,

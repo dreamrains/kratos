@@ -557,6 +557,45 @@ def read_canonical_transcript(session_id: str, reference: dict) -> tuple[bytes, 
     return raw, records
 
 
+def read_canonical_prefix(session_id: str, reference: dict, marker: dict) -> list[dict]:
+    """Read only the archived early turns; the retained tail has a current owner.
+
+    Legacy compact_history v1 stored its full input, using the fixed ten-message
+    complete-turn boundary. Recognize that codec explicitly; never trust its
+    unbound .meta file or infer overlap from mutable message dictionaries.
+    """
+    from data_agent.agent.compact import _find_safe_boundary
+
+    raw, records = read_canonical_transcript(session_id, reference)
+    span = reference.get("early_range")
+    if span is not None:
+        if not isinstance(span, dict) or span.get("schema") != "canonical_prefix.v1":
+            raise ValueError("Unknown canonical transcript range")
+        stop = span.get("stop")
+        if type(stop) is not int or not 0 < stop < len(records):
+            raise ValueError("Invalid canonical transcript range")
+        prefix = b"".join(raw.splitlines(keepends=True)[:stop])
+        if span.get("sha256") != "sha256:" + hashlib.sha256(prefix).hexdigest():
+            raise ValueError("Canonical prefix digest mismatch")
+        # It must still be the complete-turn boundary of this archive codec.
+        if stop != _find_safe_boundary(records, 10):
+            raise ValueError("Canonical prefix is not a complete early range")
+    else:
+        content = marker.get("content", "")
+        trailer = ("[Instruction: This is a compressed summary of earlier conversation. "
+                   "Do NOT re-acknowledge or re-summarize this context. "
+                   "Continue the conversation naturally from the recent messages below.]")
+        if (set(reference) != {"filename", "sha256"} or marker.get("role") != "user"
+                or not isinstance(content, str)
+                or not content.startswith("[Context compressed at turn boundary]\n")
+                or not content.endswith(trailer) or len(records) <= 10):
+            raise ValueError("Unrecognized legacy transcript codec")
+        stop = _find_safe_boundary(records, 10)
+        if stop <= 0:
+            raise ValueError("Legacy transcript boundary is unavailable")
+    return records[:stop]
+
+
 @_history_synchronized
 def branch_session(parent_id: str, branch_name: str = "") -> dict:
     """Inherit chat only; analysis authority belongs to the new session."""

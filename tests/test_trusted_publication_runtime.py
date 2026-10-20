@@ -512,7 +512,10 @@ def test_requested_hypothesis_state_and_gap_are_public_and_cannot_be_replaced_by
         assert accepted["requirement_outcomes"][0]["status"]=="answered"
     else:
         assert not req["claim_ids"] and req["gap"]["status"]=="evidence_insufficient"
-        assert accepted["requirement_outcomes"][0]["status"]=="evidence_insufficient" and req["gap"]["reason"] in body
+        assert accepted["requirement_outcomes"][0]["status"]=="evidence_insufficient"
+        assert req["gap"]["reason"] in accepted["requirement_outcomes"][0]["reason"]
+        assert req["gap"]["reason"] in next(t for t in accepted["render_trace"] if t["kind"]=="gap")["reason"]
+        assert "证据不足" in body and "h1" in body
     artifact=Path(state.hypothesis_sets[0]["artifact_path"])
     if status=="precommit_artifact":
         artifact.write_text("{}",encoding="utf-8")

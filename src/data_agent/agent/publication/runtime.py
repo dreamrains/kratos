@@ -189,7 +189,24 @@ def snapshot_for_turn(loop):
     relevant=set(loop.context.turn_receipt_ids) | {p["receipt_id"] for answer in source_answers.values() for c in answer["source_snapshot"]["claims"] for p in c["basis_refs"]}
     relevant.update(e["receipt_id"] for answer in source_answers.values() for e in answer["source_snapshot"].get("effects",[]))
     relevant.update(r["id"] for r in state.tool_receipts if current_deliveries.intersection(r.get("required_delivery_ids",[])))
-    claims,artifacts,gaps,identities,effects=collect_products(state,loop.session_id,receipt_ids=relevant)
+    # Explicit adoption must be possible for a prior native product. Rebuild
+    # verified products from the same ledger; matching here exposes candidates,
+    # never grants delivery ownership or writes an old execution binding.
+    from .deliveries import catalogue, matches
+    all_claims, all_artifacts, all_gaps, _, all_effects = collect_products(state,loop.session_id)
+    for row in catalogue(all_claims, all_artifacts, all_effects):
+        if any(matches(d,row,req.get("source_data_identities",{}),explicit=True)
+               and row.get("source_message_ref") in {None,req["source_message_ref"]}
+               for req in scoped.answer_requirements if req.get("lifecycle_status")=="active"
+               for d in req.get("necessary_deliveries",[])):
+            relevant.update(row["receipt_ids"])
+    claims=[c for c in all_claims if all(p["receipt_id"] in relevant for p in c["basis_refs"])]
+    artifacts=[a for a in all_artifacts if a.get("target",{}).get("receipt_id") in relevant]
+    effects=[e for e in all_effects if e["receipt_id"] in relevant]
+    gaps=[g for g in all_gaps if g.get("receipt_id") in relevant or g.get("hypothesis_id")]
+    identities={n:i for c in claims for p in c["basis_refs"] for n,i in p["data_identities"].items()}
+    for product in artifacts+effects:
+        identities.update(product.get("target",product).get("data_identities",{}))
     # Data existence alone cannot turn pure knowledge into an analysis.
     if mode=="consultation" or not any(r.get("lifecycle_status")=="active" for r in scoped.answer_requirements): claims,identities,artifacts,effects=[],{},[],[]
     bindings=bind_requirements(scoped,claims,artifacts,effects=effects,source_answers=source_answers,product_gaps=gaps)
@@ -215,6 +232,34 @@ def snapshot_for_turn(loop):
         owned={cid for value in bindings.values() for key in ("claim_ids","context_claim_ids") for cid in value.get(key,[])}
         claims=[c for c in claims if c["id"] in owned]
     projected=project_requirements(scoped,history,bindings)
+    from .deliveries import project_deliveries
+    _,delivery_projection=project_deliveries(scoped.answer_requirements,claims,artifacts,effects=effects,product_gaps=gaps)
+    canonical={r["id"]:r for r in scoped.answer_requirements}
+    for req in projected:
+        original=canonical[req["id"]]
+        changed=[n for n,i in original.get("source_data_identities",{}).items() if not loop.context.workspace._receipt_identity_matches(n,i)]
+        missing=[n for n in target_datasets(original) if not loop.context.workspace._publication_dataset_exists(n)]
+        if (req.get("gap") or {}).get("status")=="failed":req["gap_context"]={"code":"execution_failed","datasets":target_datasets(original)}
+        elif original.get("source_binding",{}).get("status")=="pending":req["gap_context"]={"code":"source_replacement_pending","datasets":target_datasets(original)}
+        elif changed:req["gap_context"]={"code":"source_version_changed","datasets":changed}
+        elif missing:req["gap_context"]={"code":"dataset_missing","datasets":missing}
+        req["pending_deliveries"]=[]
+        req["verified_limits"]=[]
+        for d in canonical[req["id"]].get("necessary_deliveries",[]):
+            p=delivery_projection.get(d["id"])
+            if p is not None and p["gap"]:
+                scope=d["scope"]
+                req["pending_deliveries"].append({"id":d["id"],"kind":d["kind"],"datasets":scope.get("datasets",[]),
+                    "metrics":scope.get("metrics",[]),"quantity":scope.get("quantity"),"status":p["gap"]["status"],"hypothesis_ids":scope.get("hypothesis_ids",[])})
+            for gap in gaps:
+                item=gap.get("public_context")
+                if not item:continue
+                unit=item["kind"]=="source_unit" and d["id"] in gap.get("delivery_ids",[])
+                hypothesis=(item["kind"]=="hypothesis_pending" and d["kind"]=="hypothesis"
+                    and gap.get("plan_id")== (state.analysis_plan or {}).get("id")
+                    and item["dataset"] in d["scope"].get("datasets",[])
+                    and (not d["scope"].get("hypothesis_ids") or item["hypothesis_id"] in d["scope"]["hypothesis_ids"]))
+                if (unit or hypothesis) and item not in req["verified_limits"]:req["verified_limits"].append(deepcopy(item))
     snapshot=HostSnapshot.freeze(session_id=loop.session_id,turn_id=getattr(loop,"_publication_turn_id","turn"),
         history_revision=history.revision,requirement_revision=state.requirement_revision,mode=mode,
         requirements=projected,claims=claims,artifacts=artifacts,effects=effects,data_identities=identities,
@@ -280,6 +325,17 @@ def model_publication_context(snapshot, state, *, budget,product_gaps=(),measure
     for req in host["requirements"]:
         if not req["withdrawn"] and req["open_purposes"]:
             visible.update(req.get("context_claim_ids", req["claim_ids"]))
+    from .deliveries import catalogue, matches
+    reusable = {}
+    for row in catalogue(host["claims"],host["artifacts"],host.get("effects",[])):
+        ids=[d["id"] for req in state.answer_requirements if req.get("lifecycle_status")=="active"
+             and req["id"] in {r["id"] for r in host["requirements"]}
+             for d in req.get("necessary_deliveries",[])
+             if matches(d,row,req.get("source_data_identities",{}),explicit=True)
+             and row.get("source_message_ref") in {None,req["source_message_ref"]}]
+        if ids:
+            reusable[row["id"]]=ids
+            visible.update(row["claim_ids"])
     deferred = [c for c in host["claims"] if c["id"] not in visible]
     view_host = deepcopy(host)
     view_host["claims"] = [c for c in view_host["claims"] if c["id"] in visible]
@@ -292,6 +348,15 @@ def model_publication_context(snapshot, state, *, budget,product_gaps=(),measure
     from .deliveries import project_deliveries
     rows, projection=project_deliveries(state.answer_requirements,host["claims"],host["artifacts"],effects=host.get("effects",[]),product_gaps=product_gaps)
     context["catalogue_fields"]=["id","kind","metrics","quantity","parameters","declared_delivery_ids"]
+    context["reusable_products"]=[{"id":cid,"delivery_ids":ids} for cid,ids in reusable.items()]
+    context["execution_steps"]=[{"step_id":step["step_id"],"dataset_inputs":step.get("dataset_inputs",[]),
+        "delivery_ids":[d["id"] for d in step.get("required_deliveries",[])]}
+        for step in (state.analysis_plan or {}).get("method_plan",[])
+        if step.get("step_id") and step.get("required_deliveries")]
+    from data_agent.agent.context import get_current_context
+    active_context=get_current_context()
+    active_scope=getattr(active_context,"workspace_scope",None)
+    context["current_step_id"]=active_scope.step_id if active_scope is not None and active_scope.active else None
     context["delivery_projection"]={did:{"catalogue_ids":r["catalogue_ids"],"gap":r["gap"]} for did,r in projection.items()}
     # Show only business-matched ownership. The complete predispatch step
     # membership stays in immutable receipts and need not repeat on every row.
@@ -352,7 +417,7 @@ def model_publication_context(snapshot, state, *, budget,product_gaps=(),measure
     context["deferred_details"] = list(deferred_details.values())
     # The soft target never truncates a required value or excludes a source.
     # Expand to the actual whole-request allowance; split only at its hard bound.
-    context["model_view_instruction"] += " 未请求且非解释所需的结果仅列于deferred_details；原件可用read_file及expected_sha256=file_sha256读取，不得把未读详情编成结论。预算按完整请求token核算，软目标不改变必答分母。"
+    context["model_view_instruction"] += " reusable_products仅是可显式采用的候选，尚未完成对应交付；用record_answer_targets提交原目录ID，由宿主重新核版本、权限和实际参数。Python仍须执行前声明业务参数并符合current_step_id范围，不可事后补写。execution_steps列出原步骤及允许交付参数；compare_periods可原生完成窗口合计和ratio_of_sums，不必绕行Python。未请求且非解释所需的结果仅列于deferred_details；原件可用read_file及expected_sha256=file_sha256读取，不得把未读详情编成结论。预算按完整请求token核算，软目标不改变必答分母。"
     if soft_budget is not None:
         from data_agent.llm.request_policy import count_request_tokens
         cfg = get_config()
@@ -396,6 +461,7 @@ def publish(loop,raw):
         if isinstance(client,LLMClient): client=client.for_purpose()
         system=("审核数据相关开放片段，保持事实权威：只能 accept/reject/unassessed，不能新增或改写事实。"
             '核对原需求、当前证据、范围、单位、因果/推断/外推强度与全部行动条件。宿主gap下的limitation/conditional_action只可说明该需求的具体缺口和条件性补证/确认/检验建议，不能伪称已经完成或把现有缺口改为事实。claims是唯一的当前全篇事实目录，answer_context提供同一冻结全篇节点、产物和已核操作效果；操作效果只证明真实动作和对象，不属于数据事实或推断，事实/来源/限制块已交代的边界不要求每段逐字重复；可能误导的解释仍须附近限定。只按当前有效表达要求裁决，拒绝无据因果/外推/上线/对账。finding只能引用本part的requirement_ids/claim_refs；其他全篇事实是背景，不能当该part引用。'
+            "shared_user_requests是完整原用户请求，同一请求的全部相关片段共同受其约束；不能将用户的同时满足条件改为任选条件，不能用自行新增阈值替换原条件，不能交换基准期与本期，不能把未来未观测窗口写成当前已满足。新增建议须明确为建议并保留原规则。"
             "返回 JSON：schema=publication_audit.v2，原 snapshot_digest/draft_digest，decisions 每项含 part_id,disposition,reason,evidence_refs（当前片段的需求/claim ID）。每项必须定位。")
         response=client.chat([{ "role":"user","content":encode(request)}],system=system,tools=None)
         return response.text

@@ -117,3 +117,8 @@ class _NativeProductModel:
         if response.text:yield StreamTextDelta(response.text)
         yield StreamComplete(response)
 
+
+
+def audit_reasons(answer):
+    """Internal diagnostics stay inspectable without becoming public statements."""
+    return "\n".join(str(item.get("reason", "")) for key in ("requirement_outcomes", "render_trace", "issues") for item in answer.get(key, []))

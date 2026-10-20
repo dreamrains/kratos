@@ -22,7 +22,7 @@ def apply_source_units(context,receipt,result,facts):
     for req,delivery in declarations:
         scope=delivery['scope'];params=scope['parameters'];mapping={**params.get('source_unit_columns',{}),**params.get('formula_unit_columns',{})}
         for metric,column in mapping.items():
-            reason=None;units=[];count=0
+            reason=None;units=[];count=0;public_code='unit_unverified'
             if plan_scopes.get((receipt.get('step_id'),delivery['id'],req['id']))!=delivery:reason='执行前正式计划及单位声明不能核定。'
             elif set(scope.get('datasets',[]))!={name} or req.get('source_data_identities',{}).get(name)!=identity or not valid_source:reason='源单位的当前对象、版本或原权限不能核定。'
             elif not _producer_unit_scope(receipt['tool_name'],delivery,metric,result):reason='该实际生产者的源单位范围尚未评估。'
@@ -30,13 +30,15 @@ def apply_source_units(context,receipt,result,facts):
             else:
                 observation=context.workspace._publication_source_unit_observation(name,identity,metric,column,receipt['tool_name'],result)
                 reason=observation['reason'];units=observation['units'];count=observation['valid_rows']
+                public_code=observation.get('code','unit_unverified')
             proof=dict(metric=metric,column=column,source_identity=deepcopy(identity),scope=deepcopy(scope),receipt_id=rid,valid_rows=count,units=units,verified=reason is None)
             if isinstance(column,dict):proof['formula']=deepcopy(params['comparison_formulas'][metric])
             previous=proofs.get(metric)
             if previous and previous['column']!=column:
                 reason='同一度量的执行前源单位字段声明冲突。';proof['verified']=False
             proofs[metric]=proof
-            if reason:gaps.append(dict(receipt_id=rid,delivery_ids=[delivery['id']],metric=metric,code='source_unit_scope',reason=reason))
+            if reason:gaps.append(dict(receipt_id=rid,delivery_ids=[delivery['id']],metric=metric,code='source_unit_scope',reason=reason,
+                public_context={'kind':'source_unit','code':public_code,'dataset':name,'metric':metric,'units':units}))
     failed={g['metric'] for g in gaps};kept=[]
     for claim in facts:
         target=claim.get('target',{});product=target.get('business_product');metrics=set(product.get('metrics',[])) if product else {target.get('metric')}
@@ -139,18 +141,25 @@ def validate_source_unit_target(claim):
         gaps=target['source_unit_gaps']
         if not isinstance(gaps,list) or len(gaps)>128:raise ContractError('source_unit_gap','源单位缺口格式无效。')
         for gap in gaps:
-            fields(gap,{'receipt_id','delivery_ids','metric','code','reason'})
+            fields(gap,{'receipt_id','delivery_ids','metric','code','reason'},{'public_context'})
             if (gap['code']!='source_unit_scope' or not isinstance(gap['delivery_ids'],list) or not gap['delivery_ids']
                     or not isinstance(gap['metric'],str) or not isinstance(gap['reason'],str)
                     or gap['receipt_id'] not in {p['receipt_id'] for p in claim['basis_refs']}):
                 raise ContractError('source_unit_gap','源单位缺口未绑定原执行回执。')
+            if 'public_context' in gap:
+                public=gap['public_context'];fields(public,{'kind','code','dataset','metric','units'})
+                if (public['kind']!='source_unit' or public['code'] not in {'unit_unverified','unit_missing','unit_mixed'}
+                        or public['metric']!=gap['metric'] or not isinstance(public['units'],list)
+                        or len(public['units'])>32 or any(not isinstance(u,str) or not u or len(u)>128 for u in public['units'])
+                        or not any(public['dataset'] in p['data_identities'] for p in claim['basis_refs'])):
+                    raise ContractError('source_unit_gap','源单位公开范围没有同一原回执身份。')
 
 
 def source_unit_observation(frame,metric,column,tool,result):
     """Storage-owned observation;only bounded unit labels/counts leave storage."""
     if isinstance(column,dict):
         return _formula_unit_observation(frame,metric,column,tool,result)
-    reason=None;units=[];count=0
+    reason=None;units=[];count=0;public_code='unit_unverified'
     if frame is None or not frame.columns.is_unique or metric not in frame or column not in frame:reason='源单位字段或度量字段不存在/不唯一。'
     elif tool!='analyze_time_series' and not pd.api.types.is_numeric_dtype(frame[metric]):reason='当前度量没有原生数值聚合范围。'
     else:
@@ -174,13 +183,15 @@ def source_unit_observation(frame,metric,column,tool,result):
         values=frame.loc[mask,column].tolist();count=len(values)
         if not reason:
             if not values:reason='没有可核单位的有效度量观测。'
-            elif any(not isinstance(v,str) or not v.strip() for v in values):reason='有效度量观测存在缺失或非文本源单位。'
+            elif any(not isinstance(v,str) or not v.strip() for v in values):reason='有效度量观测存在缺失或非文本源单位。';public_code='unit_missing'
             elif any(len(v)>128 for v in values):reason='源单位标签超过有界呈现长度，未截断或归并。'
             else:
                 units=sorted(set(values))
                 if len(units)>32:reason='源单位种类超过有界核定范围。';units=[]
-                elif len(units)!=1:reason='混合源单位：'+encode(units)+'；未执行换汇，金额不可相加比较。'
-    return dict(reason=reason,units=units,valid_rows=count)
+                elif len(units)!=1:reason='混合源单位：'+encode(units)+'；未执行换汇，金额不可相加比较。';public_code='unit_mixed'
+    observation=dict(reason=reason,units=units,valid_rows=count)
+    if reason:observation['code']=public_code
+    return observation
 
 
 def _formula_unit_observation(frame,metric,columns,tool,result):

@@ -131,6 +131,7 @@ class TestRunLevelVerdicts:
         _make_ledger(tmp_path, [
             {"at": 1.0, "event": "started", "call_number": 1},
             {"at": 2.0, "event": "dispatched", "call_number": 1},
+            {"at": 3.0, "event": "completed", "call_number": 1},
         ])
 
     def test_ledger_unclosed_is_blocking(self, tmp_path):
@@ -313,6 +314,48 @@ class TestYoyReceiptBinding:
 
 
 M06_SUMMARY = "请分析名为 missing_orders 的数据集"
+
+
+@pytest.mark.parametrize("defect",[None,"missing","sha","session","check","unassessed","failed"])
+def test_browser_assessment_requires_bound_current_visual_receipt(tmp_path,defect):
+    import hashlib
+    from scripts.testing.p08_scenario_audit import _browser_assessments
+    freeze={"matrix":["M06"],"operator_protocol":{"visual_checkpoint":"closed_ledger_stdin_v2",
+        "visual_checks":{"scenario_end":["answer","workbench","refresh"],"confirmation":["confirmation"]}},
+        "scenario_inputs":{"M06":{"actions":["export_markdown"],"confirmations":{"2":{}}}}}
+    receipt={"scenario":"M06","session_id":"s1","checkpoint":"scenario_end","status":"passed",
+        "checks":{k:"passed" for k in ("answer","workbench","refresh","exports")},"evidence":["actual-screen.png"]}
+    if defect=="session":receipt["session_id"]="other"
+    if defect=="check":receipt["checks"].pop("exports")
+    if defect in {"unassessed","failed"}:receipt["status"]=defect
+    _write_json(tmp_path/"visual.json",receipt)
+    row={"scenario":"M06","session_id":"s1","checkpoint":"scenario_end","action":"visual_checkpoint_result",
+        "visual_status":receipt["status"],"evidence_path":"visual.json",
+        "evidence_sha256":"sha256:"+hashlib.sha256((tmp_path/"visual.json").read_bytes()).hexdigest()}
+    if defect=="sha":row["evidence_sha256"]="sha256:"+"0"*64
+    rows=[{"scenario":"M06","session_id":"s1","terminal":"completed"}]+([] if defect=="missing" else [row])
+    (tmp_path/"http-matrix.jsonl").write_text("\n".join(json.dumps(r) for r in rows),encoding="utf-8")
+    verdict=_browser_assessments(tmp_path,freeze)
+    assert verdict["browser:M06:scenario_end"]["status"]==("passed" if defect is None else "unassessed" if defect in {"missing","unassessed"} else "failed")
+    assert verdict["browser:M06:confirmation:2"]["status"]=="unassessed"
+
+
+def test_frozen_http_mapping_ignores_snapshot_rows_and_pairs_each_resume(tmp_path):
+    from scripts.testing.p08_scenario_audit import _http_turn_outcome_check
+    _write_json(tmp_path/"freeze.json",{"matrix":["M06"],"scenario_inputs":{"M06":{
+        "prompts":["consultation first","second"],"confirmations":{"1":{},"2":{}}}}})
+    rows=[]
+    for index in (1,2):
+        rows.extend([
+            {"scenario":"M06","turn":index,"session_id":"fresh","terminal":"suspended","run_state":{"status":"suspended","session_id":"fresh"}},
+            {"scenario":"M06","turn":index,"action":"current_publication_snapshot","session_id":"fresh"},
+            {"scenario":"M06","turn":"resume","parent_turn":index,"session_id":"fresh","terminal":"completed","run_state":{"status":"completed","session_id":"fresh"}},
+        ])
+    (tmp_path/"http-matrix.jsonl").write_text("\n".join(json.dumps(row) for row in rows),encoding="utf-8")
+    assert _http_turn_outcome_check(tmp_path)["passed"]
+    _make_session(tmp_path,"fresh",summary="[Context compressed at turn boundary] unrelated",messages=[])
+    report=audit_run_dir(tmp_path)
+    assert report["sessions"]["fresh"]["scenario"]=="M06"
 
 
 class TestSingleNextStepAdvisory:

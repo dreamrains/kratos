@@ -480,7 +480,7 @@ def test_required_delivery_declaration_cannot_inherit_completion_from_old_select
     req["delivery_targets"] = [{"dataset": "a", "tool": "describe_dataset"}]
     claim = {"id": "current-observation", "value": 12,
         "target": {"dataset": "a", "tool": "describe_dataset"},
-        "scope": {"dataset": "a"}, "basis_refs": [{"receipt_id":"unplanned","result_path":["shape","rows"],"data_identities": {"a": {"version_id": "current"}}}]}
+        "scope": {"dataset": "a"}, "basis_refs": [{"receipt_id":"unplanned","tool_name":"describe_dataset","result_path":["shape","rows"],"data_identities": {"a": {"version_id": "current"}}}]}
     binding = bind_requirements(state, [claim])[req["id"]]
     assert not binding.get("claim_ids")
     assert binding["gap"]["status"] == "not_computed"

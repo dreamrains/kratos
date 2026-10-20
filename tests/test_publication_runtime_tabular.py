@@ -1,3 +1,4 @@
+from tests.support.publication_runtime import audit_reasons
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: tabular. Shared fixtures have one owner."""
 from copy import deepcopy
@@ -623,7 +624,8 @@ def test_normal_app_sql_read_only_refusal_has_exact_visible_reason(engine, tmp_p
         saved = load_session(sid)["messages"][-1]; answer = read_answer(sid, saved["answer_ref"])
         assert answer["body"] == saved["content"] == ends[0]["reply_content"]
         assert answer["requirement_outcomes"][0]["status"] == "failed", answer
-        assert "只读" in answer["body"] and ("拒绝数据变更" if case == "write" else "未支持") in answer["body"]
+        assert "只读" in audit_reasons(answer) and ("拒绝数据变更" if case == "write" else "未支持") in audit_reasons(answer)
+        assert "本次执行未完成" in answer["body"] and "当前会话缺少数据集" not in answer["body"]
         assert "secret" not in answer["body"] and not answer["source_snapshot"]["claims"]
         assert model.calls == ["load_sql"]
         refreshed = http.get("/api/sessions/" + sid).get_json()

@@ -1,6 +1,6 @@
 # P08：真实浏览器与真实 Provider 全矩阵验证方案
 
-> 2026-09-27 重建准备说明：本文件保留原矩阵与历史协议。当前工作顺序见[重建总计划](../plans/2026-09-22-analysis-agent-trust-reset-plan.md)；控制路线以根 [AGENTS.md](../../../AGENTS.md) 的新冻结 HTTP/浏览器规则为准，下文早期“不得 API”条款不覆盖后来的 HTTP 路线授权。本文不授权新 Provider 调用，历史状态不代表重建分支验收。
+> 2026-10-20 当前入口说明：本文件保留原矩阵与历史协议。当前顺序及身份见[唯一计划](../plans/2026-09-22-analysis-agent-trust-reset-plan.md)；日常规则见[AGENTS.md](../../../AGENTS.md)，原详细控制程序已迁至[验收操作规程](../../testing/acceptance-control-routes.md)。当前S4/S5必须实际浏览器或HTTP＋浏览器组合验证，普通失败继续完整矩阵；历史HTTP-only及仅M06补充不能签本轮阶段通过。下一真实批800次上限仍须精确新授权，本文不授权新调用。
 
 日期：2026-09-07
 状态：`executed_failed / not_accepted`（最新 R21 已按冻结身份完整执行 M01—M06，但六个场景均出现产品级失败；不得归为外部未决，结果见[阶段记录 P08-R21](2026-09-06-value-preservation-stage-records.md)）

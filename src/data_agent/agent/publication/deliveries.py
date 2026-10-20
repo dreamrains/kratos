@@ -236,7 +236,8 @@ def catalogue(claims, artifacts=(), effects=()):
             "parameters":deepcopy(parameters) if product else {k:deepcopy(v) for k,v in parameters.items() if k in BUSINESS_PARAMETERS},
             "hypothesis_ids":[target["hypothesis_id"]] if target.get("hypothesis_id") else [],
             "receipt_ids":list(dict.fromkeys(p["receipt_id"] for p in claim["basis_refs"])),
-            "completion_gap":deepcopy(target.get("completion_gap")), "source_message_ref":target.get("source_message_ref"), "declared_delivery_ids":declared})
+            "completion_gap":deepcopy(target.get("completion_gap")), "source_message_ref":target.get("source_message_ref"), "declared_delivery_ids":declared,
+            "requires_execution_binding":any(p["tool_name"]=="run_python" for p in claim["basis_refs"])})
     for effect in effects:
         rows.append({"id":effect["id"],"kind":"operation","claim_ids":[],"artifact_ids":[],"effect_ids":[effect["id"]],
             "operation":{"action":effect["action"],"arguments":deepcopy(effect["arguments"])},
@@ -255,8 +256,10 @@ def catalogue(claims, artifacts=(), effects=()):
     return rows
 
 
-def matches(delivery, row, expected):
-    if delivery["kind"]!=row["kind"] or delivery["id"] not in row["declared_delivery_ids"]: return False
+def matches(delivery, row, expected, *, explicit=False):
+    if delivery["kind"]!=row["kind"]: return False
+    if delivery["id"] not in row["declared_delivery_ids"] and (not explicit or row.get("requires_execution_binding") or delivery["kind"] == "operation"):
+        return False
     scope=delivery["scope"]
     if delivery["kind"]=="operation" and scope.get("operation")!=row.get("operation"):return False
     if not set(scope.get("metrics",[])).issubset(row["metrics"]): return False
@@ -343,7 +346,7 @@ def project_deliveries(requirements, claims, artifacts=(), *, effects=(), produc
         selected=req.get("catalogue_bindings",{})
         for delivery in req.get("necessary_deliveries",[]):
             if delivery["kind"] in OPEN_KINDS: continue
-            candidates=[r for r in rows if matches(delivery,r,expected) and (not r.get("source_message_ref") or r["source_message_ref"]==req["source_message_ref"])]
+            candidates=[r for r in rows if matches(delivery,r,expected,explicit=delivery["id"] in selected) and (not r.get("source_message_ref") or r["source_message_ref"]==req["source_message_ref"])]
             if delivery["id"] not in selected:
                 paths={c["id"]:c["basis_refs"][0]["result_path"] for c in claims}
                 # Whole products cover their internal cells; retain a specific

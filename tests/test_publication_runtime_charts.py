@@ -1,3 +1,4 @@
+from tests.support.publication_runtime import audit_reasons
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: charts. Shared fixtures have one owner."""
 from copy import deepcopy
@@ -1040,7 +1041,7 @@ def test_s3_chart_error_normal_rejection_reason_reaches_final_answer(engine,monk
   return
  assert not html and answer['requirement_outcomes'][0]['status']!='answered',events
  failure=next(v['web']['data'] for k,v in events if k=='tool_result' and v['name']=='create_chart')
- assert failure['error'] in answer['body'],'Known typed producer rejection disappeared from the final goal gap'
+ assert failure['error'] in audit_reasons(answer) and failure['error'] not in answer['body'],'Known producer rejection must remain in diagnostics only'
 
 
 def _chart_error_attempt(loop):
@@ -1155,7 +1156,7 @@ def test_normal_rejection_reason_reaches_final_answer_s3_chart_parameters(engine
  assert len(ends)==1 and ends[0]['status']=='completed',events
  if case.endswith('_control'):assert len(html)==1 and answer['requirement_outcomes'][0]['status']=='answered',events;return
  assert not html and answer['requirement_outcomes'][0]['status']=='failed','Explicit unsupported parameter was ignored but goal was answered'
- error=next(v['web']['data'] for k,v in events if k=='tool_result' and v['name']=='create_chart');assert error['error'] in answer['body']
+ error=next(v['web']['data'] for k,v in events if k=='tool_result' and v['name']=='create_chart');assert error['error'] in audit_reasons(answer) and error['error'] not in answer['body']
 
 
 AXIS_SELECTION_E=Path(os.environ.get('DATA_AGENT_S3_AXIS_SELECTION_EVIDENCE','tmp/s3-chart-axis-selection-20261014-r2/evidence-promoted'));AXIS_SELECTION_E.mkdir(exist_ok=True)

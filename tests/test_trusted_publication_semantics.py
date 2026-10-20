@@ -323,6 +323,73 @@ def test_targets_complete_original_question_without_minting_facts(engine):
     assert bind_requirements(state,changed)[req["id"]]["gap"]
 
 
+@pytest.mark.parametrize("timing", ["before_plan", "other_delivery"])
+def test_explicit_target_adopts_verified_existing_native_fact_without_reexecuting(engine, timing):
+    from tests.support.publication_runtime import request, draft
+    from data_agent.agent.publication.requirements import record_execution_targets, bind_requirements
+    from data_agent.agent.publication.runtime import collect_products, snapshot_for_turn, publish, model_publication_context
+    from data_agent.session.history import load_canonical_history
+
+    loop, _ = engine
+    state = loop.context.analysis_state
+    if timing == "other_delivery":
+        request(loop, "先报告均值", {"kind":"measurement", "scope":{"datasets":["orders"], "metrics":["amount"], "quantity":"mean"}})
+    execute(loop, "describe_dataset", {"name":"orders"})
+    request(loop, "报告原金额合计", {"kind":"measurement", "scope":{"datasets":["orders"], "metrics":["amount"], "quantity":"sum"}})
+    req = state.answer_requirements[-1]
+    did = req["necessary_deliveries"][0]["id"]
+    claims, _, _, _, _ = collect_products(state, loop.session_id)
+    claim = next(c for c in claims if c["target"].get("metric") == "amount" and c["target"].get("statistic") == "sum")
+    assert bind_requirements(state, claims)[req["id"]]["gap"]
+    receipts = deepcopy(state.tool_receipts)
+    before = snapshot_for_turn(loop)
+    view = model_publication_context(before, state, budget=10**9, measure=lambda v: 1)
+    assert claim["id"] in {r[0] for r in view["claims"]}
+    assert any(r["id"] == claim["id"] and did in r["delivery_ids"] for r in view["reusable_products"])
+    record_execution_targets(state, load_canonical_history(loop.session_id), loop.context.workspace,
+        {"requirement_revision":state.requirement_revision, "bindings":[{"delivery_id":did, "catalogue_ids":[claim["id"]]}]})
+    snapshot = snapshot_for_turn(loop)
+    body, error = publish(loop, draft(snapshot))
+    assert error is None and "180" in body
+    assert next(r for r in loop._accepted_answer["requirement_outcomes"] if r["requirement_id"] == req["id"])["status"] == "answered"
+    assert state.tool_receipts == receipts
+    assert {c["id"] for c in collect_products(state, loop.session_id)[0]} == {c["id"] for c in claims}
+
+
+@pytest.mark.parametrize("fault", ["version", "dataset", "quantity", "window", "tampered", "python_scope"])
+def test_explicit_adoption_never_grants_new_source_or_retrospective_python_scope(engine, fault):
+    from tests.support.publication_runtime import request
+    from data_agent.agent.publication.requirements import record_execution_targets
+    from data_agent.agent.publication.runtime import collect_products
+    from data_agent.agent.publication.deliveries import catalogue, matches
+    from data_agent.session.history import load_canonical_history
+    loop, cfg = engine
+    execute(loop,"describe_dataset",{"name":"orders"})
+    state=loop.context.analysis_state
+    scope={"datasets":["orders"],"metrics":["amount"],"quantity":"sum"}
+    if fault=="dataset":
+        loop.context.workspace.add("foreign",pd.DataFrame({"amount":[180]}));scope["datasets"]=["foreign"]
+    if fault=="quantity":scope["quantity"]="mean"
+    if fault=="window":scope["parameters"]={"period_a":"2026-09-01~2026-09-02"}
+    request(loop,"必须采用当前范围原合计",{"kind":"measurement","scope":scope})
+    claims=collect_products(state,loop.session_id)[0]
+    claim=next(c for c in claims if c["target"].get("metric")=="amount" and c["target"].get("statistic")=="sum")
+    req=state.answer_requirements[-1];did=req["necessary_deliveries"][0]["id"]
+    if fault=="python_scope":
+        row=next(r for r in catalogue(claims) if r["id"]==claim["id"])
+        row["requires_execution_binding"]=True
+        assert not matches(req["necessary_deliveries"][0],row,req["source_data_identities"],explicit=True)
+        return
+    if fault=="version":loop.context.workspace.add("orders",pd.DataFrame({"amount":[180]}))
+    if fault=="tampered":
+        from pathlib import Path
+        (cfg.sessions_resolved/loop.session_id/state.tool_receipts[0]["detail_ref"]["path"]).write_text("tampered",encoding="utf-8")
+    before=deepcopy(state.answer_requirements)
+    with pytest.raises(ValueError):record_execution_targets(state,load_canonical_history(loop.session_id),loop.context.workspace,
+        {"requirement_revision":state.requirement_revision,"bindings":[{"delivery_id":did,"catalogue_ids":[claim["id"]]}]})
+    assert state.answer_requirements==before
+
+
 @pytest.mark.parametrize("fault",["revision","boolean_revision","duplicate","unknown","withdrawn","knowledge","tool","dataset","extra_fact","origin","save"])
 def test_target_batch_rejects_atomically_without_changing_canonical_demand(engine,monkeypatch,fault):
     from tests.test_trusted_publication_runtime import request
@@ -533,3 +600,69 @@ def test_ingestion_disk_rollback_failure_is_explicit_and_memory_restores(engine,
     assert "rollback incomplete" in result.summary
     assert ws.get_data_identity("loaded")==before
     assert not ws.exists("loaded__history")
+
+
+def test_explicit_adoption_cannot_reuse_an_old_write_as_a_new_operation():
+    from data_agent.agent.publication.deliveries import matches
+    operation={"action":"create_skill","arguments":{"name":"approved-old-write"}}
+    row={"kind":"operation","operation":operation,"declared_delivery_ids":["old"],"metrics":[],"quantity":None,"hypothesis_ids":[],"parameters":{},"data_identities":{}}
+    old={"id":"old","kind":"operation","scope":{"operation":operation}}
+    new={**old,"id":"new"}
+    assert matches(old,row,{},explicit=True)
+    assert not matches(new,row,{}) and not matches(new,row,{},explicit=True)
+
+
+@pytest.mark.parametrize("withdrawn",[False,True])
+def test_one_native_curve_receipt_across_sections_has_one_complete_visible_product(engine,withdrawn):
+    from data_agent.agent.publication.native import resolve_native_claims
+    from data_agent.agent.publication.contracts import HostSnapshot
+    from data_agent.agent.publication.service import PublicationService
+    from tests.test_trusted_publication_pipeline import accept_all
+    loop,_=engine
+    loop.context.workspace.add("retention",pd.DataFrame({'day':range(1,8),'value':[.55,.42,.31,.24,.18,.13,.10]}))
+    rid,_=execute(loop,"curve_fitting",{"name":"retention","x_col":"day","y_col":"value","scenario_points":[30]})
+    facts=resolve_native_claims(session_id=loop.session_id,receipt_id=rid)
+    selected=[c for c in facts if c['basis_refs'][0]['result_path'] in [['points'],['fits'],['scenarios']]
+              or len(c['basis_refs'][0]['result_path'])==3 and c['basis_refs'][0]['result_path'][0]=='points']
+    r1={'id':'observed','text':'交付全部观测及拟合','source_turn':'user1','claim_ids':[c['id'] for c in selected if c['basis_refs'][0]['result_path']!=['scenarios']],
+        'open_purposes':['interpretation'],'artifact_ids':[],'gap':None,'withdrawn':False}
+    r2={**r1,'id':'scenario','text':'交付D30未验证情景','claim_ids':[c['id'] for c in selected if c['basis_refs'][0]['result_path']==['scenarios']],
+        'open_purposes':[],'withdrawn':withdrawn}
+    snap=HostSnapshot.freeze(session_id=loop.session_id,turn_id='curve',history_revision=1,requirement_revision=1,mode='analysis',
+        requirements=[r1,r2],claims=selected,artifacts=[],data_identities={'retention':loop.context.workspace.get_data_identity('retention')})
+    sections=[{'requirement_ids':[r['id']],'parts':[{'kind':'claim','ref':cid} for cid in r['claim_ids']]+(
+        [{'kind':'text','purpose':'interpretation','text':'仅说明当前观测；情景未验证。','claim_refs':r['claim_ids']}] if r['id']=='observed' else [])} for r in [r1,r2]]
+    answer=PublicationService(snap,auditor=accept_all).publish(json.dumps({'schema':'answer_bindings.v2','snapshot_digest':snap.digest,'sections':sections})).as_dict()
+    assert answer['body'].count(selected[0]['limitations'][0])==1
+    assert answer['body'].split('\n\n').count('实际观测')==1 and answer['body'].split('\n\n').count('拟合模型与误差')==1
+    assert ('| 30 |' in answer['body']) is not withdrawn
+    active=set(r1['claim_ids']+([] if withdrawn else r2['claim_ids']))
+    traces=[t for t in answer['render_trace'] if t['kind']=='claim' and t['disposition']=='accepted']
+    assert {t['ref'] for t in traces}==active
+    for t in traces:
+        assert answer['body'][t['start']:t['end']]==t['rendered_text']
+    assert len({(t['start'],t['end']) for t in traces})==1
+
+
+@pytest.mark.parametrize('fault',[None,'receipt','hash','version','parameters','unit','display','scope','metric','value'])
+def test_curve_leaf_reuses_only_its_exact_original_product(fault):
+    from tests.test_trusted_publication_pipeline import claim
+    from data_agent.agent.publication.renderer import Renderer
+    parent=claim('parent',[{'x':1,'y':120}]);parent['basis_refs'][0]['result_path']=['points']
+    parent['target']={'tool':'curve_fitting','metric':'amount','parameters':{'x_col':'x','y_col':'amount'}}
+    leaf=deepcopy(parent);leaf.update(id='leaf',label='leaf',value=120);leaf['basis_refs'][0]['result_path']=['points',0,'y']
+    leaf['scope']['time_scope']=''
+    if fault=='receipt':leaf['basis_refs'][0]['receipt_id']='other'
+    if fault=='hash':leaf['basis_refs'][0]['result_sha256']='sha256:'+'b'*64
+    if fault=='version':leaf['basis_refs'][0]['data_identities']['orders']['version_id']='v2'
+    if fault=='parameters':leaf['target']['parameters']['zero_values']='exclude'
+    if fault=='unit':leaf['unit']='USD'
+    if fault=='display':leaf['target']['curve_display']={'basis':'plan_declaration','value_scale':'fraction'}
+    if fault=='scope':leaf['scope']['time_scope']='another-window'
+    if fault=='metric':leaf['target']['metric']='cost'
+    if fault=='value':leaf['value']=999
+    renderer=Renderer();renderer.bind_curve_products([parent,leaf])
+    for c in [parent,leaf]:renderer.add_claim(c,part_id=c['id'],ref=c['id'],requirement_ids=[c['id']])
+    body=renderer.body
+    assert len({(t['start'],t['end']) for t in renderer.trace})==(1 if fault is None else 2)
+    assert all(body[t['start']:t['end']]==t['rendered_text'] for t in renderer.trace)

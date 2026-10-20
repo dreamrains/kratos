@@ -246,7 +246,8 @@ def test_zero_denominator_keeps_absolute_result_and_other_source(engine):
     assert [values["amount："+k] for k in ("前期","后期","差值","相对变化")]==[0,5,5,None]
     assert values["前期记录数"]==2 and values["后期记录数"]==3
     body,error=publish(loop,_v2_draft(host));assert error is None
-    assert has_pair(body,'amount：相对变化','未知') and has_number(body, 'amount：后期', 22)
+    assert has_pair(body,'amount：相对变化','未知') or 'amount：相对变化：未知' in visible_text(body)
+    assert has_number(body, 'amount：后期', 22)
 
 
 

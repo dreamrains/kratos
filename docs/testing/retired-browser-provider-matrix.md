@@ -1,6 +1,6 @@
 # 退役的浏览器与 Provider 矩阵
 
-状态：**2026-09-06旧框架退役的历史记录**。当前路线以AGENTS.md及[唯一重建总计划](../superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md)为准；当前run_p7/run_p08入口是后续已设计的独立职责，不属于本文恢复旧框架。
+状态：**2026-09-06旧框架退役的历史记录**。当前路线以[AGENTS.md](../../AGENTS.md)、[验收操作规程](acceptance-control-routes.md)及[唯一重建总计划](../superpowers/plans/2026-09-22-analysis-agent-trust-reset-plan.md)为准；当前run_p7/run_p08入口是后续已设计的独立职责，不属于本文恢复旧框架。
 
 旧矩阵把日常 pytest、浏览器旅程、真实 Provider 调用、发布判断和审计材料耦合在一起，导致以下问题：
 

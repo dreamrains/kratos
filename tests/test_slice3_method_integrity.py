@@ -1,6 +1,8 @@
 """Slice 3 deterministic method contracts and real-data oracle tests."""
 
 from __future__ import annotations
+from data_agent.agent.publication.contracts import encode
+from tests.support.publication_runtime import audit_reasons
 from tests.support.rendered_text import has_numeric_literal
 
 import json
@@ -2332,6 +2334,17 @@ def test_original_h02_h03_real_other_object_and_formal_plan_receipts(engine,tmp_
     else:assert not claims and gaps and primary['status'] not in ['supported','refuted','contested'] and not primary['supporting_evidence_ids'] and not primary['conflicting_evidence_ids']
 
 
+def _h_with_reviewed_action_candidates(raw, requirements):
+    proposal=json.loads(raw)
+    by_id={r['id']:r for r in requirements}
+    for section in proposal['sections']:
+        for rid in section['requirement_ids']:
+            for item in by_id[rid].get('verified_limits',[]):
+                if item['kind']=='hypothesis_pending' and item['candidate_action']:
+                    section['parts'].append({'kind':'text','purpose':'conditional_action','text':item['candidate_action'],'claim_refs':[]})
+    return encode(proposal)
+
+
 @pytest.mark.parametrize('route',['direct','registry'])
 @pytest.mark.parametrize('source',['known_roles','unknown_roles','changed_version','missing_original'])
 def test_original_h12_real_competitors_have_specific_distinguishing_steps_in_body(engine,tmp_path,route,source):
@@ -2345,7 +2358,15 @@ def test_original_h12_real_competitors_have_specific_distinguishing_steps_in_bod
     if source=='changed_version':loop.context.workspace.add('sales',frame.assign(amount=0.))
     elif source=='missing_original':
         original=Path(next(r['artifact_path'] for r in state.dataset_contracts if r.get('dataset')=='sales'));original.rename(original.with_suffix('.preserved'))
-    snap=snapshot_for_turn(loop);body,error=publish(loop,draft(snap));assert error is None
+    snap=snapshot_for_turn(loop)
+    from tests.test_trusted_publication_pipeline import accept_all
+    from data_agent.llm.client import Response
+    class Review:
+        calls=0
+        def chat(self,messages,**kwargs):self.calls+=1;return Response(text=encode(accept_all(json.loads(messages[-1]['content']))))
+    reviewer=Review();loop.auxiliary_llm_client=reviewer
+    body,error=publish(loop,_h_with_reviewed_action_candidates(draft(snap),snap.as_dict()['requirements']));assert error is None
+    assert reviewer.calls==(1 if any(v.get('candidate_action') for r in snap.as_dict()['requirements'] for v in r.get('verified_limits',[])) else 0)
     gaps=snap.as_dict()['requirements'][0]['gap'];(tmp_path/'h12-specific-body.json').write_text(json.dumps(dict(hypotheses=hs,body=body,gap=gaps,answer=loop._accepted_answer,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
     if source in ['changed_version','missing_original']:
         assert '待做' not in body
@@ -2375,6 +2396,10 @@ def test_original_h02_h03_h12_normal_real_producers_and_current_answer(engine,tm
     class Model(_F1PublicModel):
         ordinal=0
         def chat(self,messages,system='',**kw):
+            if system.startswith('审核数据相关开放片段'):
+                from tests.test_trusted_publication_pipeline import accept_all
+                self.review_count=getattr(self,'review_count',0)+1
+                return Response(text=encode(accept_all(json.loads(messages[-1]['content']))))
             if system=='你是一个JSON输出器，只返回JSON，不要其他内容。':return super().chat(messages,system=system,**kw)
             self.ordinal+=1;view=ScriptedClient._current_host_snapshot(messages,system)
             def plan(marker):
@@ -2388,7 +2413,9 @@ def test_original_h02_h03_h12_normal_real_producers_and_current_answer(engine,tm
                 public=next(m['content'] for m in reversed(messages) if m.get('role')=='tool' and '"trend":' in m.get('content',''));trend=json.JSONDecoder().raw_decode(public.partition('"trend":')[2].lstrip())[0];assert trend['slope']==1.
                 # Proposed relations intentionally include every visible set;host must decide scope.
                 payload={'claim':'amount changed between the compared periods in sales.','dataset':'other' if case=='other_object' else 'sales','method':'analyze_time_series','tool_calls':['analyze_time_series'],'result_summary':'Current original slope1','limitations':['仅描述，不能排除替代原因'],'confidence':'medium','measurements':[{'metric':'amount','delta':trend['slope']}],'competing_hypotheses':[{'hypothesis_id':hid,'relation':'supports','metric':'amount','observed':'increased'} for hid in ids]};name,args='record_evidence_record',{'record_json':payload}
-            else:return Response(text=encode({'schema':'answer_bindings.v2','snapshot_digest':view['snapshot_digest'],'sections':[{'requirement_ids':[r['id']],'parts':[{'kind':'claim','ref':cid} for cid in r['claim_ids']]} for r in view['requirements'] if not r['withdrawn']]}))
+            else:
+                raw=encode({'schema':'answer_bindings.v2','snapshot_digest':view['snapshot_digest'],'sections':[{'requirement_ids':[r['id']],'parts':[{'kind':'claim','ref':cid} for cid in r['claim_ids']]} for r in view['requirements'] if not r['withdrawn']]})
+                return Response(text=_h_with_reviewed_action_candidates(raw,view['requirements']) if case=='distinguishing_steps' else raw)
             self.calls.append(name);return Response(tool_calls=[ToolCall('h_joint_'+str(self.ordinal),name,args)])
     model=Model(content,names,'',[specs[0]]);frame=(pd.DataFrame({'day':pd.date_range('2026-09-01',periods=60),'amount':list(range(1,61)),'orders':[i/10 for i in range(1,61)],'segment':['A','B']*30}) if case=='distinguishing_steps' else pd.DataFrame({'day':pd.date_range('2026-09-01',periods=4),'amount':[1.,2.,3.,4.],'orders':[1.,1.,2.,2.],'segment':['A','B','A','B']}))
     loop,answer=_joint_http_answer(engine,tmp_path,model,names,[frame]*len(names),'h_actual_'+case)
@@ -2404,6 +2431,7 @@ def test_original_h02_h03_h12_normal_real_producers_and_current_answer(engine,tm
     assert model.ordinal==len(model.calls)+1
     assert len([r for r in state.tool_receipts if r['tool_name']=='analyze_time_series'])==1
     if case=='distinguishing_steps':
+        assert model.review_count==1
         assert all(x in answer['body'] for x in ['orders','segment','day','对照','分组','基线','未决'])
         assert '已排除' not in answer['body']
 
@@ -3176,8 +3204,9 @@ def test_original_p5_ac13_invalid_detail_keeps_independent_answer_without_recomp
     (tmp_path/'p5-detail.json').write_text(json.dumps(dict(route=route,fault=fault,answer=answer,good=good,bad=bad,original=original,Provider=0),ensure_ascii=False,indent=2),encoding='utf-8')
     assert [v['status'] for v in out]==['answered','evidence_insufficient']
     assert bytext['收入合计']['claim_ids'] and not bytext['复购率']['claim_ids']
-    assert '180' in body and '产物核验 [' in body and 'FOREIGN_SECRET_777' not in body
-    assert ('result_file_digest' in body) if fault=='hash' else ('receipt_unavailable' in body or '路径' in body or '当前会话' in body)
+    assert '180' in body and '复购率' in body and '产物核验 [' in audit_reasons(loop._accepted_answer) and 'FOREIGN_SECRET_777' not in body
+    assert ('result_file_digest' in audit_reasons(loop._accepted_answer)) if fault=='hash' else ('receipt_unavailable' in audit_reasons(loop._accepted_answer) or '路径' in audit_reasons(loop._accepted_answer) or '当前会话' in audit_reasons(loop._accepted_answer))
+    assert 'result_file_digest' not in body
     assert len(loop.context.analysis_state.tool_receipts)==count and path.read_bytes()==before and 'FOREIGN_SECRET_777' in foreign.read_text(encoding='utf-8')
 
 
@@ -3248,7 +3277,7 @@ def test_original_p5_normal_same_answer_and_distinct_gaps_survive_refresh_all_ex
     assert len(model.drafts)==1 and ('5' if case=='invalid_detail' else '100') in body
     if case=='both_results':assert '0.6666666666666666' in body and any(t['part_id'].startswith('host:') and t.get('rendered_text') and '复购率' in t['rendered_text'] for t in answer['render_trace'])
     if case=='budget_missing':assert loop.context.turn_state.tool_calls==loop.context.turn_state.budget.max_tool_calls==2 and model.closed[-1] and '未计算' in body and '证据不足' in body and not any('复购率' in r['arguments'].get('code','') for r in loop.context.analysis_state.tool_receipts if r['tool_name']=='run_python')
-    if case=='invalid_detail':assert 'result_file_digest' in body and not any('0.6666666666666666' in str(c['value']) for c in answer['source_snapshot']['claims'])
+    if case=='invalid_detail':assert 'result_file_digest' in audit_reasons(answer) and 'result_file_digest' not in body and not any('0.6666666666666666' in str(c['value']) for c in answer['source_snapshot']['claims'])
     saved=load_session(sid);owner=next(m for m in reversed(saved['messages']) if m.get('answer_ref'));originals={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (cfg.sessions_resolved/sid/'analyses').glob('answer_*.json')};exports=[]
     class Text(HTMLParser):
         def __init__(self):super().__init__();self.parts=[]
@@ -3584,9 +3613,9 @@ def test_original_ac35_whole_chart_rejection_and_wrong_scope_keep_real_table_or_
     assert "mermaid" not in body.lower() and "[[chart:" not in body and not has_numeric_literal(body, '999')
     files=list((cfg.sessions_resolved/loop.session_id/"charts").glob("*.html"))
     if case=="validation":
-        assert not files and chart["error_type"]=="chart_validation" and chart["error"] in body
+        assert not files and chart["error_type"]=="chart_validation" and chart["error"] in audit_reasons(loop._accepted_answer) and chart["error"] not in body
     else:
-        assert len(files)==1 and chart["artifact_path"] and "同来源" in body and "sales" in body
+        assert len(files)==1 and chart["artifact_path"] and "同来源" in audit_reasons(loop._accepted_answer) and "sales" in body and "图表" in body
         assert all(a["target"]["dataset"]=="other" for a in answer["source_snapshot"]["artifacts"])
 
 
@@ -3668,10 +3697,10 @@ def test_original_ac33_ac35_normal_agentloop_original_chart_table_and_local_gap(
         assert all("Data-backed Mermaid charts are blocked" in rendered and 'class="mermaid"' not in rendered for rendered in frontend["mermaid"])
         assert "mermaid" not in body.lower() and not has_numeric_literal(body, '999') and any(i["code"]=="invalid_kind" for i in answer["issues"])
         if case=="validation":
-            assert not answer["artifact_refs"] and not list((root/"charts").glob("*.html")) and "incomplete_scatter_axes" in body
+            assert not answer["artifact_refs"] and not list((root/"charts").glob("*.html")) and "incomplete_scatter_axes" in audit_reasons(answer) and "incomplete_scatter_axes" not in body
         else:
             assert len(answer["artifact_refs"])==1 and answer["artifact_refs"][0]["target"]["dataset"]=="other"
-            assert len(list((root/"charts").glob("*.html")))==1 and "同来源" in body and "sales" in body
+            assert len(list((root/"charts").glob("*.html")))==1 and "同来源" in audit_reasons(answer) and "sales" in body and "图表" in body
             assert all(a["target"]["dataset"]=="other" for a in answer["source_snapshot"]["artifacts"])
     (tmp_path/"ac33-ac35-normal.json").write_text(json.dumps(dict(case=case,answer=answer,frontend=frontend,drafts=model.drafts,audits=model.audits,calls=model.calls,exports=exports,originals=originals,Provider=0,remote_MCP=0,visual="unassessed",natural_semantics="unassessed;fixed model/audit"),ensure_ascii=False,indent=2),encoding="utf-8")
 

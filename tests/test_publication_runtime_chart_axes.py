@@ -1,3 +1,4 @@
+from tests.support.publication_runtime import audit_reasons
 from tests.test_trusted_publication_semantics import engine
 """Publication contract tests: axes. Shared fixtures have one owner."""
 from data_agent.agent.publication.contracts import encode
@@ -77,7 +78,7 @@ def test_normal_rejection_reason_reaches_final_answer_s3_chart_axis_selection(en
  assert len(ends)==1 and ends[0]['status']=='completed',events
  if case.endswith('_control'):assert len(html)==1 and answer['requirement_outcomes'][0]['status']=='answered',events;return
  assert not html and answer['requirement_outcomes'][0]['status']=='failed','Explicit axis discarded but normal goal answered'
- error=next(v['web']['data'] for k,v in events if k=='tool_result' and v['name']=='create_chart');assert error['error'] in answer['body']
+ error=next(v['web']['data'] for k,v in events if k=='tool_result' and v['name']=='create_chart');assert error['error'] in audit_reasons(answer) and error['error'] not in answer['body']
 
 
 _s3_funnel_line_E=Path(os.environ.get('DATA_AGENT_S3_CHART_FUNNEL_LINE_EVIDENCE','tmp/s3-chart-funnel-and-line-20261014-r3/evidence-promoted'));_s3_funnel_line_E.mkdir(parents=True,exist_ok=True)
